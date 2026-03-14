@@ -246,13 +246,17 @@ const PROVIDER_MODELS: Record<string, SelectOption[]> = {
 export async function resolveApiKey(options: CLIOptions): Promise<void> {
   if (options.apiKey) return;
 
+  // Apply stored config to options (stored provider wins over CLI default "anthropic")
+  const stored = loadConfig();
+  const isDefaultProvider = options.provider === "anthropic";
+  if (isDefaultProvider && stored.provider) options.provider = stored.provider;
+  if (!options.model && stored.model) options.model = stored.model;
+
   const provider = options.provider.toLowerCase();
   const envVar = getApiKeyEnvVar(provider);
 
   if (process.env[envVar]) return;
 
-  // Check stored config
-  const stored = loadConfig();
   if (stored.apiKeys?.[provider]) {
     options.apiKey = stored.apiKeys[provider];
     return;
@@ -267,8 +271,8 @@ export async function resolveApiKey(options: CLIOptions): Promise<void> {
     }
   }
 
-  // Interactive setup
-  const stored2 = loadConfig();
+  // Interactive setup — no key found, prompt user
+  const stored2 = stored;
   console.log();
   console.log(chalk.bold.cyan("  Welcome to Cdoing Agent!"));
   console.log(chalk.dim("  Let's set up authentication."));
