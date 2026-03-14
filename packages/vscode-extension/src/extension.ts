@@ -19,6 +19,9 @@ let chatProvider: ChatPanelProvider;
 /** Editor panel instance (opened alongside code in the editor area) */
 let editorPanel: vscode.WebviewPanel | undefined;
 
+/** Pending file context to send once the webview is ready */
+let pendingFileContext: any = null;
+
 export function activate(context: vscode.ExtensionContext) {
   chatProvider = new ChatPanelProvider(context);
 
@@ -87,6 +90,33 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.commands.executeCommand("workbench.action.openSettings", "cdoing");
     }),
 
+    // ── Add selected code to chat as context (just attach, don't send) ──
+    vscode.commands.registerCommand("cdoing.addToChat", () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) return;
+      const selection = editor.selection;
+      const text = editor.document.getText(selection);
+      if (!text) return;
+
+      const filePath = vscode.workspace.asRelativePath(editor.document.uri);
+      const lang = editor.document.languageId;
+
+      chatProvider.postMessage({
+        type: "contextAttached",
+        attachment: {
+          type: "selection",
+          path: filePath,
+          language: lang,
+          content: text,
+          startLine: selection.start.line + 1,
+          endLine: selection.end.line + 1,
+        },
+      });
+
+      // Focus the chat panel
+      vscode.commands.executeCommand("cdoing.chatPanel.focus");
+    }),
+
     // ── Editor Selection Commands ──
     vscode.commands.registerCommand("cdoing.sendSelection", () => {
       sendEditorSelection();
@@ -105,44 +135,51 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     // ── Open File Button (editor title bar icon) ──
-    // Opens chat alongside the current file, attaching file or selection as context
+    // Opens chat alongside the current file, attaching file or selection as context.
+    // If the panel is already open, creates a new tab for this file.
     vscode.commands.registerCommand("cdoing.openFile", () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
 
-      // Open the editor panel alongside the file
-      openEditorPanel(context);
-
+      // Capture file info BEFORE opening the panel (editor may lose focus)
       const filePath = vscode.workspace.asRelativePath(editor.document.uri);
       const lang = editor.document.languageId;
       const selection = editor.selection;
       const selectedText = editor.document.getText(selection);
+      const fullContent = editor.document.getText();
 
-      if (selectedText) {
-        // Attach the selection as context
-        chatProvider.postMessage({
-          type: "contextAttached",
-          attachment: {
-            type: "selection",
+      const panelAlreadyOpen = !!editorPanel;
+
+      // Open the editor panel alongside the file
+      openEditorPanel(context);
+
+      // Build the context attachment
+      const attachment = selectedText
+        ? {
+            type: "selection" as const,
             path: filePath,
             language: lang,
             content: selectedText,
             startLine: selection.start.line + 1,
             endLine: selection.end.line + 1,
-          },
-        });
-      } else {
-        // Attach the whole file as context
-        const content = editor.document.getText();
-        chatProvider.postMessage({
-          type: "contextAttached",
-          attachment: {
-            type: "file",
+          }
+        : {
+            type: "file" as const,
             path: filePath,
             language: lang,
-            content,
-          },
-        });
+            content: fullContent,
+          };
+
+      const contextMsg = { type: "contextAttached", attachment };
+
+      if (panelAlreadyOpen) {
+        // Panel was already open — create a new tab, then attach context
+        const fileName = filePath.split("/").pop() || filePath;
+        chatProvider.createTab(fileName);
+        setTimeout(() => chatProvider.postMessage(contextMsg), 150);
+      } else {
+        // Panel is newly created — queue context until webview is ready
+        pendingFileContext = contextMsg;
       }
     }),
 
@@ -172,12 +209,60 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // Auto-save before agent reads/writes files
+  // ── Floating Selection Actions (like Copilot's "Ask for Edits") ──
+  // Shows a lightbulb/quick-fix menu when text is selected
   context.subscriptions.push(
-    vscode.workspace.onWillSaveTextDocument(() => {
-      // VS Code handles this — we just need to trigger save before tool execution
+    vscode.languages.registerCodeActionsProvider("*", new CdoingCodeActionProvider(), {
+      providedCodeActionKinds: [vscode.CodeActionKind.RefactorRewrite],
     })
   );
+}
+
+/**
+ * CodeAction provider — adds "Cdoing: Add to Chat", "Explain", "Fix", "Refactor"
+ * to the lightbulb / quick-fix menu when text is selected.
+ * This gives a floating toolbar similar to GitHub Copilot's "Ask for Edits".
+ */
+class CdoingCodeActionProvider implements vscode.CodeActionProvider {
+  provideCodeActions(
+    document: vscode.TextDocument,
+    range: vscode.Range | vscode.Selection,
+  ): vscode.CodeAction[] {
+    // Only show when text is selected
+    if (range.isEmpty) return [];
+
+    const actions: vscode.CodeAction[] = [];
+
+    const addToChat = new vscode.CodeAction(
+      "Cdoing: Add to Chat",
+      vscode.CodeActionKind.RefactorRewrite
+    );
+    addToChat.command = { command: "cdoing.addToChat", title: "Add to Chat" };
+    actions.push(addToChat);
+
+    const explain = new vscode.CodeAction(
+      "Cdoing: Explain",
+      vscode.CodeActionKind.RefactorRewrite
+    );
+    explain.command = { command: "cdoing.explainSelection", title: "Explain" };
+    actions.push(explain);
+
+    const fix = new vscode.CodeAction(
+      "Cdoing: Fix",
+      vscode.CodeActionKind.RefactorRewrite
+    );
+    fix.command = { command: "cdoing.fixSelection", title: "Fix" };
+    actions.push(fix);
+
+    const refactor = new vscode.CodeAction(
+      "Cdoing: Refactor",
+      vscode.CodeActionKind.RefactorRewrite
+    );
+    refactor.command = { command: "cdoing.refactorSelection", title: "Refactor" };
+    actions.push(refactor);
+
+    return actions;
+  }
 }
 
 // ── Editor Panel (opens alongside code) ─────────────────
@@ -245,6 +330,15 @@ function openEditorPanel(context: vscode.ExtensionContext) {
         break;
       case "ready":
         chatProvider.postMessage({ type: "configUpdated", provider: "anthropic", model: "" });
+        // Flush any pending file context from cdoing.openFile command
+        if (pendingFileContext) {
+          setTimeout(() => {
+            if (pendingFileContext) {
+              chatProvider.postMessage(pendingFileContext);
+              pendingFileContext = null;
+            }
+          }, 100);
+        }
         break;
     }
   });

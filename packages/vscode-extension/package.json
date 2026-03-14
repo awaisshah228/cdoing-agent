@@ -81,6 +81,11 @@
         "icon": "$(comment-discussion)"
       },
       {
+        "command": "cdoing.addToChat",
+        "title": "Cdoing: Add to Chat",
+        "icon": "$(comment-discussion)"
+      },
+      {
         "command": "cdoing.moveToSecondarySidebar",
         "title": "Cdoing: Move to Right Sidebar"
       },
@@ -98,6 +103,11 @@
         }
       ],
       "editor/context": [
+        {
+          "command": "cdoing.addToChat",
+          "group": "cdoing@0",
+          "when": "editorHasSelection"
+        },
         {
           "command": "cdoing.sendSelection",
           "group": "cdoing@1",
