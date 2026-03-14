@@ -212,6 +212,15 @@ export class AgentRunner {
   clearHistory(): void {
     this.messages = [];
   }
+
+  /** Add a message to history (used when resuming a saved conversation) */
+  addToHistory(role: "user" | "assistant", content: string): void {
+    if (role === "user") {
+      this.messages.push(new HumanMessage(content));
+    } else {
+      this.messages.push(new AIMessage(content));
+    }
+  }
 }
 
 const DEFAULT_SYSTEM_PROMPT = `You are Cdoing Agent, an AI coding assistant running in the user's terminal.

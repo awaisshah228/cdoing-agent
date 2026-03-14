@@ -1,16 +1,20 @@
 /**
  * Interactive Chat Interface
  *
- * Supports:
- *   ? or /help     — show help
- *   !<command>     — run shell command directly (like Claude Code)
- *   /config        — show current config
- *   /model <name>  — switch model
- *   /provider <n>  — switch provider
- *   /mode <mode>   — change permission mode
- *   /dir <path>    — change working directory
- *   /clear         — reset conversation
- *   /exit          — quit
+ * Commands:
+ *   ? or /help         — show help
+ *   !<command>          — run shell command directly
+ *   /config             — show current config
+ *   /model <name>       — switch model
+ *   /provider <name>    — switch provider
+ *   /mode <mode>        — change permission mode
+ *   /dir <path>         — change working directory
+ *   /new                — start a new conversation
+ *   /history            — list saved conversations
+ *   /resume <id>        — resume a saved conversation
+ *   /delete <id>        — delete a saved conversation
+ *   /clear              — clear current conversation
+ *   /exit               — quit
  */
 
 import * as readline from "readline";
@@ -26,6 +30,14 @@ import { printWelcome, printHelp, printConfig } from "./help";
 import { createInteractiveCallbacks } from "./callbacks";
 import { createToolRegistry } from "./tools";
 import { parsePermissionMode } from "./config";
+import {
+  createConversation,
+  addMessage,
+  loadConversation,
+  printConversationList,
+  deleteConversation,
+  type Conversation,
+} from "./history";
 
 export class ChatInterface {
   private rl!: readline.Interface;
@@ -35,6 +47,7 @@ export class ChatInterface {
   private toolRegistry: ToolRegistry;
   private permissionManager: PermissionManager;
   private workingDir: string;
+  private conversation: Conversation;
 
   constructor(
     modelConfig: Partial<ModelConfig>,
@@ -46,6 +59,10 @@ export class ChatInterface {
     this.permissionManager = permissionManager;
     this.workingDir = process.cwd();
     this.agent = new AgentRunner(modelConfig, toolRegistry, permissionManager);
+    this.conversation = createConversation(
+      String(modelConfig.provider || "anthropic"),
+      String(modelConfig.model || "default")
+    );
     this.createReadline();
   }
 
@@ -66,28 +83,20 @@ export class ChatInterface {
       const trimmed = input.trim();
       if (!trimmed) { this.promptUser(); return; }
 
-      // ? = help shortcut
-      if (trimmed === "?") {
-        printHelp();
-        this.promptUser();
-        return;
-      }
+      if (trimmed === "?") { printHelp(); this.promptUser(); return; }
 
-      // ! = run shell command directly
       if (trimmed.startsWith("!")) {
         await this.runShellCommand(trimmed.slice(1).trim());
         this.promptUser();
         return;
       }
 
-      // / = slash commands
       if (trimmed.startsWith("/")) {
         const cont = this.handleCommand(trimmed);
         if (cont) this.promptUser();
         return;
       }
 
-      // Regular message → send to agent
       await this.sendMessage(trimmed);
       this.promptUser();
     });
@@ -108,6 +117,39 @@ export class ChatInterface {
         console.log(chalk.yellow("\n  Conversation cleared.\n"));
         return true;
 
+      case "/new":
+        this.agent.clearHistory();
+        this.conversation = createConversation(
+          String(this.modelConfig.provider || "anthropic"),
+          String(this.modelConfig.model || "default")
+        );
+        console.log(chalk.green("\n  New conversation started.\n"));
+        return true;
+
+      case "/history":
+        printConversationList();
+        return true;
+
+      case "/resume":
+        if (!arg) {
+          console.log(chalk.dim("\n  Usage: /resume <id>\n"));
+          printConversationList();
+          return true;
+        }
+        return this.resumeConversation(arg);
+
+      case "/delete":
+        if (!arg) {
+          console.log(chalk.dim("\n  Usage: /delete <id>\n"));
+          return true;
+        }
+        if (deleteConversation(arg)) {
+          console.log(chalk.green(`\n  Deleted conversation: ${arg}\n`));
+        } else {
+          console.log(chalk.red(`\n  Conversation not found: ${arg}\n`));
+        }
+        return true;
+
       case "/config":
         printConfig({
           provider: String(this.modelConfig.provider || "anthropic"),
@@ -115,6 +157,8 @@ export class ChatInterface {
           mode: this.permissionManager.getMode(),
           dir: this.workingDir,
         });
+        console.log(chalk.dim(`    Chat ID:     ${this.conversation.id}`));
+        console.log(chalk.dim(`    Messages:    ${this.conversation.messages.length}\n`));
         return true;
 
       case "/model":
@@ -135,7 +179,7 @@ export class ChatInterface {
           return true;
         }
         this.modelConfig.provider = arg.toLowerCase();
-        this.modelConfig.model = undefined; // reset to provider default
+        this.modelConfig.model = undefined;
         this.rebuildAgent();
         console.log(chalk.green(`\n  Provider switched to: ${arg}\n`));
         return true;
@@ -179,6 +223,44 @@ export class ChatInterface {
     }
   }
 
+  /** Resume a saved conversation by replaying its messages into the agent */
+  private resumeConversation(id: string): boolean {
+    const conv = loadConversation(id);
+    if (!conv) {
+      console.log(chalk.red(`\n  Conversation not found: ${id}\n`));
+      return true;
+    }
+
+    // Clear current state
+    this.agent.clearHistory();
+    this.conversation = conv;
+
+    // Replay messages into the agent's history
+    for (const msg of conv.messages) {
+      if (msg.role === "user") {
+        this.agent.addToHistory("user", msg.content);
+      } else if (msg.role === "assistant") {
+        this.agent.addToHistory("assistant", msg.content);
+      }
+    }
+
+    console.log(chalk.green(`\n  Resumed: ${conv.title}`));
+    console.log(chalk.dim(`  ${conv.messages.length} messages loaded.\n`));
+
+    // Show last few messages for context
+    const recent = conv.messages.slice(-6);
+    for (const msg of recent) {
+      if (msg.role === "user") {
+        console.log(chalk.green("  ❯ ") + chalk.dim(msg.content.substring(0, 80)));
+      } else if (msg.role === "assistant") {
+        console.log(chalk.cyan("    ") + chalk.dim(msg.content.substring(0, 80)));
+      }
+    }
+    console.log();
+
+    return true;
+  }
+
   /** Run a shell command directly (! prefix) */
   private runShellCommand(command: string): Promise<void> {
     if (!command) {
@@ -194,10 +276,8 @@ export class ChatInterface {
         maxBuffer: 10 * 1024 * 1024,
         env: { ...process.env },
       });
-
       child.stdout?.pipe(process.stdout);
       child.stderr?.pipe(process.stderr);
-
       child.on("close", (code) => {
         if (code !== 0) console.log(chalk.dim(`\n  Exit code: ${code}`));
         console.log();
@@ -206,21 +286,42 @@ export class ChatInterface {
     });
   }
 
-  /** Rebuild agent when config changes */
   private rebuildAgent(): void {
     this.agent = new AgentRunner(this.modelConfig, this.toolRegistry, this.permissionManager);
   }
 
   private async sendMessage(message: string): Promise<void> {
+    // Save user message to conversation history
+    addMessage(this.conversation, "user", message);
+
     console.log();
     const callbacks = createInteractiveCallbacks(this.spinner);
-    this.spinner.start(chalk.dim("  Thinking..."));
 
-    // Close readline so permission prompts can use stdin
+    // Wrap callbacks to also save to conversation history
+    let assistantResponse = "";
+    const wrappedCallbacks = {
+      ...callbacks,
+      onToken: (token: string) => {
+        assistantResponse += token;
+        callbacks.onToken(token);
+      },
+      onToolCall: (name: string, input: Record<string, unknown>) => {
+        addMessage(this.conversation, "tool", JSON.stringify(input), name);
+        callbacks.onToolCall(name, input);
+      },
+      onComplete: () => {
+        if (assistantResponse) {
+          addMessage(this.conversation, "assistant", assistantResponse);
+        }
+        callbacks.onComplete();
+      },
+    };
+
+    this.spinner.start(chalk.dim("  Thinking..."));
     this.rl.close();
 
     try {
-      await this.agent.run(message, callbacks);
+      await this.agent.run(message, wrappedCallbacks);
     } catch (error) {
       this.spinner.stop();
       const msg = error instanceof Error ? error.message : String(error);

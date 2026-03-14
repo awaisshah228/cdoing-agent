@@ -22,7 +22,11 @@ export function printHelp(): void {
   console.log();
   console.log(chalk.bold("  Commands:"));
   console.log(chalk.cyan("    /help                ") + "Show this help");
-  console.log(chalk.cyan("    /clear               ") + "Clear conversation history");
+  console.log(chalk.cyan("    /new                 ") + "Start a new conversation");
+  console.log(chalk.cyan("    /history             ") + "List saved conversations");
+  console.log(chalk.cyan("    /resume <id>         ") + "Resume a saved conversation");
+  console.log(chalk.cyan("    /delete <id>         ") + "Delete a saved conversation");
+  console.log(chalk.cyan("    /clear               ") + "Clear current conversation");
   console.log(chalk.cyan("    /config              ") + "Show current configuration");
   console.log(chalk.cyan("    /model <name>        ") + "Switch model  (e.g. /model gpt-4o)");
   console.log(chalk.cyan("    /provider <name>     ") + "Switch provider  (e.g. /provider openai)");
