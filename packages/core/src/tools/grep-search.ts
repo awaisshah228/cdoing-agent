@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { glob } from "glob";
 import type { BaseTool, ToolDefinition, ToolResult } from "./types";
+import { loadIgnorePatterns } from "../utils/gitignore";
 
 interface GrepMatch {
   file: string;
@@ -13,7 +14,7 @@ export class GrepSearchTool implements BaseTool {
   definition: ToolDefinition = {
     name: "grep_search",
     description:
-      "Search file contents using a regex pattern. Returns matching lines with file paths and line numbers. Use this to find code patterns, function definitions, variable usages, etc.",
+      "Search file contents using a regex pattern. Returns matching lines with file paths and line numbers. Use this to find code patterns, function definitions, variable usages, etc. Respects .gitignore.",
     inputSchema: {
       type: "object",
       properties: {
@@ -57,10 +58,11 @@ export class GrepSearchTool implements BaseTool {
 
     try {
       const regex = new RegExp(pattern, caseInsensitive ? "gi" : "g");
+      const ignorePatterns = loadIgnorePatterns(this.workingDir);
       const files = await glob(filePattern, {
         cwd: searchDir,
         nodir: true,
-        ignore: ["**/node_modules/**", "**/dist/**", "**/.git/**", "**/*.lock"],
+        ignore: ignorePatterns,
       });
 
       const matches: GrepMatch[] = [];

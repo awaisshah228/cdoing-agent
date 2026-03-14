@@ -1,12 +1,13 @@
 import { glob } from "glob";
 import * as path from "path";
 import type { BaseTool, ToolDefinition, ToolResult } from "./types";
+import { loadIgnorePatterns } from "../utils/gitignore";
 
 export class GlobSearchTool implements BaseTool {
   definition: ToolDefinition = {
     name: "glob_search",
     description:
-      "Search for files matching a glob pattern. Returns a list of matching file paths sorted by modification time. Use patterns like '**/*.ts', 'src/**/*.js', '*.json'.",
+      "Search for files matching a glob pattern. Returns a list of matching file paths sorted by modification time. Use patterns like '**/*.ts', 'src/**/*.js', '*.json'. Respects .gitignore.",
     inputSchema: {
       type: "object",
       properties: {
@@ -38,10 +39,11 @@ export class GlobSearchTool implements BaseTool {
       : path.resolve(this.workingDir, directory);
 
     try {
+      const ignorePatterns = loadIgnorePatterns(this.workingDir);
       const files = await glob(pattern, {
         cwd: searchDir,
         nodir: true,
-        ignore: ["**/node_modules/**", "**/dist/**", "**/.git/**"],
+        ignore: ignorePatterns,
       });
 
       if (files.length === 0) {

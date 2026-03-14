@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { exec } from "child_process";
 import type { BaseTool, ToolDefinition, ToolResult } from "./types";
+import { safePath } from "../utils/path-safety";
 
 /** Map file extensions to the command that runs them */
 const RUNNERS: Record<string, string> = {
@@ -37,7 +38,13 @@ export class FileRunTool implements BaseTool {
   }
 
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
-    const filePath = this.resolve(input.file_path as string);
+    let filePath: string;
+    try {
+      filePath = safePath(input.file_path as string, this.workingDir);
+    } catch (err) {
+      return { success: false, output: "", error: (err as Error).message };
+    }
+
     const args = (input.args as string) || "";
     const timeout = (input.timeout as number) || 30000;
 
@@ -66,9 +73,5 @@ export class FileRunTool implements BaseTool {
           else resolve({ success: true, output });
         });
     });
-  }
-
-  private resolve(p: string): string {
-    return path.isAbsolute(p) ? p : path.resolve(this.workingDir, p);
   }
 }

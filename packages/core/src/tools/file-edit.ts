@@ -1,12 +1,12 @@
 import * as fs from "fs";
-import * as path from "path";
 import type { BaseTool, ToolDefinition, ToolResult } from "./types";
+import { safePath } from "../utils/path-safety";
 
 export class FileEditTool implements BaseTool {
   definition: ToolDefinition = {
     name: "file_edit",
     description:
-      "Edit a file by replacing an exact string match with new content. The old_string must match exactly including whitespace.",
+      "Edit a file by replacing an exact string match with new content. The old_string must match exactly including whitespace. Returns a unified diff of the changes.",
     inputSchema: {
       type: "object",
       properties: {
@@ -27,7 +27,13 @@ export class FileEditTool implements BaseTool {
   }
 
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
-    const filePath = this.resolve(input.file_path as string);
+    let filePath: string;
+    try {
+      filePath = safePath(input.file_path as string, this.workingDir);
+    } catch (err) {
+      return { success: false, output: "", error: (err as Error).message };
+    }
+
     const oldStr = input.old_string as string;
     const newStr = input.new_string as string;
     const replaceAll = (input.replace_all as boolean) || false;
@@ -52,10 +58,27 @@ export class FileEditTool implements BaseTool {
 
     fs.writeFileSync(filePath, updated, "utf-8");
     const count = replaceAll ? content.split(oldStr).length - 1 : 1;
-    return { success: true, output: `Edited ${filePath}: replaced ${count} occurrence(s)` };
+
+    // Generate a simple diff
+    const diff = generateDiff(filePath, oldStr, newStr, count);
+
+    return { success: true, output: `Edited ${filePath}: replaced ${count} occurrence(s)\n\n${diff}` };
+  }
+}
+
+/** Generate a unified-style diff showing what changed */
+function generateDiff(filePath: string, oldStr: string, newStr: string, count: number): string {
+  const oldLines = oldStr.split("\n");
+  const newLines = newStr.split("\n");
+
+  const parts: string[] = [`--- a/${filePath}`, `+++ b/${filePath}`, `@@ -1,${oldLines.length} +1,${newLines.length} @@ (${count} replacement${count > 1 ? "s" : ""})`];
+
+  for (const line of oldLines) {
+    parts.push(`- ${line}`);
+  }
+  for (const line of newLines) {
+    parts.push(`+ ${line}`);
   }
 
-  private resolve(p: string): string {
-    return path.isAbsolute(p) ? p : path.resolve(this.workingDir, p);
-  }
+  return parts.join("\n");
 }

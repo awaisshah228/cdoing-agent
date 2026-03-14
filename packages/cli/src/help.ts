@@ -32,6 +32,9 @@ export function printHelp(): void {
   console.log(chalk.cyan("    /provider <name>     ") + "Switch provider  (e.g. /provider openai)");
   console.log(chalk.cyan("    /mode <mode>         ") + "Change permission mode  (ask, auto-edit, auto)");
   console.log(chalk.cyan("    /permissions         ") + "View/clear stored permissions");
+  console.log(chalk.cyan("    /memory              ") + "View/manage persistent memory");
+  console.log(chalk.cyan("    /hooks               ") + "View configured hooks");
+  console.log(chalk.cyan("    /usage               ") + "Show token usage and cost");
   console.log(chalk.cyan("    /dir <path>          ") + "Change working directory");
   console.log(chalk.cyan("    /exit, /quit         ") + "Exit");
   console.log();

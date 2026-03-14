@@ -11,9 +11,16 @@ import {
   GrepSearchTool,
   ShellExecTool,
   FileRunTool,
+  WebFetchTool,
+  WebSearchTool,
+  SubAgentTool,
 } from "@cdoing/core";
+import type { SubAgentRunnerFactory } from "@cdoing/core";
 
-export function createToolRegistry(workingDir: string): ToolRegistry {
+export function createToolRegistry(
+  workingDir: string,
+  subAgentFactory?: SubAgentRunnerFactory,
+): ToolRegistry {
   const registry = new ToolRegistry();
 
   // File tools
@@ -28,6 +35,15 @@ export function createToolRegistry(workingDir: string): ToolRegistry {
   // Execution tools
   registry.register(new ShellExecTool(workingDir));
   registry.register(new FileRunTool(workingDir));
+
+  // Web tools
+  registry.register(new WebFetchTool());
+  registry.register(new WebSearchTool());
+
+  // Sub-agent (only if factory provided — prevents infinite recursion)
+  if (subAgentFactory) {
+    registry.register(new SubAgentTool(subAgentFactory));
+  }
 
   return registry;
 }

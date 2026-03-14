@@ -10,11 +10,14 @@
  *   /mode <mode>        — change permission mode
  *   /dir <path>         — change working directory
  *   /permissions        — view/clear stored permissions
+ *   /memory             — view/manage persistent memory
+ *   /hooks              — view configured hooks
  *   /new                — start a new conversation
  *   /history            — list saved conversations
  *   /resume <id>        — resume a saved conversation
  *   /delete <id>        — delete a saved conversation
  *   /clear              — clear current conversation
+ *   /usage              — show token usage and cost
  *   /exit               — quit
  */
 
@@ -25,7 +28,8 @@ import { exec } from "child_process";
 import chalk from "chalk";
 import ora from "ora";
 import { AgentRunner } from "@cdoing/ai";
-import type { ToolRegistry, PermissionManager, PermissionMode } from "@cdoing/core";
+import type { ToolRegistry, PermissionManager, PermissionMode, HookManager, MemoryStore } from "@cdoing/core";
+import { loadProjectConfig } from "@cdoing/core";
 import type { ModelConfig } from "@cdoing/ai";
 import { printWelcome, printHelp, printConfig } from "./help";
 import { createInteractiveCallbacks } from "./callbacks";
@@ -47,20 +51,26 @@ export class ChatInterface {
   private modelConfig: Partial<ModelConfig>;
   private toolRegistry: ToolRegistry;
   private permissionManager: PermissionManager;
+  private hookManager: HookManager;
+  private memoryStore: MemoryStore;
   private workingDir: string;
   private conversation: Conversation;
-  private lastSigint = 0; // Track double Ctrl+C for force exit
+  private lastSigint = 0;
 
   constructor(
     modelConfig: Partial<ModelConfig>,
     toolRegistry: ToolRegistry,
-    permissionManager: PermissionManager
+    permissionManager: PermissionManager,
+    hookManager: HookManager,
+    memoryStore: MemoryStore,
   ) {
     this.modelConfig = modelConfig;
     this.toolRegistry = toolRegistry;
     this.permissionManager = permissionManager;
+    this.hookManager = hookManager;
+    this.memoryStore = memoryStore;
     this.workingDir = process.cwd();
-    this.agent = new AgentRunner(modelConfig, toolRegistry, permissionManager);
+    this.agent = this.buildAgent();
     this.conversation = createConversation(
       String(modelConfig.provider || "anthropic"),
       String(modelConfig.model || "default")
@@ -68,22 +78,33 @@ export class ChatInterface {
     this.createReadline();
   }
 
+  private buildAgent(): AgentRunner {
+    const projectConfig = loadProjectConfig(this.workingDir);
+    return new AgentRunner(
+      this.modelConfig,
+      this.toolRegistry,
+      this.permissionManager,
+      this.hookManager,
+      {
+        projectConfig: projectConfig || undefined,
+        memory: this.memoryStore.formatForPrompt() || undefined,
+      }
+    );
+  }
+
   private createReadline(): void {
     this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
     });
-    // Ctrl+C on readline → don't exit, just cancel current input
     this.rl.on("SIGINT", () => {
       this.handleSigint();
     });
   }
 
-  /** Handle Ctrl+C — double press within 1s force exits */
   private handleSigint(): void {
     const now = Date.now();
     if (now - this.lastSigint < 1000) {
-      // Double Ctrl+C → force exit
       console.log(chalk.dim("\n  Goodbye!\n"));
       process.exit(0);
     }
@@ -226,12 +247,25 @@ export class ChatInterface {
         this.workingDir = newDir;
         this.toolRegistry = createToolRegistry(newDir);
         this.permissionManager.setProjectDir(newDir);
+        this.hookManager.setWorkingDir(newDir);
         this.rebuildAgent();
         console.log(chalk.green(`\n  Working directory: ${newDir}\n`));
         return true;
 
       case "/permissions":
         this.showPermissions(arg);
+        return true;
+
+      case "/memory":
+        this.showMemory(arg);
+        return true;
+
+      case "/hooks":
+        this.showHooks();
+        return true;
+
+      case "/usage":
+        this.showUsage();
         return true;
 
       case "/exit":
@@ -302,6 +336,62 @@ export class ChatInterface {
     console.log(chalk.dim(`  /permissions <tool_name>    — remove specific tool\n`));
   }
 
+  /** Show or manage memory */
+  private showMemory(arg: string): void {
+    if (arg === "clear") {
+      this.memoryStore.clear();
+      console.log(chalk.green("\n  All memories cleared.\n"));
+      return;
+    }
+
+    if (arg && arg.startsWith("forget ")) {
+      const key = arg.slice(7).trim();
+      if (this.memoryStore.forget(key)) {
+        console.log(chalk.green(`\n  Forgot: ${key}\n`));
+      } else {
+        console.log(chalk.red(`\n  Memory not found: ${key}\n`));
+      }
+      return;
+    }
+
+    const memories = this.memoryStore.getAll();
+    if (memories.length === 0) {
+      console.log(chalk.dim("\n  No stored memories."));
+      console.log(chalk.dim("  The agent can save memories during conversations.\n"));
+      return;
+    }
+
+    console.log(chalk.bold("\n  Stored Memories:\n"));
+    for (const m of memories) {
+      console.log(`    ${chalk.cyan(m.category)} ${chalk.bold(m.key)}: ${chalk.white(m.value)}`);
+    }
+    console.log(chalk.dim(`\n  /memory clear          — clear all`));
+    console.log(chalk.dim(`  /memory forget <key>   — forget specific memory\n`));
+  }
+
+  /** Show configured hooks */
+  private showHooks(): void {
+    const hooks = this.hookManager.getHooks();
+    if (hooks.length === 0) {
+      console.log(chalk.dim("\n  No hooks configured."));
+      console.log(chalk.dim("  Add hooks in ~/.cdoing/hooks.json or .cdoing/hooks.json\n"));
+      return;
+    }
+
+    console.log(chalk.bold("\n  Configured Hooks:\n"));
+    for (const h of hooks) {
+      console.log(`    ${chalk.yellow(h.event)} → ${chalk.dim(h.command)}`);
+    }
+    console.log();
+  }
+
+  /** Show token usage stats */
+  private showUsage(): void {
+    const cm = this.agent.getContextManager();
+    const formatted = cm.formatTotalUsage();
+    console.log(chalk.dim(`\n  ${formatted}\n`));
+  }
+
   /** Resume a saved conversation by replaying its messages into the agent */
   private resumeConversation(id: string): boolean {
     const conv = loadConversation(id);
@@ -310,11 +400,9 @@ export class ChatInterface {
       return true;
     }
 
-    // Clear current state
     this.agent.clearHistory();
     this.conversation = conv;
 
-    // Replay messages into the agent's history
     for (const msg of conv.messages) {
       if (msg.role === "user") {
         this.agent.addToHistory("user", msg.content);
@@ -326,7 +414,6 @@ export class ChatInterface {
     console.log(chalk.green(`\n  Resumed: ${conv.title}`));
     console.log(chalk.dim(`  ${conv.messages.length} messages loaded.\n`));
 
-    // Show last few messages for context
     const recent = conv.messages.slice(-6);
     for (const msg of recent) {
       if (msg.role === "user") {
@@ -347,7 +434,6 @@ export class ChatInterface {
       return Promise.resolve();
     }
 
-    // Intercept `cd` — change working directory like /dir
     const cdMatch = command.match(/^cd\s+(.+)$/);
     if (cdMatch) {
       const target = cdMatch[1].trim().replace(/^~/, process.env.HOME || "~");
@@ -358,6 +444,8 @@ export class ChatInterface {
       }
       this.workingDir = newDir;
       this.toolRegistry = createToolRegistry(newDir);
+      this.permissionManager.setProjectDir(newDir);
+      this.hookManager.setWorkingDir(newDir);
       this.rebuildAgent();
       console.log(chalk.green(`\n  ${newDir}\n`));
       return Promise.resolve();
@@ -368,14 +456,13 @@ export class ChatInterface {
       console.log(chalk.dim("  (Ctrl+C to stop)\n"));
       const child = exec(command, {
         cwd: this.workingDir,
-        timeout: 600000, // 10 min for long-running commands
+        timeout: 600000,
         maxBuffer: 10 * 1024 * 1024,
         env: { ...process.env },
       });
       child.stdout?.pipe(process.stdout);
       child.stderr?.pipe(process.stderr);
 
-      // Ctrl+C kills the child process, not the CLI
       const onSigint = () => {
         child.kill("SIGTERM");
         console.log(chalk.dim("\n  Command stopped.\n"));
@@ -392,17 +479,15 @@ export class ChatInterface {
   }
 
   private rebuildAgent(): void {
-    this.agent = new AgentRunner(this.modelConfig, this.toolRegistry, this.permissionManager);
+    this.agent = this.buildAgent();
   }
 
   private async sendMessage(message: string): Promise<void> {
-    // Save user message to conversation history
     addMessage(this.conversation, "user", message);
 
     console.log();
     const callbacks = createInteractiveCallbacks(this.spinner);
 
-    // Wrap callbacks to also save to conversation history
     let assistantResponse = "";
     const wrappedCallbacks = {
       ...callbacks,
@@ -425,7 +510,6 @@ export class ChatInterface {
     this.spinner.start(chalk.dim("  Thinking..."));
     this.rl.close();
 
-    // Ctrl+C during thinking/execution → cancel and return to prompt
     let cancelled = false;
     const onSigint = () => {
       cancelled = true;

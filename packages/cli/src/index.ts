@@ -7,6 +7,7 @@
 
 import { Command } from "commander";
 import { AgentRunner } from "@cdoing/ai";
+import { HookManager, loadProjectConfig, MemoryStore } from "@cdoing/core";
 import { ChatInterface } from "./chat";
 import { buildModelConfig, createPermissionManager, resolveApiKey, type CLIOptions } from "./config";
 import { createToolRegistry } from "./tools";
@@ -27,18 +28,56 @@ program
   .argument("[prompt]", "One-shot prompt (skips interactive mode)")
   .action(run);
 
+/** Create a sub-agent factory: spawns a child agent without sub_agent tool */
+function createSubAgentFactory(
+  modelConfig: Partial<import("@cdoing/ai").ModelConfig>,
+  workingDir: string,
+  permissionManager: import("@cdoing/core").PermissionManager,
+  hookManager: HookManager,
+  options?: { projectConfig?: string; memory?: string },
+) {
+  return async (prompt: string): Promise<string> => {
+    // Child registry has no sub_agent tool (no recursion)
+    const childRegistry = createToolRegistry(workingDir);
+    const childAgent = new AgentRunner(modelConfig, childRegistry, permissionManager, hookManager, options);
+    // Silent callbacks — collect result only
+    let result = "";
+    await childAgent.run(prompt, {
+      onToken: (t) => { result += t; },
+      onToolCall: () => {},
+      onToolResult: () => {},
+      onComplete: () => {},
+      onError: (e) => { result += `\nError: ${e.message}`; },
+    });
+    return result;
+  };
+}
+
 async function run(prompt: string | undefined, options: CLIOptions) {
   await resolveApiKey(options);
 
   const modelConfig = buildModelConfig(options);
   const permissionManager = createPermissionManager(options);
-  const toolRegistry = createToolRegistry(options.dir);
+  const hookManager = new HookManager(options.dir);
+  const memoryStore = new MemoryStore();
+  const projectConfig = loadProjectConfig(options.dir);
+
+  const agentOptions = {
+    projectConfig: projectConfig || undefined,
+    memory: memoryStore.formatForPrompt() || undefined,
+  };
+
+  const subAgentFactory = createSubAgentFactory(
+    modelConfig, options.dir, permissionManager, hookManager, agentOptions,
+  );
+
+  const toolRegistry = createToolRegistry(options.dir, subAgentFactory);
 
   if (prompt) {
-    const agent = new AgentRunner(modelConfig, toolRegistry, permissionManager);
+    const agent = new AgentRunner(modelConfig, toolRegistry, permissionManager, hookManager, agentOptions);
     await agent.run(prompt, createOneShotCallbacks());
   } else {
-    const chat = new ChatInterface(modelConfig, toolRegistry, permissionManager);
+    const chat = new ChatInterface(modelConfig, toolRegistry, permissionManager, hookManager, memoryStore);
     await chat.start();
   }
 }

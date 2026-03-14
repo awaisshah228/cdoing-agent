@@ -1,3 +1,4 @@
+// Tools
 export { ToolRegistry } from "./tools/registry";
 export { FileReadTool } from "./tools/file-read";
 export { FileWriteTool } from "./tools/file-write";
@@ -6,6 +7,23 @@ export { GlobSearchTool } from "./tools/glob-search";
 export { GrepSearchTool } from "./tools/grep-search";
 export { ShellExecTool } from "./tools/shell-exec";
 export { FileRunTool } from "./tools/file-run";
+export { WebFetchTool } from "./tools/web-fetch";
+export { WebSearchTool } from "./tools/web-search";
+export { SubAgentTool } from "./tools/sub-agent";
+export type { SubAgentRunnerFactory } from "./tools/sub-agent";
+export type { ToolDefinition, ToolResult, BaseTool } from "./tools/types";
+
+// Permissions
 export { PermissionManager, PermissionMode } from "./permissions";
 export type { PermissionRule, PermissionScope } from "./permissions";
-export type { ToolDefinition, ToolResult, BaseTool } from "./tools/types";
+
+// Hooks
+export { HookManager } from "./hooks";
+export type { HookDefinition, HookResult } from "./hooks";
+
+// Utilities
+export { safePath } from "./utils/path-safety";
+export { loadIgnorePatterns } from "./utils/gitignore";
+export { loadProjectConfig, getProjectConfigPath } from "./utils/project-config";
+export { MemoryStore } from "./utils/memory";
+export type { MemoryEntry } from "./utils/memory";

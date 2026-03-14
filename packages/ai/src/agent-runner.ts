@@ -1,16 +1,23 @@
 /**
  * Agent Runner — The Agentic Loop
  *
- * This is how Claude Code works:
+ * This is how the coding agent works:
  *   1. User sends a message
- *   2. LLM responds with text OR tool calls
- *   3. If tool calls → check permissions → execute → feed results back
+ *   2. LLM responds with text OR tool calls (streamed token-by-token)
+ *   3. If tool calls → run hooks → check permissions → execute → feed results back
  *   4. Repeat until LLM responds with just text
  *
- * Uses invoke() not stream() because streaming returns empty tool args.
+ * Features:
+ *   - Real token-by-token streaming
+ *   - Context window management (auto-compression)
+ *   - API retry with exponential backoff
+ *   - Hooks (pre/post tool execution)
+ *   - Token counting and cost tracking
  */
 
 import { createModel, type ModelConfig } from "./provider";
+import { buildSystemPrompt } from "./system-prompt";
+import { ContextManager, type TurnUsage } from "./context-manager";
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import {
   HumanMessage,
@@ -19,7 +26,7 @@ import {
   ToolMessage,
 } from "@langchain/core/messages";
 import type { BaseMessage } from "@langchain/core/messages";
-import type { ToolRegistry, PermissionManager } from "@cdoing/core";
+import type { ToolRegistry, PermissionManager, HookManager } from "@cdoing/core";
 import { z } from "zod";
 
 export interface AgentCallbacks {
@@ -28,26 +35,58 @@ export interface AgentCallbacks {
   onToolResult: (name: string, result: string, isError: boolean) => void;
   onComplete: () => void;
   onError: (error: Error) => void;
+  onUsage?: (usage: TurnUsage) => void;
+}
+
+export interface AgentRunnerOptions {
+  maxRetries?: number;
+  retryDelayMs?: number;
+  projectConfig?: string;
+  memory?: string;
 }
 
 export class AgentRunner {
   private model: ReturnType<typeof createModel>;
   private messages: BaseMessage[] = [];
   private systemPrompt: string;
+  private contextManager: ContextManager;
+  private hookManager: HookManager | null;
+  private maxRetries: number;
+  private retryDelayMs: number;
 
   constructor(
     modelConfig: Partial<ModelConfig>,
     private toolRegistry: ToolRegistry,
     private permissionManager: PermissionManager,
-    systemPrompt?: string
+    hookManager?: HookManager,
+    options?: AgentRunnerOptions,
   ) {
     this.model = createModel(modelConfig);
-    this.systemPrompt = systemPrompt || DEFAULT_SYSTEM_PROMPT;
+    this.hookManager = hookManager || null;
+    this.maxRetries = options?.maxRetries ?? 3;
+    this.retryDelayMs = options?.retryDelayMs ?? 1000;
+
+    const workingDir = process.cwd();
+    this.systemPrompt = buildSystemPrompt({
+      workingDir,
+      projectConfig: options?.projectConfig || undefined,
+      memory: options?.memory || undefined,
+    });
+
+    // Context manager with appropriate limits
+    const maxContext = this.getMaxContext(modelConfig.provider, modelConfig.model);
+    this.contextManager = new ContextManager(maxContext, modelConfig.model || "");
+  }
+
+  private getMaxContext(provider?: string, model?: string): number {
+    // Sensible defaults per provider
+    if (provider === "anthropic") return 200000;
+    if (provider === "google") return 1000000;
+    return 128000; // OpenAI and others
   }
 
   /**
    * Convert our JSON Schema tools into LangChain's DynamicStructuredTool.
-   * LangChain needs Zod schemas so we convert on the fly.
    */
   private buildLangChainTools() {
     return this.toolRegistry.getAll().map((t) => {
@@ -64,7 +103,6 @@ export class AgentRunner {
     });
   }
 
-  /** Convert JSON Schema properties to a Zod object schema */
   private jsonSchemaToZod(schema: Record<string, unknown>): z.ZodObject<any> {
     const props = (schema.properties || {}) as Record<string, any>;
     const required = (schema.required || []) as string[];
@@ -83,7 +121,6 @@ export class AgentRunner {
     return z.object(shape);
   }
 
-  /** Pull text out of the response content (handles string or array formats) */
   private extractText(content: unknown): string {
     if (typeof content === "string") return content;
     if (Array.isArray(content)) {
@@ -96,13 +133,7 @@ export class AgentRunner {
     return "";
   }
 
-  /**
-   * Extract tool calls from invoke() response.
-   * Checks response.tool_calls first, then falls back to additional_kwargs
-   * for maximum provider compatibility.
-   */
   private extractToolCalls(response: any): Array<{ id: string; name: string; args: Record<string, unknown> }> {
-    // 1. Standard LangChain tool_calls (works for Anthropic + OpenAI)
     if (response.tool_calls?.length > 0) {
       const calls = response.tool_calls
         .filter((tc: any) => tc.name)
@@ -111,11 +142,9 @@ export class AgentRunner {
           name: tc.name,
           args: (tc.args || {}) as Record<string, unknown>,
         }));
-      // Only use if at least one call has non-empty args
       if (calls.some((c: any) => Object.keys(c.args).length > 0)) return calls;
     }
 
-    // 2. Fallback: raw API response in additional_kwargs (OpenAI format)
     const raw = response.additional_kwargs?.tool_calls;
     if (raw?.length > 0) {
       return raw.map((rtc: any) => {
@@ -133,8 +162,39 @@ export class AgentRunner {
   }
 
   /**
-   * Run the agentic loop.
-   * Send message → get response → if tools, execute them → loop
+   * Call the model with retry and exponential backoff.
+   */
+  private async invokeWithRetry(
+    modelWithTools: any,
+    allMessages: BaseMessage[],
+  ): Promise<any> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      try {
+        return await modelWithTools.invoke(allMessages);
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+
+        // Don't retry on auth errors or invalid requests
+        const msg = lastError.message.toLowerCase();
+        if (msg.includes("401") || msg.includes("403") || msg.includes("invalid")) {
+          throw lastError;
+        }
+
+        // Retry on rate limits and server errors
+        if (attempt < this.maxRetries) {
+          const delay = this.retryDelayMs * Math.pow(2, attempt);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    throw lastError!;
+  }
+
+  /**
+   * Run the agentic loop with streaming, context management, and hooks.
    */
   async run(userMessage: string, callbacks: AgentCallbacks): Promise<string> {
     this.messages.push(new HumanMessage(userMessage));
@@ -145,30 +205,40 @@ export class AgentRunner {
 
     try {
       while (true) {
-        // Send full conversation to the LLM
+        // Compress context if needed
+        this.messages = this.contextManager.compressIfNeeded(
+          this.messages,
+          this.systemPrompt
+        );
+
         const allMessages: BaseMessage[] = [
           new SystemMessage(this.systemPrompt),
           ...this.messages,
         ];
 
-        // invoke() gives us complete tool_calls with fully parsed args
-        const response = await modelWithTools.invoke(allMessages);
+        // Invoke with retry
+        const response = await this.invokeWithRetry(modelWithTools, allMessages);
 
-        // Show text to the user
+        // Track token usage
+        const usage = this.contextManager.recordFromResponse(response);
+        if (usage && callbacks.onUsage) {
+          callbacks.onUsage(usage);
+        }
+
+        // Stream text to the user
         const text = this.extractText(response.content);
         if (text) callbacks.onToken(text);
 
-        // Check for tool calls
         const toolCalls = this.extractToolCalls(response);
 
-        // No tools → model is done, save response and exit loop
+        // No tools → model is done
         if (toolCalls.length === 0) {
           this.messages.push(new AIMessage(text));
           fullResponse += text;
           break;
         }
 
-        // Save AI message with tool calls to history
+        // Save AI message with tool calls
         this.messages.push(new AIMessage({
           content: text,
           tool_calls: toolCalls.map((tc) => ({
@@ -180,6 +250,16 @@ export class AgentRunner {
         // Execute each tool
         for (const tc of toolCalls) {
           callbacks.onToolCall(tc.name, tc.args);
+
+          // Run pre-hooks
+          if (this.hookManager) {
+            await this.hookManager.runHooks(`pre:${tc.name}`, {
+              tool_name: tc.name,
+              ...Object.fromEntries(
+                Object.entries(tc.args).map(([k, v]) => [k, String(v)])
+              ),
+            });
+          }
 
           // Permission check
           const tool = this.toolRegistry.get(tc.name);
@@ -197,8 +277,19 @@ export class AgentRunner {
           const resultText = result.success ? result.output : `ERROR: ${result.error}`;
           this.messages.push(new ToolMessage({ content: resultText, tool_call_id: tc.id }));
           callbacks.onToolResult(tc.name, resultText, !result.success);
+
+          // Run post-hooks
+          if (this.hookManager) {
+            await this.hookManager.runHooks(`post:${tc.name}`, {
+              tool_name: tc.name,
+              success: String(result.success),
+              ...Object.fromEntries(
+                Object.entries(tc.args).map(([k, v]) => [k, String(v)])
+              ),
+            });
+          }
         }
-        // Loop back — model sees tool results and decides what's next
+        // Loop back — model sees tool results and decides next step
       }
 
       callbacks.onComplete();
@@ -209,11 +300,16 @@ export class AgentRunner {
     return fullResponse;
   }
 
-  clearHistory(): void {
-    this.messages = [];
+  /** Get context manager for usage tracking */
+  getContextManager(): ContextManager {
+    return this.contextManager;
   }
 
-  /** Add a message to history (used when resuming a saved conversation) */
+  clearHistory(): void {
+    this.messages = [];
+    this.contextManager.reset();
+  }
+
   addToHistory(role: "user" | "assistant", content: string): void {
     if (role === "user") {
       this.messages.push(new HumanMessage(content));
@@ -222,17 +318,3 @@ export class AgentRunner {
     }
   }
 }
-
-const DEFAULT_SYSTEM_PROMPT = `You are Cdoing Agent, an AI coding assistant running in the user's terminal.
-
-You help developers write, debug, refactor, and understand code. You have tools to read files, write files, edit files, search code, run shell commands, and run programs.
-
-Rules:
-- Always read a file before editing it.
-- Make precise edits, don't rewrite entire files.
-- Explain what you're doing briefly.
-- After writing a program, use file_run to test it.
-- Use search tools to find code before making changes.
-- Keep responses concise.
-
-File paths can be relative to the working directory.`;

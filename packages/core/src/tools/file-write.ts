@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import type { BaseTool, ToolDefinition, ToolResult } from "./types";
+import { safePath } from "../utils/path-safety";
 
 export class FileWriteTool implements BaseTool {
   definition: ToolDefinition = {
@@ -31,7 +32,13 @@ export class FileWriteTool implements BaseTool {
   }
 
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
-    const filePath = this.resolve(input.file_path as string);
+    let filePath: string;
+    try {
+      filePath = safePath(input.file_path as string, this.workingDir);
+    } catch (err) {
+      return { success: false, output: "", error: (err as Error).message };
+    }
+
     const content = input.content as string;
 
     try {
@@ -49,9 +56,5 @@ export class FileWriteTool implements BaseTool {
     } catch (err) {
       return { success: false, output: "", error: `Failed to write: ${err}` };
     }
-  }
-
-  private resolve(p: string): string {
-    return path.isAbsolute(p) ? p : path.resolve(this.workingDir, p);
   }
 }
