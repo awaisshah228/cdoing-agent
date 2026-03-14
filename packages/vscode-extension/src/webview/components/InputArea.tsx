@@ -1,107 +1,300 @@
 /**
- * InputArea.tsx — Chat Input Component
+ * InputArea.tsx — Chat Input (Copilot style with @ autocomplete)
  *
- * The textarea + Send button at the bottom of the chat panel.
- * Features:
- *   - Auto-resizes as the user types (up to 150px max height)
- *   - Enter to send, Shift+Enter for new line
- *   - Always enabled — messages are queued if agent is busy
- *   - Shows queue count badge when messages are queued
- *   - Listens for "insertMessage" events (from right-click "Send Selection")
+ * Layout:
+ *   ┌──────────────────────────────────────┐
+ *   │ TS server.ts:519-520            ×   │  ← context chips
+ *   │                                      │
+ *   │ @src/app                             │  ← typing triggers dropdown
+ *   │ ┌──────────────────────────────┐     │
+ *   │ │ 📄 src/app.ts               │     │  ← file suggestions
+ *   │ │ 📄 src/app.test.ts          │     │
+ *   │ │ 📁 src/api/                 │     │
+ *   │ └──────────────────────────────┘     │
+ *   │ +  📎                            ↑  │  ← toolbar
+ *   └──────────────────────────────────────┘
  */
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
-import type { IncomingMessage } from "../types";
+import type { IncomingMessage, ContextAttachment } from "../types";
+import { useVsCode } from "../hooks/useVsCode";
 
 interface InputAreaProps {
-  isProcessing: boolean;             // Shows "queued" hint when true
-  queueCount: number;                // Number of messages in queue
-  onSend: (text: string) => void;    // Called when user sends a message
+  isProcessing: boolean;
+  queueCount: number;
+  onSend: (text: string, context?: ContextAttachment[]) => void;
 }
+
+interface FileResult {
+  path: string;
+  isDir: boolean;
+  language?: string;
+}
+
+const LANG_ICONS: Record<string, string> = {
+  javascript: "JS", typescript: "TS", python: "PY", go: "GO",
+  rust: "RS", java: "JA", css: "CSS", html: "HTML", json: "{}",
+  yaml: "YML", markdown: "MD", bash: "SH", sql: "SQL",
+  cpp: "C++", c: "C", ruby: "RB", php: "PHP", swift: "SW",
+};
 
 export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, onSend }) => {
   const [text, setText] = useState("");
+  const [attachments, setAttachments] = useState<ContextAttachment[]>([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [fileResults, setFileResults] = useState<FileResult[]>([]);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [atQuery, setAtQuery] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const vscode = useVsCode();
 
-  /** Sends the current text and clears the input */
+  // ── Send ──
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
-    if (!trimmed) return;
-    onSend(trimmed);
+    if (!trimmed && attachments.length === 0) return;
+    onSend(trimmed, attachments.length > 0 ? attachments : undefined);
     setText("");
-    // Reset textarea height after sending
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
-    }
-  }, [text, onSend]);
+    setAttachments([]);
+    setShowDropdown(false);
+    if (textareaRef.current) textareaRef.current.style.height = "auto";
+  }, [text, attachments, onSend]);
 
-  /** Enter sends, Shift+Enter adds a new line */
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Enter" && !e.shiftKey) {
+  // ── Keydown ──
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (showDropdown && fileResults.length > 0) {
+      if (e.key === "ArrowDown") {
         e.preventDefault();
-        handleSend();
+        setSelectedIndex((i) => Math.min(i + 1, fileResults.length - 1));
+        return;
       }
-    },
-    [handleSend]
-  );
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSelectedIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        selectFile(fileResults[selectedIndex]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setShowDropdown(false);
+        return;
+      }
+    }
+    if (e.key === "Enter" && !e.shiftKey && !showDropdown) {
+      e.preventDefault();
+      handleSend();
+    }
+  }, [showDropdown, fileResults, selectedIndex, handleSend]);
 
-  /** Auto-resize the textarea to fit content (capped at 150px) */
-  const handleInput = useCallback(() => {
+  // ── Select a file from dropdown ──
+  const selectFile = useCallback((file: FileResult) => {
+    // Remove @query from text
+    const atPos = text.lastIndexOf("@");
+    const newText = atPos >= 0 ? text.substring(0, atPos) : text;
+    setText(newText);
+
+    // Add as context chip
+    setAttachments((prev) => {
+      if (prev.some((a) => a.path === file.path)) return prev;
+      return [...prev, {
+        type: file.isDir ? "folder" as const : "file" as const,
+        path: file.path,
+        language: file.language,
+      }];
+    });
+
+    setShowDropdown(false);
+    setFileResults([]);
+    setSelectedIndex(0);
+    setTimeout(() => textareaRef.current?.focus(), 0);
+  }, [text]);
+
+  // ── Text change — detect @ trigger ──
+  const handleTextChange = useCallback((newText: string) => {
+    setText(newText);
+
+    // Auto-resize
     const el = textareaRef.current;
     if (el) {
       el.style.height = "auto";
       el.style.height = `${Math.min(el.scrollHeight, 150)}px`;
     }
-  }, []);
 
-  // Listen for "insertMessage" from the extension host.
+    // Check for @ trigger
+    const atPos = newText.lastIndexOf("@");
+    if (atPos >= 0) {
+      // Make sure @ is at start of word (not in an email)
+      const charBefore = atPos > 0 ? newText[atPos - 1] : " ";
+      if (charBefore === " " || charBefore === "\n" || atPos === 0) {
+        const query = newText.substring(atPos + 1);
+        // Don't trigger if there's a space after the query (user moved on)
+        if (!query.includes(" ") && !query.includes("\n")) {
+          setAtQuery(query);
+          setShowDropdown(true);
+          setSelectedIndex(0);
+
+          // Debounce the search request
+          if (debounceRef.current) clearTimeout(debounceRef.current);
+          debounceRef.current = setTimeout(() => {
+            vscode.postMessage({ type: "searchFiles", query });
+          }, 150);
+          return;
+        }
+      }
+    }
+
+    setShowDropdown(false);
+  }, [vscode]);
+
+  // ── Listen for messages ──
   useEffect(() => {
     function handler(event: MessageEvent<IncomingMessage>) {
-      if (event.data.type === "insertMessage") {
-        const msg = (event.data as any).message as string;
-        setText(msg);
-        setTimeout(() => {
-          textareaRef.current?.focus();
-          handleInput();
-        }, 0);
+      const data = event.data as any;
+      if (data.type === "insertMessage") {
+        if (data.message) setText(data.message);
+        setTimeout(() => textareaRef.current?.focus(), 0);
+      }
+      if (data.type === "contextAttached") {
+        const att = data.attachment as ContextAttachment;
+        setAttachments((prev) => {
+          if (prev.some((a) => a.path === att.path && a.type === att.type && a.startLine === att.startLine)) return prev;
+          return [...prev, att];
+        });
+        setTimeout(() => textareaRef.current?.focus(), 0);
+      }
+      if (data.type === "fileSearchResults") {
+        setFileResults(data.results || []);
+        setSelectedIndex(0);
       }
     }
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [handleInput]);
+  }, []);
 
-  const placeholder = isProcessing
-    ? "Type to queue next message..."
-    : "Ask anything... (/help)";
+  // Scroll selected dropdown item into view
+  useEffect(() => {
+    if (showDropdown && dropdownRef.current) {
+      const selected = dropdownRef.current.querySelector(".at-dropdown-item.selected");
+      if (selected) selected.scrollIntoView({ block: "nearest" });
+    }
+  }, [selectedIndex, showDropdown]);
+
+  // Cleanup debounce
+  useEffect(() => {
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, []);
+
+  const removeAttachment = useCallback((index: number) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const pickFile = useCallback(() => {
+    vscode.postMessage({ type: "pickFile" });
+  }, [vscode]);
+
+  const pickFolder = useCallback(() => {
+    vscode.postMessage({ type: "pickFolder" });
+  }, [vscode]);
+
+  const placeholder = isProcessing ? "Type to queue..." : "Describe what to build (@ to attach files)";
 
   return (
     <div className="input-area">
-      <div className="input-row">
+      <div className="input-box">
+        {/* Context chips */}
+        {attachments.length > 0 && (
+          <div className="input-context">
+            {attachments.map((a, i) => (
+              <ContextChip key={`${a.path}-${i}`} attachment={a} onRemove={() => removeAttachment(i)} />
+            ))}
+          </div>
+        )}
+
+        {/* Textarea */}
         <textarea
           ref={textareaRef}
           value={text}
-          onChange={(e) => {
-            setText(e.target.value);
-            handleInput();
-          }}
+          onChange={(e) => handleTextChange(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           rows={1}
         />
-        <button
-          className="send-btn"
-          onClick={handleSend}
-          disabled={!text.trim()}
-        >
-          {isProcessing ? "Queue" : "Send"}
-        </button>
+
+        {/* @ autocomplete dropdown */}
+        {showDropdown && fileResults.length > 0 && (
+          <div className="at-dropdown" ref={dropdownRef}>
+            {fileResults.map((file, i) => (
+              <div
+                key={file.path}
+                className={`at-dropdown-item ${i === selectedIndex ? "selected" : ""}`}
+                onClick={() => selectFile(file)}
+                onMouseEnter={() => setSelectedIndex(i)}
+              >
+                <span className="at-dropdown-icon">
+                  {file.isDir ? "📁" : "📄"}
+                </span>
+                <span className="at-dropdown-path">{file.path}</span>
+                {file.language && (
+                  <span className="at-dropdown-lang">
+                    {LANG_ICONS[file.language] || file.language}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {showDropdown && fileResults.length === 0 && atQuery.length > 0 && (
+          <div className="at-dropdown">
+            <div className="at-dropdown-empty">No files found for "@{atQuery}"</div>
+          </div>
+        )}
+
+        {/* Toolbar */}
+        <div className="input-toolbar">
+          <div className="input-toolbar-left">
+            <button className="input-tool-btn" onClick={pickFile} title="Attach file (+)">+</button>
+            <button className="input-tool-btn" onClick={pickFolder} title="Attach folder">📎</button>
+          </div>
+          <div className="input-toolbar-right">
+            {queueCount > 0 && <span className="input-queue-badge">{queueCount} queued</span>}
+            <button
+              className="input-send-btn"
+              onClick={handleSend}
+              disabled={!text.trim() && attachments.length === 0}
+              title={isProcessing ? "Queue (Enter)" : "Send (Enter)"}
+            >
+              ↑
+            </button>
+          </div>
+        </div>
       </div>
-      <div className="input-hint">
-        {queueCount > 0
-          ? `📬 ${queueCount} message${queueCount > 1 ? "s" : ""} queued`
-          : "Enter to send, Shift+Enter for new line"}
-      </div>
+    </div>
+  );
+};
+
+// ── Context Chip ──
+
+const ContextChip: React.FC<{ attachment: ContextAttachment; onRemove: () => void }> = ({ attachment, onRemove }) => {
+  const fileName = attachment.path.split("/").pop() || attachment.path;
+  const langIcon = LANG_ICONS[attachment.language || ""] || "✦";
+
+  let label = fileName;
+  if (attachment.type === "selection" && attachment.startLine) {
+    label = `${fileName}:${attachment.startLine}${attachment.endLine && attachment.endLine !== attachment.startLine ? `-${attachment.endLine}` : ""}`;
+  } else if (attachment.type === "folder") {
+    label = `${fileName}/`;
+  }
+
+  return (
+    <div className="context-chip" title={attachment.path}>
+      <span className="context-chip-lang">{attachment.type === "folder" ? "📁" : langIcon}</span>
+      <span className="context-chip-label">{label}</span>
+      <button className="context-chip-remove" onClick={onRemove}>×</button>
     </div>
   );
 };

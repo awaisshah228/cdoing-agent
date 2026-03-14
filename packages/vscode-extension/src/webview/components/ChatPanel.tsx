@@ -55,7 +55,7 @@ export const ChatPanel: React.FC = () => {
       <MessageList
         entries={entries}
         isProcessing={isProcessing}
-        onQuickAction={sendMessage}
+        onQuickAction={(text) => sendMessage(text)}
       />
 
       <InputArea

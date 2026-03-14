@@ -8,7 +8,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import type { ChatEntry, ChatMessage, IncomingMessage } from "../types";
+import type { ChatEntry, ChatMessage, ContextAttachment, IncomingMessage } from "../types";
 import { useVsCode } from "./useVsCode";
 
 let idCounter = 0;
@@ -109,12 +109,32 @@ export function useChatState() {
     setEntries((prev) => [...prev, { id: nextId(), role, content: text }]);
   }, []);
 
+  // Track the latest tool call ID per tool name so results can update the same entry
+  const toolCallMapRef = useRef<Map<string, string>>(new Map());
+
   const addToolCall = useCallback((name: string, input: string) => {
-    setEntries((prev) => [...prev, { id: nextId(), kind: "call" as const, name, detail: input }]);
+    const id = nextId();
+    // Store mapping: toolName → entryId (for result matching)
+    toolCallMapRef.current.set(name, id);
+    setEntries((prev) => [...prev, { id, kind: "call" as const, name, input, output: "" }]);
   }, []);
 
   const addToolResult = useCallback((name: string, result: string, isError: boolean) => {
-    setEntries((prev) => [...prev, { id: nextId(), kind: "result" as const, name, detail: result, isError }]);
+    const callId = toolCallMapRef.current.get(name);
+    if (callId) {
+      // Update the existing call entry with the result
+      toolCallMapRef.current.delete(name);
+      setEntries((prev) =>
+        prev.map((e) =>
+          e.id === callId && "kind" in e
+            ? { ...e, kind: "result" as const, output: result, isError }
+            : e
+        )
+      );
+    } else {
+      // No matching call — create a standalone result entry
+      setEntries((prev) => [...prev, { id: nextId(), kind: "result" as const, name, input: "", output: result, isError }]);
+    }
   }, []);
 
   const clearAll = useCallback(() => {
@@ -126,10 +146,20 @@ export function useChatState() {
 
   // ── Actions ──────────────────────────────────────────
 
-  const sendMessage = useCallback((text: string) => {
-    if (!text.trim()) return;
-    addUserMessage(text);
-    vscode.postMessage({ type: "sendMessage", text });
+  const sendMessage = useCallback((text: string, context?: ContextAttachment[]) => {
+    if (!text.trim() && (!context || context.length === 0)) return;
+    // Build display text: show context labels above the user's message
+    let displayText = text;
+    if (context && context.length > 0) {
+      const labels = context.map((c) => {
+        const name = c.path.split("/").pop() || c.path;
+        if (c.type === "selection" && c.startLine) return `[${name}:${c.startLine}${c.endLine ? `-${c.endLine}` : ""}]`;
+        return `[${name}]`;
+      });
+      displayText = labels.join(" ") + (text ? "\n" + text : "");
+    }
+    addUserMessage(displayText);
+    vscode.postMessage({ type: "sendMessage", text, context });
   }, [addUserMessage, vscode]);
 
   const sendCommand = useCallback((command: string) => {

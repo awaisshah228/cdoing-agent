@@ -105,7 +105,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     // ── Open File Button (editor title bar icon) ──
-    // Opens chat alongside the current file
+    // Opens chat alongside the current file, attaching file or selection as context
     vscode.commands.registerCommand("cdoing.openFile", () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
@@ -115,18 +115,35 @@ export function activate(context: vscode.ExtensionContext) {
 
       const filePath = vscode.workspace.asRelativePath(editor.document.uri);
       const lang = editor.document.languageId;
-      const lineCount = editor.document.lineCount;
       const selection = editor.selection;
       const selectedText = editor.document.getText(selection);
 
-      let message: string;
       if (selectedText) {
-        message = `\`\`\`${lang} (${filePath})\n${selectedText}\n\`\`\``;
+        // Attach the selection as context
+        chatProvider.postMessage({
+          type: "contextAttached",
+          attachment: {
+            type: "selection",
+            path: filePath,
+            language: lang,
+            content: selectedText,
+            startLine: selection.start.line + 1,
+            endLine: selection.end.line + 1,
+          },
+        });
       } else {
-        message = `I'm working on \`${filePath}\` (${lang}, ${lineCount} lines). `;
+        // Attach the whole file as context
+        const content = editor.document.getText();
+        chatProvider.postMessage({
+          type: "contextAttached",
+          attachment: {
+            type: "file",
+            path: filePath,
+            language: lang,
+            content,
+          },
+        });
       }
-
-      chatProvider.postMessage({ type: "insertMessage", message });
     }),
 
     // ── Move Panel Commands ──
@@ -196,8 +213,8 @@ function openEditorPanel(context: vscode.ExtensionContext) {
       case "sendMessage":
         // Forward to chat provider, but also show in editor panel
         chatProvider.postMessage({ type: "startResponse" });
-        // Route through the provider's handler
-        (chatProvider as any).handleUserMessage?.(message.text);
+        // Route through the provider's handler (with context if present)
+        (chatProvider as any).handleUserMessage?.(message.text, message.context);
         break;
       case "command":
         if (message.command === "openFile" && message.args?.[0]) {
@@ -213,6 +230,18 @@ function openEditorPanel(context: vscode.ExtensionContext) {
         // Forward tab operations
         break;
       case "closeTab":
+        break;
+      case "pickFile":
+        (chatProvider as any).pickFileForContext?.();
+        break;
+      case "pickFolder":
+        (chatProvider as any).pickFolderForContext?.();
+        break;
+      case "searchFiles":
+        (chatProvider as any).searchWorkspaceFiles?.(message.query);
+        break;
+      case "getActiveFile":
+        (chatProvider as any).sendActiveFileAsContext?.();
         break;
       case "ready":
         chatProvider.postMessage({ type: "configUpdated", provider: "anthropic", model: "" });
@@ -297,9 +326,24 @@ function sendEditorSelection(prefix = "") {
 
   const filePath = vscode.workspace.asRelativePath(editor.document.uri);
   const lang = editor.document.languageId;
-  const message = `${prefix}\`\`\`${lang} (${filePath})\n${text}\n\`\`\``;
 
-  chatProvider.postMessage({ type: "insertMessage", message });
+  // Attach the selection as context chip
+  chatProvider.postMessage({
+    type: "contextAttached",
+    attachment: {
+      type: "selection",
+      path: filePath,
+      language: lang,
+      content: text,
+      startLine: selection.start.line + 1,
+      endLine: selection.end.line + 1,
+    },
+  });
+
+  // If there's a prefix (e.g. "Explain this code:"), insert it in the input
+  if (prefix) {
+    chatProvider.postMessage({ type: "insertMessage", message: prefix.trim() });
+  }
 
   // If editor panel is open, use it; otherwise focus sidebar
   if (editorPanel) {

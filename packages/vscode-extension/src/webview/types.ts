@@ -28,6 +28,8 @@ export type IncomingMessage =
   | { type: "clear" }                                                  // Clear all messages
   | { type: "configUpdated"; provider: string; model: string }         // Model/provider changed
   | { type: "insertMessage"; message: string }                         // Insert text into the input box
+  | { type: "contextAttached"; attachment: ContextAttachment }          // File/folder picked and attached
+  | { type: "fileSearchResults"; results: Array<{ path: string; isDir: boolean; language?: string }> } // File search results for @ autocomplete
   | { type: "tabCreated"; tabId: string; title: string }               // New tab created
   | { type: "tabSwitched"; tabId: string }                             // Switched to a tab
   | { type: "tabClosed"; tabId: string }                               // Tab closed
@@ -40,12 +42,26 @@ export type IncomingMessage =
  * Sent via vscode.postMessage().
  */
 export type OutgoingMessage =
-  | { type: "sendMessage"; text: string; tabId?: string }    // User sent a chat message
+  | { type: "sendMessage"; text: string; tabId?: string; context?: ContextAttachment[] } // User sent a chat message with optional context
   | { type: "command"; command: string; args?: string[] }    // Slash command (e.g. /clear)
   | { type: "switchTab"; tabId: string }                     // Switch to a tab
   | { type: "newTab" }                                       // Create a new tab
   | { type: "closeTab"; tabId: string }                      // Close a tab
+  | { type: "pickFile" }                                     // Request file picker
+  | { type: "pickFolder" }                                   // Request folder picker
+  | { type: "searchFiles"; query: string }                   // Search workspace files for @ autocomplete
+  | { type: "getActiveFile" }                                // Request active file as context
   | { type: "ready" };                                       // Webview loaded, ready for data
+
+/** A file/folder/selection attached as context */
+export interface ContextAttachment {
+  type: "file" | "folder" | "selection";
+  path: string;
+  language?: string;
+  content?: string;        // File content (filled by extension host)
+  startLine?: number;
+  endLine?: number;
+}
 
 // ─── UI Data Types ───
 
@@ -56,12 +72,13 @@ export interface ChatMessage {
   content: string;
 }
 
-/** A tool invocation or result displayed in the message list */
+/** A tool step — merged call + result in a single entry */
 export interface ToolCallEntry {
   id: string;
-  kind: "call" | "result";   // "call" = tool was invoked, "result" = tool returned
+  kind: "call" | "result";   // "call" = running, "result" = completed
   name: string;               // Tool name (e.g. "file_read", "shell_exec")
-  detail: string;             // Input args (for "call") or output (for "result")
+  input: string;              // JSON input args
+  output: string;             // Result output (empty while running)
   isError?: boolean;           // True if the tool failed
 }
 

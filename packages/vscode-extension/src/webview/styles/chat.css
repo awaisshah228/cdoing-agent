@@ -361,6 +361,77 @@ body {
   opacity: 0.5;
 }
 
+/* ─── Diff View (Git-style) ─── */
+.tool-diff-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tool-diff-summary {
+  font-size: 11px;
+  color: var(--fg);
+  margin-bottom: 4px;
+}
+
+.tool-diff {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 11px;
+  line-height: 1.5;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.diff-line {
+  padding: 0 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.diff-add {
+  background: rgba(40, 167, 69, 0.15);
+  color: #4ec970;
+}
+
+.diff-remove {
+  background: rgba(220, 53, 69, 0.15);
+  color: #f07178;
+}
+
+.diff-hunk {
+  background: rgba(0, 120, 212, 0.1);
+  color: var(--accent);
+  font-weight: 500;
+  padding: 2px 8px;
+}
+
+.diff-header {
+  color: var(--desc-fg);
+  font-weight: 600;
+  padding: 2px 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.tool-diff-open-btn {
+  align-self: flex-start;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  margin-top: 4px;
+  transition: background 0.1s;
+}
+
+.tool-diff-open-btn:hover {
+  background: var(--list-hover);
+}
+
 /* Code block with language label */
 /* ─── Code Blocks with Toolbar ─── */
 .code-block {
@@ -404,6 +475,41 @@ body {
 .hljs {
   background: transparent !important;
   color: inherit !important;
+}
+
+/* ─── Tool Step Inline Summary ─── */
+.tool-input-hint {
+  font-family: var(--vscode-editor-font-family);
+  opacity: 0.8;
+}
+.tool-arrow {
+  color: var(--desc-fg);
+  opacity: 0.5;
+  margin: 0 2px;
+}
+.tool-output-hint {
+  color: var(--vscode-testing-iconPassed, #73c991);
+  font-size: 11px;
+}
+.tool-output-hint-error {
+  color: var(--error-fg);
+}
+
+/* ─── Tool Step Sections (INPUT / OUTPUT labels) ─── */
+.tool-section {
+  margin-bottom: 8px;
+}
+.tool-section:last-child {
+  margin-bottom: 0;
+}
+.tool-section-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--desc-fg);
+  opacity: 0.5;
+  margin-bottom: 4px;
 }
 
 /* ─── Clickable File Paths ─── */
@@ -489,68 +595,271 @@ body {
   background: var(--list-hover);
 }
 
-/* ─── Input Area ─── */
-.input-area {
-  border-top: 1px solid var(--border);
-  padding: 8px 12px;
+/* ─── Context Chips ─── */
+.context-chips {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   gap: 4px;
+  padding: 0 0 4px 0;
+}
+
+.context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px 2px 8px;
+  background: var(--vscode-textCodeBlock-background, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 11px;
+  color: var(--fg);
+  max-width: 220px;
+}
+
+.context-chip-icon {
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.context-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--vscode-editor-font-family);
+  font-size: 11px;
+}
+
+.context-chip-remove {
+  background: none;
+  border: none;
+  color: var(--desc-fg);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+.context-chip-remove:hover {
+  opacity: 1;
+  background: var(--vscode-toolbar-hoverBackground);
+  color: var(--fg);
+}
+
+/* ─── Input Area (Copilot style) ─── */
+.input-area {
+  padding: 8px 12px;
   flex-shrink: 0;
   background: var(--bg);
 }
 
-.input-row {
-  display: flex;
-  gap: 6px;
-  align-items: flex-end;
+.input-box {
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  background: var(--input-bg);
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+.input-box:focus-within {
+  border-color: var(--accent);
 }
 
-.input-area textarea {
-  flex: 1;
-  min-width: 0;
-  background: var(--input-bg);
+/* Context chips inside the input box */
+.input-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 10px 0 10px;
+}
+
+/* Textarea — no border, transparent bg (border is on .input-box) */
+.input-box textarea {
+  width: 100%;
+  background: transparent;
   color: var(--input-fg);
-  border: 1px solid var(--input-border);
-  border-radius: 6px;
+  border: none;
   padding: 8px 10px;
   font-family: var(--vscode-font-family);
   font-size: 13px;
   resize: none;
-  min-height: 36px;
+  min-height: 32px;
   max-height: 150px;
   outline: none;
   line-height: 1.4;
 }
-.input-area textarea::placeholder {
+.input-box textarea::placeholder {
   font-size: 12px;
+  color: var(--desc-fg);
+  opacity: 0.6;
+}
+
+/* Toolbar row at bottom of input box */
+.input-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px;
+  border-top: 1px solid var(--border);
+  min-height: 28px;
+}
+
+.input-toolbar-left {
+  display: flex;
+  gap: 2px;
+}
+
+.input-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.input-tool-btn {
+  background: none;
+  border: none;
+  color: var(--desc-fg);
+  cursor: pointer;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1;
+  transition: background 0.1s, color 0.1s;
+}
+.input-tool-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+  color: var(--fg);
+}
+
+.input-queue-badge {
+  font-size: 10px;
   color: var(--desc-fg);
   opacity: 0.7;
 }
-.input-area textarea:focus { border-color: var(--accent); }
 
-.send-btn {
+.input-send-btn {
   background: var(--btn-bg);
   color: var(--btn-fg);
   border: none;
   border-radius: 6px;
-  padding: 8px 12px;
+  width: 26px;
+  height: 26px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+.input-send-btn:hover { background: var(--btn-hover); }
+.input-send-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+/* ─── @ Autocomplete Dropdown ─── */
+.at-dropdown {
+  border-top: 1px solid var(--border);
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--input-bg);
+}
+
+.at-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
   cursor: pointer;
   font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
-  transition: background 0.15s;
-  flex-shrink: 0;
-  height: 36px;
+  color: var(--fg);
+  transition: background 0.08s;
 }
-.send-btn:hover { background: var(--btn-hover); }
-.send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.input-hint {
-  font-size: 10px;
-  color: var(--desc-fg);
+.at-dropdown-item:hover,
+.at-dropdown-item.selected {
+  background: var(--vscode-list-activeSelectionBackground, rgba(0, 120, 212, 0.15));
+}
+
+.at-dropdown-icon {
+  font-size: 12px;
+  flex-shrink: 0;
+  width: 16px;
   text-align: center;
+}
+
+.at-dropdown-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--vscode-editor-font-family);
+}
+
+.at-dropdown-lang {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--desc-fg);
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+
+.at-dropdown-empty {
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--desc-fg);
+  font-style: italic;
+}
+
+/* ─── Context Chips (Copilot style — inside input box) ─── */
+.context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px 2px 4px;
+  font-size: 11px;
+  color: var(--fg);
+  max-width: 220px;
+  cursor: default;
+}
+
+.context-chip-lang {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--accent);
+  background: rgba(0, 120, 212, 0.12);
+  padding: 1px 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  letter-spacing: 0.3px;
+}
+
+.context-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  font-family: var(--vscode-editor-font-family);
+}
+
+.context-chip-remove {
+  background: none;
+  border: none;
+  color: var(--desc-fg);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  border-radius: 2px;
+  line-height: 1;
+  flex-shrink: 0;
   opacity: 0.5;
+}
+
+.context-chip-remove:hover {
+  opacity: 1;
+  color: var(--error-fg);
 }
 
 /* ─── Tab Bar ─── */

@@ -87,7 +87,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage(async (message) => {
       switch (message.type) {
         case "sendMessage":
-          await this.handleUserMessage(message.text);
+          await this.handleUserMessage(message.text, message.context);
           break;
         case "command":
           if (message.command === "openFile" && message.args?.[0]) {
@@ -105,6 +105,18 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         case "closeTab":
           this.closeTab(message.tabId);
           break;
+        case "pickFile":
+          await this.pickFileForContext();
+          break;
+        case "pickFolder":
+          await this.pickFolderForContext();
+          break;
+        case "searchFiles":
+          await this.searchWorkspaceFiles(message.query);
+          break;
+        case "getActiveFile":
+          this.sendActiveFileAsContext();
+          break;
         case "ready":
           this.sendCurrentConfig();
           // Create first tab on ready
@@ -114,6 +126,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
             // Restore tab list
             this.sendAllTabs();
           }
+          // Auto-attach the active/visible file as context
+          setTimeout(() => this.sendActiveFileAsContext(), 200);
           break;
       }
     });
@@ -149,6 +163,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     this.postMessage({ type: "tabCreated", tabId: id, title: tabTitle });
     this.postMessage({ type: "tabSwitched", tabId: id });
     this.postMessage({ type: "clear" });
+
+    // Auto-attach active file to new tab
+    setTimeout(() => this.sendActiveFileAsContext(), 100);
 
     return id;
   }
@@ -335,6 +352,226 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     );
   }
 
+  /** Read file content for context attachment */
+  private readFileContent(filePath: string): string | null {
+    try {
+      const workingDir = this.getWorkingDir();
+      const absPath = path.isAbsolute(filePath) ? filePath : path.join(workingDir, filePath);
+      if (fs.existsSync(absPath) && fs.statSync(absPath).isFile()) {
+        return fs.readFileSync(absPath, "utf-8");
+      }
+    } catch { /* ignore */ }
+    return null;
+  }
+
+  /** List folder structure (max 2 levels deep) */
+  private listFolderStructure(folderPath: string, depth = 0, maxDepth = 2): string {
+    const workingDir = this.getWorkingDir();
+    const absPath = path.isAbsolute(folderPath) ? folderPath : path.join(workingDir, folderPath);
+    try {
+      if (!fs.existsSync(absPath) || !fs.statSync(absPath).isDirectory()) return "(not a directory)";
+      const entries = fs.readdirSync(absPath, { withFileTypes: true })
+        .filter((e) => !e.name.startsWith(".") && e.name !== "node_modules")
+        .sort((a, b) => {
+          if (a.isDirectory() && !b.isDirectory()) return -1;
+          if (!a.isDirectory() && b.isDirectory()) return 1;
+          return a.name.localeCompare(b.name);
+        })
+        .slice(0, 50);
+
+      const lines: string[] = [];
+      const indent = "  ".repeat(depth);
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          lines.push(`${indent}${entry.name}/`);
+          if (depth < maxDepth) {
+            lines.push(this.listFolderStructure(path.join(absPath, entry.name), depth + 1, maxDepth));
+          }
+        } else {
+          lines.push(`${indent}${entry.name}`);
+        }
+      }
+      return lines.join("\n");
+    } catch { return "(could not read)"; }
+  }
+
+  /** Open file picker and send result as context attachment */
+  private async pickFileForContext() {
+    const uris = await vscode.window.showOpenDialog({
+      canSelectFiles: true,
+      canSelectFolders: false,
+      canSelectMany: true,
+      openLabel: "Attach as Context",
+    });
+    if (!uris || uris.length === 0) return;
+
+    for (const uri of uris) {
+      const filePath = vscode.workspace.asRelativePath(uri);
+      const lang = this.getLanguageId(filePath);
+      this.postMessage({
+        type: "contextAttached",
+        attachment: { type: "file", path: filePath, language: lang },
+      });
+    }
+  }
+
+  /** Open folder picker and send result as context attachment */
+  private async pickFolderForContext() {
+    const uris = await vscode.window.showOpenDialog({
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      openLabel: "Attach Folder as Context",
+    });
+    if (!uris || uris.length === 0) return;
+
+    const folderPath = vscode.workspace.asRelativePath(uris[0]);
+    this.postMessage({
+      type: "contextAttached",
+      attachment: { type: "folder", path: folderPath },
+    });
+  }
+
+  /** Send the currently active/visible file as a context attachment */
+  private sendActiveFileAsContext() {
+    // Try active editor first
+    let editor = vscode.window.activeTextEditor;
+
+    // If no active editor, try the first visible editor
+    if (!editor && vscode.window.visibleTextEditors.length > 0) {
+      editor = vscode.window.visibleTextEditors[0];
+    }
+
+    if (!editor) return;
+
+    // Skip non-file schemes (output panels, settings, etc.)
+    if (editor.document.uri.scheme !== "file") return;
+
+    const filePath = vscode.workspace.asRelativePath(editor.document.uri);
+    const lang = editor.document.languageId;
+    const selection = editor.selection;
+    const selectedText = editor.document.getText(selection);
+
+    if (selectedText) {
+      this.postMessage({
+        type: "contextAttached",
+        attachment: {
+          type: "selection",
+          path: filePath,
+          language: lang,
+          content: selectedText,
+          startLine: selection.start.line + 1,
+          endLine: selection.end.line + 1,
+        },
+      });
+    } else {
+      this.postMessage({
+        type: "contextAttached",
+        attachment: { type: "file", path: filePath, language: lang },
+      });
+    }
+  }
+
+  /** Search workspace files for @ autocomplete */
+  private async searchWorkspaceFiles(query: string) {
+    const workingDir = this.getWorkingDir();
+    try {
+      const results: Array<{ path: string; isDir: boolean; language: string }> = [];
+
+      // Search for directories (top-level and one level deep)
+      try {
+        const topEntries = fs.readdirSync(workingDir, { withFileTypes: true });
+        for (const entry of topEntries) {
+          if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.name === "dist" || entry.name === "build") continue;
+          const relPath = entry.name;
+          if (entry.isDirectory()) {
+            if (!query || relPath.toLowerCase().includes(query.toLowerCase())) {
+              results.push({ path: relPath, isDir: true, language: "" });
+            }
+            // Also search one level deeper for subdirectories
+            try {
+              const subEntries = fs.readdirSync(path.join(workingDir, entry.name), { withFileTypes: true });
+              for (const sub of subEntries) {
+                if (sub.name.startsWith(".") || sub.name === "node_modules") continue;
+                const subPath = `${entry.name}/${sub.name}`;
+                if (sub.isDirectory() && query && subPath.toLowerCase().includes(query.toLowerCase())) {
+                  results.push({ path: subPath, isDir: true, language: "" });
+                }
+              }
+            } catch { /* ignore unreadable dirs */ }
+          }
+        }
+      } catch { /* ignore */ }
+
+      // Search files using VS Code findFiles — escape special glob chars in query
+      const safeQuery = query.replace(/[[\]{}()?!]/g, "\\$&");
+      // Split query into chars for fuzzy-ish matching: "index.js" → "*i*n*d*e*x*.*j*s*"
+      // But simpler: just use the whole query as a substring match
+      const pattern = safeQuery ? `**/*${safeQuery}*` : "**/*";
+      try {
+        const uris = await vscode.workspace.findFiles(
+          pattern,
+          "{**/node_modules/**,**/dist/**,**/build/**,**/.git/**}",
+          20
+        );
+
+        for (const uri of uris) {
+          const relPath = vscode.workspace.asRelativePath(uri);
+          const lang = this.getLanguageId(relPath);
+          // Avoid duplicates
+          if (!results.some((r) => r.path === relPath)) {
+            results.push({ path: relPath, isDir: false, language: lang });
+          }
+        }
+      } catch { /* findFiles can fail if no workspace is open */ }
+
+      // If findFiles returned nothing, fallback to recursive fs search
+      if (results.filter((r) => !r.isDir).length === 0 && query) {
+        const lowerQuery = query.toLowerCase();
+        const searchDir = (dir: string, depth: number) => {
+          if (depth > 4 || results.length >= 20) return;
+          try {
+            const entries = fs.readdirSync(path.join(workingDir, dir), { withFileTypes: true });
+            for (const entry of entries) {
+              if (results.length >= 20) break;
+              if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.name === "dist") continue;
+              const relPath = dir ? `${dir}/${entry.name}` : entry.name;
+              if (entry.isDirectory()) {
+                searchDir(relPath, depth + 1);
+              } else if (entry.name.toLowerCase().includes(lowerQuery)) {
+                results.push({ path: relPath, isDir: false, language: this.getLanguageId(relPath) });
+              }
+            }
+          } catch { /* ignore */ }
+        };
+        searchDir("", 0);
+      }
+
+      // Sort: directories first, then by path length (shorter = more relevant)
+      results.sort((a, b) => {
+        if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+        return a.path.length - b.path.length;
+      });
+
+      this.postMessage({ type: "fileSearchResults" as any, results: results.slice(0, 20) });
+    } catch (err) {
+      console.error("[Cdoing] searchWorkspaceFiles error:", err);
+      this.postMessage({ type: "fileSearchResults" as any, results: [] });
+    }
+  }
+
+  /** Get language ID from file extension */
+  private getLanguageId(filePath: string): string {
+    const ext = path.extname(filePath).toLowerCase();
+    const map: Record<string, string> = {
+      ".ts": "typescript", ".tsx": "typescript", ".js": "javascript", ".jsx": "javascript",
+      ".py": "python", ".rb": "ruby", ".go": "go", ".rs": "rust", ".java": "java",
+      ".css": "css", ".html": "html", ".json": "json", ".yaml": "yaml", ".yml": "yaml",
+      ".md": "markdown", ".sh": "bash", ".sql": "sql", ".c": "c", ".cpp": "cpp",
+    };
+    return map[ext] || "";
+  }
+
   /** Load API key from ~/.cdoing/config.json */
   private loadApiKeyFromConfig(provider: string): string | null {
     try {
@@ -376,18 +613,44 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   // ── Message Handling ───────────────────────────────────
 
   /** Handle user messages — slash commands or agent messages */
-  private async handleUserMessage(text: string) {
+  private async handleUserMessage(text: string, context?: Array<{ type: string; path: string; language?: string; content?: string; startLine?: number; endLine?: number }>) {
     if (text.startsWith("/")) {
       const [cmd, ...args] = text.split(" ");
       await this.handleCommand(cmd, args);
       return;
     }
 
+    // Build full message with context attachments
+    let fullMessage = text;
+    if (context && context.length > 0) {
+      const contextParts: string[] = [];
+      for (const att of context) {
+        if (att.type === "selection" && att.content) {
+          contextParts.push(`\`\`\`${att.language || ""} (${att.path}${att.startLine ? `:${att.startLine}-${att.endLine}` : ""})\n${att.content}\n\`\`\``);
+        } else if (att.type === "file") {
+          // Use provided content or read from disk
+          const content = att.content || this.readFileContent(att.path);
+          if (content !== null) {
+            const lines = content.split("\n").length;
+            contextParts.push(`File: \`${att.path}\` (${lines} lines)\n\`\`\`${att.language || ""}\n${content.substring(0, 10000)}\n\`\`\``);
+          } else {
+            contextParts.push(`File: \`${att.path}\` (could not read)`);
+          }
+        } else if (att.type === "folder") {
+          // List folder structure
+          const listing = this.listFolderStructure(att.path);
+          contextParts.push(`Folder: \`${att.path}\`\n\`\`\`\n${listing}\n\`\`\``);
+        }
+      }
+      if (contextParts.length > 0) {
+        fullMessage = `${contextParts.join("\n\n")}\n\n${text}`;
+      }
+    }
+
     const tab = this.getTab();
     if (!tab) {
       this.createTab();
-      // Retry after tab is created
-      setTimeout(() => this.handleUserMessage(text), 50);
+      setTimeout(() => this.handleUserMessage(fullMessage), 50);
       return;
     }
 
