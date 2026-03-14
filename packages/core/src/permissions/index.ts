@@ -42,16 +42,33 @@ export enum PermissionMode {
   AUTO = "auto",
 }
 
+/**
+ * Custom prompt function for permission requests.
+ * Returns the user's choice: "allow", "always", "project", or "deny".
+ * This allows non-CLI environments (e.g., VS Code) to use their own UI.
+ */
+export type PermissionPromptFn = (
+  toolName: string,
+  message: string,
+  hasProject: boolean,
+) => Promise<"allow" | "always" | "project" | "deny">;
+
 export class PermissionManager {
   private mode: PermissionMode;
   private globalRules: PermissionRule[] = [];
   private projectRules: PermissionRule[] = [];
   private projectDir: string | null = null;
+  private customPromptFn: PermissionPromptFn | null = null;
 
   constructor(mode: PermissionMode = PermissionMode.ASK, projectDir?: string) {
     this.mode = mode;
     this.projectDir = projectDir || null;
     this.loadRules();
+  }
+
+  /** Set a custom prompt function (for non-CLI environments like VS Code) */
+  setPromptFn(fn: PermissionPromptFn): void {
+    this.customPromptFn = fn;
   }
 
   setMode(mode: PermissionMode): void {
@@ -213,15 +230,35 @@ export class PermissionManager {
    *   a          → Always allow globally
    *   p          → Allow for this project only
    *   n          → Deny
+   *
+   * If a custom prompt function is set (e.g., for VS Code), uses that instead of readline.
    */
-  private askUser(toolName: string, message: string): Promise<boolean> {
+  private async askUser(toolName: string, message: string): Promise<boolean> {
+    const hasProject = !!this.projectDir;
+    const label = toolName.replace(/_/g, " ");
+
+    // Use custom prompt function if set (VS Code, etc.)
+    if (this.customPromptFn) {
+      const choice = await this.customPromptFn(toolName, message, hasProject);
+      if (choice === "always") {
+        this.addRule(toolName, "global");
+        return true;
+      } else if (choice === "project" && hasProject) {
+        this.addRule(toolName, "project");
+        return true;
+      } else if (choice === "deny") {
+        return false;
+      }
+      return choice === "allow";
+    }
+
+    // CLI: use readline
     return new Promise((resolve) => {
       const rl = readline.createInterface({
         input: process.stdin,
         output: process.stdout,
       });
 
-      const hasProject = !!this.projectDir;
       const projectHint = hasProject ? ` · (p)roject only` : "";
 
       rl.question(
@@ -229,7 +266,6 @@ export class PermissionManager {
         (answer: string) => {
           rl.close();
           const a = answer.trim().toLowerCase();
-          const label = toolName.replace(/_/g, " ");
           if (a === "a" || a === "always") {
             this.addRule(toolName, "global");
             console.log(`  \x1b[32m✓ Permission saved globally for ${label}\x1b[0m`);
@@ -241,7 +277,6 @@ export class PermissionManager {
           } else if (a === "n" || a === "no") {
             resolve(false);
           } else {
-            // Default: allow once (y, yes, or Enter)
             resolve(true);
           }
         }

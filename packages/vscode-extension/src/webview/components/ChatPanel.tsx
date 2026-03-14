@@ -12,7 +12,7 @@
  *   │  MessageList         │  ← Messages, tool calls, or Welcome screen
  *   │                     │
  *   ├─────────────────────┤
- *   │  InputArea           │  ← Textarea + Send button
+ *   │  InputArea           │  ← Textarea + Send button (always enabled)
  *   └─────────────────────┘
  */
 
@@ -26,6 +26,7 @@ export const ChatPanel: React.FC = () => {
   const {
     entries,       // All chat entries (messages + tool calls)
     isProcessing,  // Is the agent currently working?
+    queueCount,    // Number of queued messages
     modelLabel,    // Current model name for the header badge
     sendMessage,   // Send a user message to the agent
     sendCommand,   // Send a slash command (e.g. /model, /clear)
@@ -48,8 +49,12 @@ export const ChatPanel: React.FC = () => {
         onQuickAction={sendMessage}
       />
 
-      {/* Input area at the bottom — textarea + send button */}
-      <InputArea isProcessing={isProcessing} onSend={sendMessage} />
+      {/* Input area — always enabled, queues messages if busy */}
+      <InputArea
+        isProcessing={isProcessing}
+        queueCount={queueCount}
+        onSend={sendMessage}
+      />
     </div>
   );
 };

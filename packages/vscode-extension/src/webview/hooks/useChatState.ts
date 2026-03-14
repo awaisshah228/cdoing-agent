@@ -5,6 +5,7 @@
  * It handles:
  *   - The list of chat entries (messages + tool calls)
  *   - Processing state (is the agent thinking?)
+ *   - Message queuing (send while processing)
  *   - Current model/provider labels (shown in the header badge)
  *   - Sending messages to the extension host
  *   - Listening for incoming messages (tokens, tool results, errors)
@@ -27,8 +28,10 @@ export function useChatState() {
 
   // All entries shown in the message list (messages, tool calls, tool results)
   const [entries, setEntries] = useState<ChatEntry[]>([]);
-  // True while the agent is processing (disables send button, shows typing indicator)
+  // True while the agent is processing (shows typing indicator, but input stays enabled)
   const [isProcessing, setIsProcessing] = useState(false);
+  // Number of messages waiting in queue
+  const [queueCount, setQueueCount] = useState(0);
   // Current model and provider names (displayed in the header badge)
   const [modelLabel, setModelLabel] = useState("anthropic");
   const [providerLabel, setProviderLabel] = useState("anthropic");
@@ -88,20 +91,20 @@ export function useChatState() {
   const clearAll = useCallback(() => {
     setEntries([]);
     streamingRef.current = null;
+    setQueueCount(0);
   }, []);
 
   /**
    * Sends a user message to the extension host.
-   * Adds it to the UI immediately, then posts it via vscode.postMessage().
+   * Always adds to UI immediately. If processing, message gets queued on the host side.
    */
   const sendMessage = useCallback(
     (text: string) => {
-      if (!text.trim() || isProcessing) return;
-      addUserMessage(text);              // Show in UI immediately
-      setIsProcessing(true);             // Disable input
-      vscode.postMessage({ type: "sendMessage", text }); // Send to extension host
+      if (!text.trim()) return;
+      addUserMessage(text);
+      vscode.postMessage({ type: "sendMessage", text });
     },
-    [isProcessing, addUserMessage, vscode]
+    [addUserMessage, vscode]
   );
 
   /** Sends a slash command to the extension host (e.g. /model, /clear) */
@@ -113,57 +116,50 @@ export function useChatState() {
   );
 
   // ─── Listen for messages FROM the extension host ───
-  // This is the receiving end of the message protocol.
-  // The extension host sends these messages as the agent processes the user's request.
   useEffect(() => {
     function handler(event: MessageEvent<IncomingMessage>) {
       const msg = event.data;
       switch (msg.type) {
         case "startResponse":
-          // Agent started — show typing indicator, reset streaming ref
           setIsProcessing(true);
           streamingRef.current = null;
           break;
         case "token":
-          // A streamed token from the LLM — append to current assistant message
           appendToken(msg.text);
           break;
         case "toolCall":
-          // Agent is invoking a tool — show it in the chat
           addToolCall(msg.name, msg.input);
           break;
         case "toolResult":
-          // Tool finished — show success/failure in the chat
           addToolResult(msg.name, msg.result, msg.isError);
           break;
         case "endResponse":
-          // Agent is done — hide typing indicator, re-enable input
           setIsProcessing(false);
           streamingRef.current = null;
           break;
         case "error":
-          // Something went wrong — show error and re-enable input
           setIsProcessing(false);
           streamingRef.current = null;
           addSystemMessage(msg.text, "error");
           break;
         case "systemMessage":
-          // System notification (e.g. /help output)
           addSystemMessage(msg.text);
           break;
         case "clear":
-          // Clear all messages (from /clear command or New Chat)
           clearAll();
           break;
         case "usageInfo":
-          // Token usage info — show as subtle system message
           addSystemMessage(`📊 ${msg.text}`);
           break;
         case "configUpdated":
-          // Model/provider changed — update the header badge
           setProviderLabel(msg.provider);
           setModelLabel(msg.model || msg.provider);
           break;
+      }
+
+      // Update queue count from any message that includes it
+      if ("queueCount" in msg && typeof (msg as any).queueCount === "number") {
+        setQueueCount((msg as any).queueCount);
       }
     }
 
@@ -179,9 +175,10 @@ export function useChatState() {
   return {
     entries,        // All chat entries to render
     isProcessing,   // Whether the agent is currently working
+    queueCount,     // Number of queued messages
     modelLabel,     // Current model name (for header badge)
     providerLabel,  // Current provider name
-    sendMessage,    // Function to send a user message
+    sendMessage,    // Function to send a user message (always works, queues if busy)
     sendCommand,    // Function to send a slash command
     clearAll,       // Function to clear chat
   };

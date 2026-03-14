@@ -17,7 +17,7 @@ export type { ToolDefinition, ToolResult, BaseTool } from "./tools/types";
 
 // Permissions
 export { PermissionManager, PermissionMode } from "./permissions";
-export type { PermissionRule, PermissionScope } from "./permissions";
+export type { PermissionRule, PermissionScope, PermissionPromptFn } from "./permissions";
 
 // Hooks
 export { HookManager } from "./hooks";

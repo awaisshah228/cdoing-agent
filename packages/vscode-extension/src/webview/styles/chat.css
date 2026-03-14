@@ -225,28 +225,42 @@ body {
 /* ─── Input area ─── */
 .input-area {
   border-top: 1px solid var(--border);
-  padding: 10px 12px;
+  padding: 8px 10px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
-.input-row { display: flex; gap: 6px; }
+.input-row {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+}
 
 .input-area textarea {
   flex: 1;
+  min-width: 0;
   background: var(--input-bg);
   color: var(--input-fg);
   border: 1px solid var(--input-border);
   border-radius: 6px;
-  padding: 8px 12px;
+  padding: 8px 10px;
   font-family: var(--vscode-font-family);
   font-size: 13px;
   resize: none;
-  min-height: 38px;
+  min-height: 36px;
   max-height: 150px;
   outline: none;
   line-height: 1.4;
+}
+.input-area textarea::placeholder {
+  font-size: 12px;
+  color: var(--desc-fg);
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .input-area textarea:focus { border-color: var(--accent); }
 
@@ -255,20 +269,23 @@ body {
   color: var(--btn-fg);
   border: none;
   border-radius: 6px;
-  padding: 8px 14px;
+  padding: 8px 12px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
   transition: background 0.15s;
+  flex-shrink: 0;
+  height: 36px;
 }
 .send-btn:hover { background: var(--btn-hover); }
 .send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .input-hint {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--desc-fg);
-  text-align: right;
+  text-align: center;
+  opacity: 0.6;
 }
 
 /* ─── Scrollbar ─── */

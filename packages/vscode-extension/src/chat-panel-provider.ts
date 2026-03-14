@@ -30,6 +30,9 @@ import {
   getDefaultModel,
 } from "@cdoing/ai";
 import { getWebviewContent } from "./webview-content";
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
 
 export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
@@ -39,6 +42,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private hookManager?: HookManager;
   private memoryStore?: MemoryStore;
   private isProcessing = false;
+  private messageQueue: string[] = [];
 
   constructor(private context: vscode.ExtensionContext) {}
 
@@ -70,7 +74,13 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       }
     });
 
-    this.initAgent();
+    try {
+      this.initAgent();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[Cdoing] initAgent error:", msg);
+      this.postMessage({ type: "error", text: `Init error: ${msg}` });
+    }
   }
 
   private getConfig(): {
@@ -116,7 +126,18 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   /** Create agent with all tools, hooks, memory, and project config */
   private initAgent() {
     const workingDir = this.getWorkingDir();
-    const { modelConfig, permMode } = this.getConfig();
+    const { modelConfig, permMode, provider } = this.getConfig();
+
+    // Ensure API key is available in process.env (VS Code doesn't inherit shell env)
+    if (!modelConfig.apiKey) {
+      const envVar = getApiKeyEnvVar(provider);
+      if (!process.env[envVar]) {
+        const storedKey = this.loadApiKeyFromConfig(provider);
+        if (storedKey) {
+          process.env[envVar] = storedKey;
+        }
+      }
+    }
 
     // Tool registry with all tools
     this.toolRegistry = new ToolRegistry();
@@ -130,8 +151,24 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     this.toolRegistry.register(new WebFetchTool());
     this.toolRegistry.register(new WebSearchTool());
 
-    // Permission manager with project dir
+    // Permission manager with VS Code prompt UI
     this.permissionManager = new PermissionManager(permMode, workingDir);
+    this.permissionManager.setPromptFn(async (toolName, message, hasProject) => {
+      const items = ["Allow Once", "Always Allow"];
+      if (hasProject) items.push("Allow for Project");
+      items.push("Deny");
+
+      const choice = await vscode.window.showInformationMessage(
+        `⚡ ${message}`,
+        ...items
+      );
+
+      if (choice === "Always Allow") return "always";
+      if (choice === "Allow for Project") return "project";
+      if (choice === "Deny") return "deny";
+      if (choice === "Allow Once") return "allow";
+      return "deny"; // dismissed = deny
+    });
 
     // Hooks and memory
     this.hookManager = new HookManager(workingDir);
@@ -155,6 +192,31 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private getWorkingDir(): string {
     const folders = vscode.workspace.workspaceFolders;
     return folders?.[0]?.uri.fsPath || process.cwd();
+  }
+
+  /** Load API key from ~/.cdoing/config.json */
+  private loadApiKeyFromConfig(provider: string): string | null {
+    try {
+      const configPath = path.join(os.homedir(), ".cdoing", "config.json");
+      if (fs.existsSync(configPath)) {
+        const data = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+        const envVar = getApiKeyEnvVar(provider);
+        const p = provider.toLowerCase();
+        // Check all possible locations:
+        // { apiKeys: { anthropic: "..." } }
+        // { ANTHROPIC_API_KEY: "..." }
+        // { apiKey: "..." }
+        // { anthropic: { apiKey: "..." } }
+        return data?.apiKeys?.[p]
+          || data?.[envVar]
+          || data?.apiKey
+          || data?.[p]?.apiKey
+          || null;
+      }
+    } catch {
+      // ignore
+    }
+    return null;
   }
 
   refreshConfig() {
@@ -182,35 +244,50 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
   /** Handle user messages — slash commands or agent messages */
   private async handleUserMessage(text: string) {
-    if (this.isProcessing) {
-      this.postMessage({ type: "error", text: "Already processing. Please wait." });
-      return;
-    }
-
+    // Slash commands always run immediately
     if (text.startsWith("/")) {
       const [cmd, ...args] = text.split(" ");
       await this.handleCommand(cmd, args);
       return;
     }
 
+    // If already processing, queue the message
+    if (this.isProcessing) {
+      this.messageQueue.push(text);
+      this.postMessage({
+        type: "systemMessage",
+        text: `📬 Message queued (${this.messageQueue.length} in queue)`,
+        queueCount: this.messageQueue.length,
+      } as any);
+      return;
+    }
+
     this.isProcessing = true;
     this.postMessage({ type: "startResponse" });
 
-    // Validate API key
+    // Try to load API key from ~/.cdoing/config.json if not in settings or env
     const { provider, modelConfig } = this.getConfig();
     if (!modelConfig.apiKey) {
       const envVar = getApiKeyEnvVar(provider);
       if (!process.env[envVar]) {
-        this.postMessage({
-          type: "error",
-          text: `API key not configured. Set "${envVar}" env var or add it in Settings.`,
-        });
+        // Check ~/.cdoing/config.json
+        const storedKey = this.loadApiKeyFromConfig(provider);
+        if (storedKey) {
+          process.env[envVar] = storedKey;
+        }
+      }
+    }
+
+    if (!this.agent) {
+      try {
+        this.initAgent();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.postMessage({ type: "error", text: `Failed to initialize agent: ${msg}` });
         this.isProcessing = false;
         return;
       }
     }
-
-    if (!this.agent) this.initAgent();
 
     const callbacks: AgentCallbacks = {
       onToken: (token) => {
@@ -234,10 +311,12 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       onComplete: () => {
         this.postMessage({ type: "endResponse" });
         this.isProcessing = false;
+        this.processQueue();
       },
       onError: (error) => {
         this.postMessage({ type: "error", text: error.message });
         this.isProcessing = false;
+        this.processQueue();
       },
       onUsage: (usage) => {
         const parts: string[] = [];
@@ -261,7 +340,18 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       const msg = err instanceof Error ? err.message : String(err);
       this.postMessage({ type: "error", text: msg });
       this.isProcessing = false;
+      this.processQueue();
     }
+  }
+
+  /** Process the next message in the queue */
+  private processQueue() {
+    if (this.messageQueue.length === 0) return;
+    const next = this.messageQueue.shift()!;
+    // Small delay so the UI can update
+    setTimeout(() => {
+      this.handleUserMessage(next);
+    }, 100);
   }
 
   /** Handle slash commands */
