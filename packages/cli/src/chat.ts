@@ -34,7 +34,7 @@ import type { ModelConfig } from "@cdoing/ai";
 import { printWelcome, printHelp, printConfig } from "./help";
 import { createInteractiveCallbacks } from "./callbacks";
 import { createToolRegistry } from "./tools";
-import { parsePermissionMode } from "./config";
+import { parsePermissionMode, updateStoredConfig, getStoredConfigDisplay } from "./config";
 import {
   createConversation,
   addMessage,
@@ -191,6 +191,37 @@ export class ChatInterface {
         return true;
 
       case "/config":
+        if (arg === "show") {
+          console.log(chalk.bold("\n  Stored Config") + chalk.dim(" (~/.cdoing/config.json):\n"));
+          for (const line of getStoredConfigDisplay()) {
+            console.log(chalk.white(`  ${line}`));
+          }
+          console.log();
+          return true;
+        }
+        if (arg.startsWith("set ")) {
+          const setParts = arg.slice(4).trim().split(/\s+/);
+          const key = setParts[0];
+          const value = setParts.slice(1).join(" ");
+          if (!key || !value) {
+            console.log(chalk.dim("\n  Usage: /config set <key> <value>"));
+            console.log(chalk.dim("  Keys:  provider, model, mode, api-key, base-url\n"));
+            return true;
+          }
+          const result = updateStoredConfig(key, value);
+          if (result.success) {
+            console.log(chalk.green(`\n  Saved: ${key} = ${key === "api-key" ? value.slice(0, 8) + "..." : value}\n`));
+            // Apply changes to current session
+            if (key === "provider") { this.modelConfig.provider = value; this.rebuildAgent(); }
+            if (key === "model") { this.modelConfig.model = value; this.rebuildAgent(); }
+            if (key === "mode") { this.permissionManager.setMode(parsePermissionMode(value) as PermissionMode); }
+            if (key === "api-key") { this.modelConfig.apiKey = value; this.rebuildAgent(); }
+            if (key === "base-url") { this.modelConfig.baseURL = value; this.rebuildAgent(); }
+          } else {
+            console.log(chalk.red(`\n  ${result.error}\n`));
+          }
+          return true;
+        }
         printConfig({
           provider: String(this.modelConfig.provider || "anthropic"),
           model: String(this.modelConfig.model || "(default)"),
@@ -198,7 +229,9 @@ export class ChatInterface {
           dir: this.workingDir,
         });
         console.log(chalk.dim(`    Chat ID:     ${this.conversation.id}`));
-        console.log(chalk.dim(`    Messages:    ${this.conversation.messages.length}\n`));
+        console.log(chalk.dim(`    Messages:    ${this.conversation.messages.length}`));
+        console.log(chalk.dim(`\n    /config show             — view saved config`));
+        console.log(chalk.dim(`    /config set <key> <val>  — update saved config\n`));
         return true;
 
       case "/model":

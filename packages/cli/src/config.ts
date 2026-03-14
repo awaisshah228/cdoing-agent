@@ -14,9 +14,12 @@ import { getApiKeyEnvVar, type ModelConfig } from "@cdoing/ai";
 const CONFIG_DIR = path.join(os.homedir(), ".cdoing");
 const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
 
-interface StoredConfig {
+export interface StoredConfig {
   provider?: string;
+  model?: string;
   apiKeys?: Record<string, string>;
+  mode?: string;
+  baseUrl?: string;
 }
 
 export interface CLIOptions {
@@ -52,7 +55,7 @@ export function createPermissionManager(options: CLIOptions): PermissionManager 
 
 // ── Config file ─────────────────────────────────────────────
 
-function loadConfig(): StoredConfig {
+export function loadConfig(): StoredConfig {
   try {
     if (fs.existsSync(CONFIG_FILE))
       return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
@@ -60,9 +63,79 @@ function loadConfig(): StoredConfig {
   return {};
 }
 
-function saveConfig(config: StoredConfig): void {
+export function saveConfig(config: StoredConfig): void {
   if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true });
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), "utf-8");
+}
+
+const VALID_CONFIG_KEYS = ["provider", "model", "mode", "api-key", "base-url"] as const;
+type ConfigKey = typeof VALID_CONFIG_KEYS[number];
+
+/**
+ * Update a stored config value. Returns true on success.
+ */
+export function updateStoredConfig(key: string, value: string): { success: boolean; error?: string } {
+  if (!VALID_CONFIG_KEYS.includes(key as ConfigKey)) {
+    return {
+      success: false,
+      error: `Unknown key "${key}". Valid keys: ${VALID_CONFIG_KEYS.join(", ")}`,
+    };
+  }
+
+  const config = loadConfig();
+
+  switch (key) {
+    case "provider":
+      config.provider = value;
+      break;
+    case "model":
+      config.model = value;
+      break;
+    case "mode": {
+      const validModes = ["ask", "auto-edit", "auto"];
+      if (!validModes.includes(value)) {
+        return { success: false, error: `Invalid mode "${value}". Valid: ${validModes.join(", ")}` };
+      }
+      config.mode = value;
+      break;
+    }
+    case "api-key": {
+      const provider = config.provider || "anthropic";
+      config.apiKeys = config.apiKeys || {};
+      config.apiKeys[provider] = value;
+      break;
+    }
+    case "base-url":
+      config.baseUrl = value;
+      break;
+  }
+
+  saveConfig(config);
+  return { success: true };
+}
+
+/**
+ * Show all stored config values.
+ */
+export function getStoredConfigDisplay(): string[] {
+  const config = loadConfig();
+  const lines: string[] = [];
+
+  lines.push(`  provider:  ${config.provider || "(not set — defaults to anthropic)"}`);
+  lines.push(`  model:     ${config.model || "(not set — uses provider default)"}`);
+  lines.push(`  mode:      ${config.mode || "(not set — defaults to ask)"}`);
+  lines.push(`  base-url:  ${config.baseUrl || "(not set)"}`);
+
+  if (config.apiKeys) {
+    for (const [provider, key] of Object.entries(config.apiKeys)) {
+      const masked = key.slice(0, 8) + "..." + key.slice(-4);
+      lines.push(`  api-key [${provider}]: ${masked}`);
+    }
+  } else {
+    lines.push(`  api-key:   (not set)`);
+  }
+
+  return lines;
 }
 
 function ask(question: string): Promise<string> {
@@ -81,7 +154,7 @@ const PROVIDER_INFO: Record<string, { name: string; url: string }> = {
 };
 
 /**
- * Resolve API key from: flag → env → stored config → interactive setup.
+ * Resolve API key from: flag → env → stored config → OAuth token → interactive setup.
  * Mutates options.apiKey so downstream code can use it.
  */
 export async function resolveApiKey(options: CLIOptions): Promise<void> {
@@ -103,8 +176,9 @@ export async function resolveApiKey(options: CLIOptions): Promise<void> {
   const info = PROVIDER_INFO[provider];
   console.log();
   console.log(chalk.bold.cyan("  Welcome to Cdoing Agent!"));
-  console.log(chalk.dim("  Let's set up your API key.\n"));
+  console.log(chalk.dim("  Let's set up authentication.\n"));
   console.log(chalk.white(`  Provider: ${chalk.bold(info?.name || provider)}`));
+
   if (info?.url) console.log(chalk.dim(`  Get a key: ${info.url}\n`));
 
   const apiKey = await ask(chalk.green("  Enter your API key: "));
