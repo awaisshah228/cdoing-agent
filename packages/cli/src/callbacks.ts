@@ -92,13 +92,36 @@ export function createInteractiveCallbacks(spinner: Ora): AgentCallbacks {
         buffer = "";
       }
       spinner.stop();
-      const preview = JSON.stringify(input).substring(0, 80);
-      console.log(chalk.yellow(`\n  ⚡ ${name}`) + chalk.dim(` ${preview}`));
+
+      // Special formatting for todo tool
+      if (name === "todo") {
+        const action = (input as Record<string, unknown>).action;
+        const subject = (input as Record<string, unknown>).subject;
+        const status = (input as Record<string, unknown>).status;
+        const id = (input as Record<string, unknown>).id;
+
+        if (action === "create" && subject) {
+          console.log(chalk.magenta(`\n  📋 Creating task: `) + chalk.white(String(subject)));
+        } else if (action === "update" && id && status) {
+          const icon = status === "completed" ? "✅" : status === "in_progress" ? "🔄" : "📌";
+          console.log(chalk.magenta(`\n  ${icon} Task #${id}: `) + chalk.white(String(status)));
+        } else if (action === "list") {
+          console.log(chalk.magenta(`\n  📋 Listing tasks`));
+        } else {
+          console.log(chalk.yellow(`\n  ⚡ ${name}`) + chalk.dim(` ${JSON.stringify(input).substring(0, 80)}`));
+        }
+      } else {
+        const preview = JSON.stringify(input).substring(0, 80);
+        console.log(chalk.yellow(`\n  ⚡ ${name}`) + chalk.dim(` ${preview}`));
+      }
     },
 
     onToolResult: (name, result, isError) => {
       if (isError) {
         console.log(chalk.red(`  ✗ ${name} failed`));
+      } else if (name === "todo") {
+        // More concise output for todo tool
+        console.log(chalk.green(`  ✓`) + chalk.dim(` ${result.split("\n")[0]}`));
       } else {
         const preview = result.substring(0, 120).replace(/\n/g, " ");
         console.log(chalk.green(`  ✓ ${name}`) + chalk.dim(` ${preview}`));

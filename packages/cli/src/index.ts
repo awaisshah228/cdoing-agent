@@ -7,7 +7,7 @@
 
 import { Command } from "commander";
 import { AgentRunner } from "@cdoing/ai";
-import { HookManager, loadProjectConfig, MemoryStore } from "@cdoing/core";
+import { HookManager, loadProjectConfig, MemoryStore, TodoStore } from "@cdoing/core";
 import { ChatInterface } from "./chat";
 import { buildModelConfig, createPermissionManager, resolveApiKey, type CLIOptions } from "./config";
 import { createToolRegistry } from "./tools";
@@ -123,6 +123,7 @@ async function run(prompt: string | undefined, options: CLIOptions) {
   const permissionManager = createPermissionManager(options);
   const hookManager = new HookManager(options.dir);
   const memoryStore = new MemoryStore();
+  const todoStore = new TodoStore();
   const projectConfig = loadProjectConfig(options.dir);
 
   const agentOptions: import("@cdoing/ai").AgentRunnerOptions = {
@@ -144,7 +145,7 @@ async function run(prompt: string | undefined, options: CLIOptions) {
     modelConfig, options.dir, permissionManager, hookManager, agentOptions,
   );
 
-  let toolRegistry = createToolRegistry(options.dir, subAgentFactory);
+  let toolRegistry = createToolRegistry(options.dir, { subAgentFactory, todoStore });
 
   // Handle tool filtering
   if (options.allowedTools) {
@@ -210,7 +211,7 @@ async function run(prompt: string | undefined, options: CLIOptions) {
 
     await agent.run(prompt, callbacks);
   } else {
-    const chat = new ChatInterface(modelConfig, toolRegistry, permissionManager, hookManager, memoryStore);
+    const chat = new ChatInterface(modelConfig, toolRegistry, permissionManager, hookManager, memoryStore, todoStore);
     await chat.start();
   }
 }

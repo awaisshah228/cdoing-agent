@@ -12,6 +12,7 @@ export { WebFetchTool } from "./tools/web-fetch";
 export { WebSearchTool } from "./tools/web-search";
 export { SubAgentTool } from "./tools/sub-agent";
 export type { SubAgentRunnerFactory } from "./tools/sub-agent";
+export { TodoTool } from "./tools/todo";
 export type { ToolDefinition, ToolResult, BaseTool } from "./tools/types";
 
 // Permissions
@@ -28,3 +29,5 @@ export { loadIgnorePatterns } from "./utils/gitignore";
 export { loadProjectConfig, getProjectConfigPath } from "./utils/project-config";
 export { MemoryStore } from "./utils/memory";
 export type { MemoryEntry } from "./utils/memory";
+export { TodoStore } from "./utils/todo";
+export type { TodoItem, TodoStatus } from "./utils/todo";

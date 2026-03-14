@@ -37,6 +37,7 @@ export function printHelp(): void {
   console.log(chalk.cyan("    /usage               ") + "Show token usage and cost");
   console.log(chalk.cyan("    /compact             ") + "Compress conversation context");
   console.log(chalk.cyan("    /cost                ") + "Show detailed cost breakdown");
+  console.log(chalk.cyan("    /tasks               ") + "Show agent task list");
   console.log(chalk.cyan("    /doctor              ") + "Check system health");
   console.log(chalk.cyan("    /init                ") + "Initialize project config");
   console.log(chalk.cyan("    /dir <path>          ") + "Change working directory");

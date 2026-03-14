@@ -28,7 +28,7 @@ import { exec } from "child_process";
 import chalk from "chalk";
 import ora from "ora";
 import { AgentRunner } from "@cdoing/ai";
-import type { ToolRegistry, PermissionManager, PermissionMode, HookManager, MemoryStore } from "@cdoing/core";
+import type { ToolRegistry, PermissionManager, PermissionMode, HookManager, MemoryStore, TodoStore } from "@cdoing/core";
 import { loadProjectConfig } from "@cdoing/core";
 import type { ModelConfig } from "@cdoing/ai";
 import { printWelcome, printHelp, printConfig } from "./help";
@@ -55,6 +55,7 @@ export class ChatInterface {
   private permissionManager: PermissionManager;
   private hookManager: HookManager;
   private memoryStore: MemoryStore;
+  private todoStore: TodoStore | null;
   private workingDir: string;
   private conversation: Conversation;
   private lastSigint = 0;
@@ -66,12 +67,14 @@ export class ChatInterface {
     permissionManager: PermissionManager,
     hookManager: HookManager,
     memoryStore: MemoryStore,
+    todoStore?: TodoStore,
   ) {
     this.modelConfig = modelConfig;
     this.toolRegistry = toolRegistry;
     this.permissionManager = permissionManager;
     this.hookManager = hookManager;
     this.memoryStore = memoryStore;
+    this.todoStore = todoStore || null;
     this.workingDir = process.cwd();
     this.agent = this.buildAgent();
     this.conversation = createConversation(
@@ -113,6 +116,7 @@ export class ChatInterface {
     { cmd: "/usage", desc: "Show token usage" },
     { cmd: "/compact", desc: "Compress context" },
     { cmd: "/cost", desc: "Show cost breakdown" },
+    { cmd: "/tasks", desc: "Show task list" },
     { cmd: "/doctor", desc: "Check system health" },
     { cmd: "/init", desc: "Initialize project" },
     { cmd: "/login", desc: "Authentication setup" },
@@ -415,6 +419,10 @@ export class ChatInterface {
         this.showDetailedCost();
         return true;
 
+      case "/tasks":
+        this.showTasks(arg);
+        return true;
+
       case "/doctor":
         handleDoctor();
         return true;
@@ -590,6 +598,62 @@ export class ChatInterface {
       console.log(`    Estimated cost: $${cost.toFixed(4)}`);
     }
     console.log();
+  }
+
+  /** Show task list */
+  private showTasks(arg: string): void {
+    if (!this.todoStore) {
+      console.log(chalk.dim("\n  Task tracking not available.\n"));
+      return;
+    }
+
+    if (arg === "clear") {
+      this.todoStore.clear();
+      console.log(chalk.green("\n  All tasks cleared.\n"));
+      return;
+    }
+
+    const todos = this.todoStore.getAll();
+    if (todos.length === 0) {
+      console.log(chalk.dim("\n  No tasks."));
+      console.log(chalk.dim("  The agent can create tasks using the todo tool.\n"));
+      return;
+    }
+
+    console.log(chalk.bold("\n  Tasks:\n"));
+    for (const todo of todos) {
+      const icon = this.getTaskIcon(todo.status);
+      const statusColor = this.getTaskStatusColor(todo.status);
+      const desc = todo.description ? chalk.dim(` - ${todo.description}`) : "";
+      console.log(`    ${icon} ${chalk.white(`#${todo.id}`)} ${statusColor(`[${todo.status}]`)} ${todo.subject}${desc}`);
+    }
+
+    const summary = this.todoStore.getSummary();
+    console.log();
+    console.log(chalk.dim(`    ${summary.completed}/${summary.total} completed`));
+    if (summary.in_progress > 0) console.log(chalk.dim(`    ${summary.in_progress} in progress`));
+    if (summary.blocked > 0) console.log(chalk.dim(`    ${summary.blocked} blocked`));
+    console.log(chalk.dim(`\n    /tasks clear — clear all tasks\n`));
+  }
+
+  private getTaskIcon(status: string): string {
+    switch (status) {
+      case "pending": return chalk.dim("[ ]");
+      case "in_progress": return chalk.yellow("[~]");
+      case "completed": return chalk.green("[x]");
+      case "blocked": return chalk.red("[!]");
+      default: return "[ ]";
+    }
+  }
+
+  private getTaskStatusColor(status: string): (text: string) => string {
+    switch (status) {
+      case "pending": return chalk.dim;
+      case "in_progress": return chalk.yellow;
+      case "completed": return chalk.green;
+      case "blocked": return chalk.red;
+      default: return chalk.dim;
+    }
   }
 
   /** Show login/auth help */

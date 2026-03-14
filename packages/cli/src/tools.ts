@@ -15,13 +15,28 @@ import {
   WebFetchTool,
   WebSearchTool,
   SubAgentTool,
+  TodoTool,
+  TodoStore,
 } from "@cdoing/core";
 import type { SubAgentRunnerFactory } from "@cdoing/core";
 
+export interface ToolRegistryOptions {
+  subAgentFactory?: SubAgentRunnerFactory;
+  todoStore?: TodoStore;
+}
+
 export function createToolRegistry(
   workingDir: string,
-  subAgentFactory?: SubAgentRunnerFactory,
+  optionsOrSubAgentFactory?: ToolRegistryOptions | SubAgentRunnerFactory,
 ): ToolRegistry {
+  // Support both old signature (subAgentFactory) and new signature (options)
+  let options: ToolRegistryOptions = {};
+  if (typeof optionsOrSubAgentFactory === "function") {
+    options = { subAgentFactory: optionsOrSubAgentFactory };
+  } else if (optionsOrSubAgentFactory) {
+    options = optionsOrSubAgentFactory;
+  }
+
   const registry = new ToolRegistry();
 
   // File tools
@@ -43,8 +58,13 @@ export function createToolRegistry(
   registry.register(new WebSearchTool());
 
   // Sub-agent (only if factory provided — prevents infinite recursion)
-  if (subAgentFactory) {
-    registry.register(new SubAgentTool(subAgentFactory));
+  if (options.subAgentFactory) {
+    registry.register(new SubAgentTool(options.subAgentFactory));
+  }
+
+  // Todo tool (for task tracking)
+  if (options.todoStore) {
+    registry.register(new TodoTool(options.todoStore));
   }
 
   return registry;
