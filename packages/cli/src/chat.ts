@@ -261,10 +261,26 @@ export class ChatInterface {
     return true;
   }
 
-  /** Run a shell command directly (! prefix) */
+  /** Run a shell command directly (! prefix). Intercepts `cd` to change working dir. */
   private runShellCommand(command: string): Promise<void> {
     if (!command) {
       console.log(chalk.dim("\n  Usage: !<command>  (e.g. !ls, !git status, !npm test)\n"));
+      return Promise.resolve();
+    }
+
+    // Intercept `cd` — change working directory like /dir
+    const cdMatch = command.match(/^cd\s+(.+)$/);
+    if (cdMatch) {
+      const target = cdMatch[1].trim().replace(/^~/, process.env.HOME || "~");
+      const newDir = path.resolve(this.workingDir, target);
+      if (!fs.existsSync(newDir) || !fs.statSync(newDir).isDirectory()) {
+        console.log(chalk.red(`\n  Not a valid directory: ${newDir}\n`));
+        return Promise.resolve();
+      }
+      this.workingDir = newDir;
+      this.toolRegistry = createToolRegistry(newDir);
+      this.rebuildAgent();
+      console.log(chalk.green(`\n  ${newDir}\n`));
       return Promise.resolve();
     }
 
