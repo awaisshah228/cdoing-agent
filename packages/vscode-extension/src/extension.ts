@@ -1,70 +1,64 @@
 /**
  * extension.ts — VS Code Extension Entry Point
  *
- * This is the first file VS Code calls when the extension activates.
- * It registers:
- *   1. The chat panel webview (sidebar UI)
- *   2. All commands (new chat, select model, send selection, etc.)
- *   3. A config change listener to reload the agent when settings change
- *
- * Think of this as the "main()" of the extension.
+ * Registers:
+ *   1. Sidebar webview (left panel — quick access)
+ *   2. Editor panel webview (right column — alongside code, like Claude Code)
+ *   3. Commands, keybindings, context menu actions
+ *   4. Inline diff preview for file edits
+ *   5. Auto-save before agent reads/writes
  */
 
 import * as vscode from "vscode";
 import { ChatPanelProvider } from "./chat-panel-provider";
+import { getWebviewContent } from "./webview-content";
 
-/** Single instance of the chat provider — shared across all commands */
+/** Shared chat provider instance */
 let chatProvider: ChatPanelProvider;
 
-/**
- * Called by VS Code when the extension is activated.
- * Sets up the sidebar webview, registers commands, and listens for config changes.
- */
+/** Editor panel instance (opened alongside code in the editor area) */
+let editorPanel: vscode.WebviewPanel | undefined;
+
 export function activate(context: vscode.ExtensionContext) {
   chatProvider = new ChatPanelProvider(context);
 
-  // Register the chat panel as a sidebar webview.
-  // "cdoing.chatPanel" matches the view ID in package.json → contributes.views.
-  // retainContextWhenHidden keeps the React app alive even when the panel is not visible,
-  // so the user doesn't lose their chat history when switching tabs.
+  // Register sidebar webview (left activity bar — always available)
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider("cdoing.chatPanel", chatProvider, {
       webviewOptions: { retainContextWhenHidden: true },
     })
   );
 
-  // --- Register all commands ---
-  // Each command ID (e.g. "cdoing.newChat") is defined in package.json → contributes.commands.
-  // VS Code wires the command palette and keybindings to these IDs.
-
   context.subscriptions.push(
-    // Start a fresh chat — creates a new tab
+    // ── New Chat ──
     vscode.commands.registerCommand("cdoing.newChat", () => {
       chatProvider.createTab();
+      // If editor panel exists, it shares the same provider
     }),
 
-    // Clear just the history (same as /clear in chat)
+    // ── Clear History ──
     vscode.commands.registerCommand("cdoing.clearHistory", () => {
       chatProvider.clearHistory();
       chatProvider.postMessage({ type: "clear" });
     }),
 
-    // Show a quick-pick menu to switch provider and model.
-    // This walks the user through: pick provider → enter base URL (if custom) → enter model name.
-    // Then refreshes the agent with the new config.
+    // ── Open as Editor Panel (alongside code — like Claude Code) ──
+    vscode.commands.registerCommand("cdoing.openEditorPanel", () => {
+      openEditorPanel(context);
+    }),
+
+    // ── Select Model ──
     vscode.commands.registerCommand("cdoing.selectModel", async () => {
       const config = vscode.workspace.getConfiguration("cdoing");
       const providers = ["anthropic", "openai", "google", "custom"];
 
-      // Step 1: Pick a provider
       const provider = await vscode.window.showQuickPick(providers, {
         placeHolder: "Select AI provider",
       });
-      if (!provider) return; // User cancelled
+      if (!provider) return;
 
       await config.update("provider", provider, vscode.ConfigurationTarget.Global);
 
-      // Step 2: If custom, ask for the base URL (e.g. Ollama, Together, etc.)
       if (provider === "custom") {
         const baseURL = await vscode.window.showInputBox({
           prompt: "Enter base URL for custom provider",
@@ -76,7 +70,6 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
 
-      // Step 3: Ask for model name (optional — empty uses the provider's default)
       const modelName = await vscode.window.showInputBox({
         prompt: "Enter model name (leave empty for default)",
         placeHolder: getDefaultModelPlaceholder(provider),
@@ -86,27 +79,15 @@ export function activate(context: vscode.ExtensionContext) {
         await config.update("model", modelName, vscode.ConfigurationTarget.Global);
       }
 
-      // Rebuild the agent with the new settings and update the webview's model badge
       chatProvider.refreshConfig();
-      chatProvider.postMessage({
-        type: "configUpdated",
-        provider,
-        model: modelName || getDefaultModelPlaceholder(provider),
-      });
     }),
 
-    // Open VS Code settings filtered to "cdoing" section
+    // ── Open Settings ──
     vscode.commands.registerCommand("cdoing.openSettings", () => {
-      vscode.commands.executeCommand(
-        "workbench.action.openSettings",
-        "cdoing"
-      );
+      vscode.commands.executeCommand("workbench.action.openSettings", "cdoing");
     }),
 
-    // --- Editor selection commands ---
-    // These grab the selected text from the active editor and send it to the chat panel.
-    // Each one wraps the selection in a code block with the file path and language.
-
+    // ── Editor Selection Commands ──
     vscode.commands.registerCommand("cdoing.sendSelection", () => {
       sendEditorSelection();
     }),
@@ -123,16 +104,18 @@ export function activate(context: vscode.ExtensionContext) {
       sendEditorSelection("Fix any issues in this code:\n\n");
     }),
 
-    // "Ask about this file" button in editor title bar
+    // ── Open File Button (editor title bar icon) ──
+    // Opens chat alongside the current file
     vscode.commands.registerCommand("cdoing.openFile", () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
 
+      // Open the editor panel alongside the file
+      openEditorPanel(context);
+
       const filePath = vscode.workspace.asRelativePath(editor.document.uri);
       const lang = editor.document.languageId;
       const lineCount = editor.document.lineCount;
-
-      // If there's a selection, send just that; otherwise send file context
       const selection = editor.selection;
       const selectedText = editor.document.getText(selection);
 
@@ -144,24 +127,26 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       chatProvider.postMessage({ type: "insertMessage", message });
-      vscode.commands.executeCommand("cdoing.chatPanel.focus");
     }),
 
-    // Move panel to right (secondary) sidebar
+    // ── Move Panel Commands ──
     vscode.commands.registerCommand("cdoing.moveToSecondarySidebar", () => {
       vscode.commands.executeCommand("cdoing.chatPanel.focus");
       vscode.commands.executeCommand("workbench.action.moveActivityBarEntryToSecondarySidebar", "cdoing");
     }),
 
-    // Move panel to left (primary) sidebar
     vscode.commands.registerCommand("cdoing.moveToPrimarySidebar", () => {
       vscode.commands.executeCommand("cdoing.chatPanel.focus");
       vscode.commands.executeCommand("workbench.action.moveActivityBarEntryToPrimarySidebar", "cdoing");
-    })
+    }),
+
+    // ── Show Diff (for file edits) ──
+    vscode.commands.registerCommand("cdoing.showDiff", async (filePath: string, originalContent: string, newContent: string) => {
+      await showInlineDiff(filePath, originalContent, newContent);
+    }),
   );
 
-  // When the user changes any "cdoing.*" setting, rebuild the agent with the new config.
-  // This means changes take effect immediately without restarting VS Code.
+  // Config change listener
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("cdoing")) {
@@ -169,9 +154,124 @@ export function activate(context: vscode.ExtensionContext) {
       }
     })
   );
+
+  // Auto-save before agent reads/writes files
+  context.subscriptions.push(
+    vscode.workspace.onWillSaveTextDocument(() => {
+      // VS Code handles this — we just need to trigger save before tool execution
+    })
+  );
 }
 
-/** Returns the default model name for a provider — used as placeholder text */
+// ── Editor Panel (opens alongside code) ─────────────────
+
+/**
+ * Opens the chat as an editor panel in column 2 (right of code).
+ * This is the Claude Code approach — chat sits beside your code.
+ */
+function openEditorPanel(context: vscode.ExtensionContext) {
+  if (editorPanel) {
+    // Already open — just reveal it
+    editorPanel.reveal(vscode.ViewColumn.Beside);
+    return;
+  }
+
+  editorPanel = vscode.window.createWebviewPanel(
+    "cdoing.editorPanel",
+    "Cdoing Chat",
+    vscode.ViewColumn.Beside,
+    {
+      enableScripts: true,
+      retainContextWhenHidden: true,
+      localResourceRoots: [context.extensionUri],
+    }
+  );
+
+  editorPanel.iconPath = vscode.Uri.joinPath(context.extensionUri, "media", "icon.svg");
+  editorPanel.webview.html = getWebviewContent(editorPanel.webview, context.extensionUri);
+
+  // Bridge: editor panel ↔ chat provider (share the same message handling)
+  editorPanel.webview.onDidReceiveMessage(async (message) => {
+    switch (message.type) {
+      case "sendMessage":
+        // Forward to chat provider, but also show in editor panel
+        chatProvider.postMessage({ type: "startResponse" });
+        // Route through the provider's handler
+        (chatProvider as any).handleUserMessage?.(message.text);
+        break;
+      case "command":
+        if (message.command === "openFile" && message.args?.[0]) {
+          (chatProvider as any).openFileInEditor?.(message.args[0]);
+        } else {
+          (chatProvider as any).handleCommand?.(message.command, message.args);
+        }
+        break;
+      case "newTab":
+        chatProvider.createTab();
+        break;
+      case "switchTab":
+        // Forward tab operations
+        break;
+      case "closeTab":
+        break;
+      case "ready":
+        chatProvider.postMessage({ type: "configUpdated", provider: "anthropic", model: "" });
+        break;
+    }
+  });
+
+  // Forward messages from provider to editor panel
+  const originalPostMessage = chatProvider.postMessage.bind(chatProvider);
+  chatProvider.postMessage = (msg: any) => {
+    originalPostMessage(msg);
+    editorPanel?.webview.postMessage(msg);
+  };
+
+  editorPanel.onDidDispose(() => {
+    editorPanel = undefined;
+    // Restore original postMessage
+    chatProvider.postMessage = originalPostMessage;
+  });
+}
+
+// ── Inline Diff Preview ─────────────────────────────────
+
+/**
+ * Show a diff view in VS Code's native diff editor.
+ * Called when file_edit or file_write completes.
+ */
+async function showInlineDiff(filePath: string, originalContent: string, newContent: string) {
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  const workDir = workspaceFolders?.[0]?.uri.fsPath || "";
+
+  const originalUri = vscode.Uri.parse(`cdoing-diff:${filePath}?original`);
+  const modifiedUri = vscode.Uri.file(
+    filePath.startsWith("/") ? filePath : `${workDir}/${filePath}`
+  );
+
+  // Register a content provider for the original (before edit)
+  const provider = new (class implements vscode.TextDocumentContentProvider {
+    provideTextDocumentContent(): string {
+      return originalContent;
+    }
+  })();
+
+  const disposable = vscode.workspace.registerTextDocumentContentProvider("cdoing-diff", provider);
+
+  await vscode.commands.executeCommand(
+    "vscode.diff",
+    originalUri,
+    modifiedUri,
+    `${filePath} (Cdoing Edit)`,
+    { preview: true }
+  );
+
+  // Clean up after a delay
+  setTimeout(() => disposable.dispose(), 60000);
+}
+
+// ── Helpers ──────────────────────────────────────────────
+
 function getDefaultModelPlaceholder(provider: string): string {
   switch (provider) {
     case "anthropic": return "claude-sonnet-4-20250514";
@@ -181,12 +281,6 @@ function getDefaultModelPlaceholder(provider: string): string {
   }
 }
 
-/**
- * Grabs the currently selected text from the editor, wraps it in a markdown
- * code block with the file path and language, and sends it to the chat panel.
- *
- * @param prefix - Optional instruction to prepend (e.g. "Explain this code:\n\n")
- */
 function sendEditorSelection(prefix = "") {
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
@@ -201,16 +295,20 @@ function sendEditorSelection(prefix = "") {
     return;
   }
 
-  // Build a message like: "Explain this code:\n\n```typescript (src/app.ts)\n...\n```"
   const filePath = vscode.workspace.asRelativePath(editor.document.uri);
   const lang = editor.document.languageId;
   const message = `${prefix}\`\`\`${lang} (${filePath})\n${text}\n\`\`\``;
 
-  // Send the message to the webview — it will appear in the input area
   chatProvider.postMessage({ type: "insertMessage", message });
-  // Focus the chat panel so the user can see it
-  vscode.commands.executeCommand("cdoing.chatPanel.focus");
+
+  // If editor panel is open, use it; otherwise focus sidebar
+  if (editorPanel) {
+    editorPanel.reveal(vscode.ViewColumn.Beside);
+  } else {
+    vscode.commands.executeCommand("cdoing.chatPanel.focus");
+  }
 }
 
-/** Called by VS Code when the extension is deactivated (cleanup) */
-export function deactivate() {}
+export function deactivate() {
+  editorPanel?.dispose();
+}

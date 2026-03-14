@@ -45,6 +45,11 @@
         "title": "Cdoing: Clear Chat History"
       },
       {
+        "command": "cdoing.openEditorPanel",
+        "title": "Cdoing: Open Chat Panel (Beside Editor)",
+        "icon": "$(comment-discussion)"
+      },
+      {
         "command": "cdoing.selectModel",
         "title": "Cdoing: Select Model"
       },
@@ -186,7 +191,7 @@
     },
     "keybindings": [
       {
-        "command": "cdoing.newChat",
+        "command": "cdoing.openEditorPanel",
         "key": "ctrl+shift+l",
         "mac": "cmd+shift+l"
       },
@@ -207,6 +212,8 @@
   "dependencies": {
     "@cdoing/ai": "*",
     "@cdoing/core": "*",
+    "highlight.js": "^11.11.1",
+    "marked": "^17.0.4",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },

@@ -422,12 +422,30 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
     const tabId = tab.id; // capture for callbacks (tab might change)
 
+    // Track whether current turn has streamed any text (to discard it if tool calls follow)
+    let hasStreamedText = false;
+
+    // Accumulate usage across all turns, show only once at the end
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    let totalTokens = 0;
+    let totalCost = 0;
+
     const callbacks: AgentCallbacks = {
       onToken: (token) => {
-        if (this.activeTabId === tabId) this.postMessage({ type: "token", text: token });
+        if (this.activeTabId === tabId) {
+          this.postMessage({ type: "token", text: token });
+          hasStreamedText = true;
+        }
       },
       onToolCall: (name, input) => {
         if (this.activeTabId === tabId) {
+          // Discard the intermediate streamed text (e.g., "Let me search for...")
+          // The final turn after all tools will have the real answer
+          if (hasStreamedText) {
+            this.postMessage({ type: "discardStreaming" });
+            hasStreamedText = false;
+          }
           this.postMessage({ type: "toolCall", name, input: JSON.stringify(input).substring(0, 200) });
         }
       },
@@ -435,10 +453,23 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         if (this.activeTabId === tabId) {
           this.postMessage({ type: "toolResult", name, result: result.substring(0, 500), isError });
         }
+        // Reset for next turn
+        hasStreamedText = false;
       },
       onComplete: () => {
         const t = this.tabs.get(tabId);
         if (t) {
+          // Show accumulated usage once at the end
+          if (this.activeTabId === tabId && totalTokens > 0) {
+            const parts: string[] = [];
+            if (totalInputTokens > 0 || totalOutputTokens > 0) {
+              parts.push(`${totalInputTokens.toLocaleString()}→${totalOutputTokens.toLocaleString()}`);
+            }
+            parts.push(`${totalTokens.toLocaleString()} tokens`);
+            if (totalCost > 0) parts.push(`$${totalCost.toFixed(4)}`);
+            this.postMessage({ type: "usageInfo", text: parts.join(" · ") });
+          }
+
           t.isProcessing = false;
           if (this.activeTabId === tabId) this.postMessage({ type: "endResponse" });
           this.processTabQueue(tabId);
@@ -453,15 +484,11 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         }
       },
       onUsage: (usage) => {
-        if (this.activeTabId === tabId) {
-          const parts: string[] = [];
-          if (usage.inputTokens > 0 || usage.outputTokens > 0) {
-            parts.push(`${usage.inputTokens.toLocaleString()}→${usage.outputTokens.toLocaleString()}`);
-          }
-          parts.push(`${usage.totalTokens.toLocaleString()} tokens`);
-          if (usage.cost !== undefined) parts.push(`$${usage.cost.toFixed(4)}`);
-          this.postMessage({ type: "usageInfo", text: parts.join(" · ") });
-        }
+        // Accumulate usage across turns instead of showing each one
+        totalInputTokens += usage.inputTokens;
+        totalOutputTokens += usage.outputTokens;
+        totalTokens += usage.totalTokens;
+        if (usage.cost !== undefined) totalCost += usage.cost;
       },
     };
 

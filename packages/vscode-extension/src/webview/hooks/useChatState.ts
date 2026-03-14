@@ -1,12 +1,14 @@
 /**
- * useChatState.ts — Central Chat State Management (Multi-Tab)
+ * useChatState.ts — Central Chat State Management (Multi-Tab, Performance-Optimized)
  *
- * Each tab has its own entries, streaming ref, and processing state.
- * Switching tabs preserves history — messages are stored per-tab.
+ * Performance features (inspired by Continue.dev):
+ *   - Batched token streaming via requestAnimationFrame (not per-token re-renders)
+ *   - React.memo-compatible state updates
+ *   - Per-tab entry storage for instant tab switching
  */
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import type { ChatEntry, ChatMessage, ToolCallEntry, IncomingMessage } from "../types";
+import type { ChatEntry, ChatMessage, IncomingMessage } from "../types";
 import { useVsCode } from "./useVsCode";
 
 let idCounter = 0;
@@ -19,7 +21,6 @@ export interface Tab {
   title: string;
 }
 
-/** Per-tab stored state */
 interface TabData {
   entries: ChatEntry[];
   streamingId: string | null;
@@ -28,14 +29,10 @@ interface TabData {
 export function useChatState() {
   const vscode = useVsCode();
 
-  // Tab management
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
-
-  // Per-tab entries stored in a ref (avoids re-renders when switching)
   const tabDataRef = useRef<Map<string, TabData>>(new Map());
 
-  // Current tab's entries (copied on switch for React rendering)
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [queueCount, setQueueCount] = useState(0);
@@ -44,7 +41,47 @@ export function useChatState() {
 
   const streamingRef = useRef<string | null>(null);
 
-  /** Get or create tab data */
+  // ── Batched Token Streaming ──────────────────────────
+  // Accumulate tokens in a buffer and flush via rAF (not per-token setState)
+  const tokenBufferRef = useRef<string>("");
+  const rafRef = useRef<number | null>(null);
+
+  const flushTokenBuffer = useCallback(() => {
+    rafRef.current = null;
+    const buffered = tokenBufferRef.current;
+    if (!buffered) return;
+    tokenBufferRef.current = "";
+
+    setEntries((prev) => {
+      if (streamingRef.current) {
+        return prev.map((e) =>
+          e.id === streamingRef.current
+            ? { ...e, content: (e as ChatMessage).content + buffered }
+            : e
+        );
+      }
+      const id = nextId();
+      streamingRef.current = id;
+      return [...prev, { id, role: "assistant" as const, content: buffered }];
+    });
+  }, []);
+
+  const appendToken = useCallback((token: string) => {
+    tokenBufferRef.current += token;
+    if (rafRef.current === null) {
+      rafRef.current = requestAnimationFrame(flushTokenBuffer);
+    }
+  }, [flushTokenBuffer]);
+
+  // Cleanup rAF on unmount
+  useEffect(() => {
+    return () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
+
+  // ── Tab Data Helpers ─────────────────────────────────
+
   const getTabData = useCallback((tabId: string): TabData => {
     let data = tabDataRef.current.get(tabId);
     if (!data) {
@@ -54,16 +91,7 @@ export function useChatState() {
     return data;
   }, []);
 
-  /** Save current entries to active tab's data */
-  const saveCurrentTab = useCallback(() => {
-    if (activeTabId) {
-      const data = getTabData(activeTabId);
-      // We read entries from the latest state via a ref trick
-      data.streamingId = streamingRef.current;
-    }
-  }, [activeTabId, getTabData]);
-
-  // Keep tab data in sync with React state
+  // Keep tab data in sync
   useEffect(() => {
     if (activeTabId) {
       const data = getTabData(activeTabId);
@@ -71,81 +99,63 @@ export function useChatState() {
     }
   }, [entries, activeTabId, getTabData]);
 
-  const appendToken = useCallback((token: string) => {
-    setEntries((prev) => {
-      if (streamingRef.current) {
-        return prev.map((e) =>
-          e.id === streamingRef.current
-            ? { ...e, content: (e as ChatMessage).content + token }
-            : e
-        );
-      }
-      const id = nextId();
-      streamingRef.current = id;
-      const msg: ChatMessage = { id, role: "assistant", content: token };
-      return [...prev, msg];
-    });
-  }, []);
+  // ── Entry Mutators ───────────────────────────────────
 
   const addUserMessage = useCallback((text: string) => {
-    const msg: ChatMessage = { id: nextId(), role: "user", content: text };
-    setEntries((prev) => [...prev, msg]);
+    setEntries((prev) => [...prev, { id: nextId(), role: "user" as const, content: text }]);
   }, []);
 
   const addSystemMessage = useCallback((text: string, role: "system" | "error" = "system") => {
-    const msg: ChatMessage = { id: nextId(), role, content: text };
-    setEntries((prev) => [...prev, msg]);
+    setEntries((prev) => [...prev, { id: nextId(), role, content: text }]);
   }, []);
 
   const addToolCall = useCallback((name: string, input: string) => {
-    const entry: ToolCallEntry = { id: nextId(), kind: "call", name, detail: input };
-    setEntries((prev) => [...prev, entry]);
+    setEntries((prev) => [...prev, { id: nextId(), kind: "call" as const, name, detail: input }]);
   }, []);
 
   const addToolResult = useCallback((name: string, result: string, isError: boolean) => {
-    const entry: ToolCallEntry = { id: nextId(), kind: "result", name, detail: result, isError };
-    setEntries((prev) => [...prev, entry]);
+    setEntries((prev) => [...prev, { id: nextId(), kind: "result" as const, name, detail: result, isError }]);
   }, []);
 
   const clearAll = useCallback(() => {
     setEntries([]);
     streamingRef.current = null;
+    tokenBufferRef.current = "";
     setQueueCount(0);
   }, []);
 
-  const sendMessage = useCallback(
-    (text: string) => {
-      if (!text.trim()) return;
-      addUserMessage(text);
-      vscode.postMessage({ type: "sendMessage", text });
-    },
-    [addUserMessage, vscode]
-  );
+  // ── Actions ──────────────────────────────────────────
 
-  const sendCommand = useCallback(
-    (command: string) => {
-      vscode.postMessage({ type: "command", command });
-    },
-    [vscode]
-  );
+  const sendMessage = useCallback((text: string) => {
+    if (!text.trim()) return;
+    addUserMessage(text);
+    vscode.postMessage({ type: "sendMessage", text });
+  }, [addUserMessage, vscode]);
 
-  // Tab actions
+  const sendCommand = useCallback((command: string) => {
+    vscode.postMessage({ type: "command", command });
+  }, [vscode]);
+
   const createNewTab = useCallback(() => {
     vscode.postMessage({ type: "newTab" });
   }, [vscode]);
 
   const switchToTab = useCallback((tabId: string) => {
-    // Save current tab data before switching
-    saveCurrentTab();
+    // Save current tab before switch
+    if (activeTabId) {
+      const data = getTabData(activeTabId);
+      data.streamingId = streamingRef.current;
+    }
     vscode.postMessage({ type: "switchTab", tabId });
-  }, [vscode, saveCurrentTab]);
+  }, [vscode, activeTabId, getTabData]);
 
   const closeTab = useCallback((tabId: string) => {
     tabDataRef.current.delete(tabId);
     vscode.postMessage({ type: "closeTab", tabId });
   }, [vscode]);
 
-  // Listen for messages
+  // ── Message Handler ──────────────────────────────────
+
   useEffect(() => {
     function handler(event: MessageEvent<IncomingMessage>) {
       const msg = event.data;
@@ -157,6 +167,14 @@ export function useChatState() {
         case "token":
           appendToken(msg.text);
           break;
+        case "discardStreaming":
+          // Remove current streaming assistant message (intermediate text before tool calls)
+          if (streamingRef.current) {
+            const discardId = streamingRef.current;
+            streamingRef.current = null;
+            setEntries((prev) => prev.filter((e) => e.id !== discardId));
+          }
+          break;
         case "toolCall":
           addToolCall(msg.name, msg.input);
           break;
@@ -164,10 +182,13 @@ export function useChatState() {
           addToolResult(msg.name, msg.result, msg.isError);
           break;
         case "endResponse":
+          // Flush any remaining tokens
+          if (tokenBufferRef.current) flushTokenBuffer();
           setIsProcessing(false);
           streamingRef.current = null;
           break;
         case "error":
+          if (tokenBufferRef.current) flushTokenBuffer();
           setIsProcessing(false);
           streamingRef.current = null;
           addSystemMessage(msg.text, "error");
@@ -188,21 +209,15 @@ export function useChatState() {
 
         // Tab messages
         case "tabCreated":
-          setTabs((prev) => {
-            // Don't add duplicates
-            if (prev.some((t) => t.id === msg.tabId)) return prev;
-            return [...prev, { id: msg.tabId, title: msg.title }];
-          });
+          setTabs((prev) => prev.some((t) => t.id === msg.tabId) ? prev : [...prev, { id: msg.tabId, title: msg.title }]);
           break;
         case "tabSwitched": {
-          // Save current tab data
           setEntries((currentEntries) => {
             if (activeTabId) {
               const data = getTabData(activeTabId);
               data.entries = currentEntries;
               data.streamingId = streamingRef.current;
             }
-            // Load new tab data
             const newData = getTabData(msg.tabId);
             streamingRef.current = newData.streamingId;
             return newData.entries;
@@ -227,27 +242,15 @@ export function useChatState() {
 
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [activeTabId, appendToken, addToolCall, addToolResult, addSystemMessage, clearAll, getTabData]);
+  }, [activeTabId, appendToken, flushTokenBuffer, addToolCall, addToolResult, addSystemMessage, clearAll, getTabData]);
 
   useEffect(() => {
     vscode.postMessage({ type: "ready" });
   }, [vscode]);
 
   return {
-    // Tab state
-    tabs,
-    activeTabId,
-    createNewTab,
-    switchToTab,
-    closeTab,
-    // Chat state
-    entries,
-    isProcessing,
-    queueCount,
-    modelLabel,
-    providerLabel,
-    sendMessage,
-    sendCommand,
-    clearAll,
+    tabs, activeTabId, createNewTab, switchToTab, closeTab,
+    entries, isProcessing, queueCount, modelLabel, providerLabel,
+    sendMessage, sendCommand, clearAll,
   };
 }

@@ -1,19 +1,21 @@
 /**
  * index.tsx — Webview Entry Point
  *
- * This is the first file that runs inside the VS Code webview (browser sandbox).
- * It mounts the React app into the #root div created by webview-content.ts.
- *
- * esbuild bundles this file + all imports into dist/webview.js.
- * The CSS import is extracted to dist/webview.css.
+ * Mounts the React app and injects global scripts (copy code handler).
  */
 
-import React from "react";
 import { createRoot } from "react-dom/client";
 import { ChatPanel } from "./components/ChatPanel";
+import { COPY_CODE_SCRIPT } from "./utils/markdown";
 import "./styles/chat.css";
+import "highlight.js/styles/vs2015.min.css";
 
-// Mount the React app into the #root div (defined in the HTML from webview-content.ts)
+// Inject global copy code function
+const script = document.createElement("script");
+script.textContent = COPY_CODE_SCRIPT;
+document.head.appendChild(script);
+
+// Mount React app
 const container = document.getElementById("root")!;
 const root = createRoot(container);
 root.render(<ChatPanel />);

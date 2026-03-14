@@ -21,6 +21,7 @@ export type IncomingMessage =
   | { type: "toolCall"; name: string; input: string }                  // Agent is invoking a tool
   | { type: "toolResult"; name: string; result: string; isError: boolean } // Tool finished
   | { type: "endResponse" }                                            // Agent done, no more tokens
+  | { type: "discardStreaming" }                                        // Remove current streaming assistant message (intermediate text before tool calls)
   | { type: "error"; text: string }                                    // Something went wrong
   | { type: "systemMessage"; text: string }                            // System info (e.g. /help output)
   | { type: "usageInfo"; text: string }                                // Token usage info after each turn

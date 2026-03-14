@@ -1,23 +1,22 @@
 /**
- * MessageList.tsx — Scrollable Message Area
+ * MessageList.tsx — Scrollable Message Area (ResizeObserver-based scroll)
  *
- * Renders the list of all chat entries (messages + tool calls).
- * Shows the Welcome screen when the list is empty.
- * Auto-scrolls to the bottom when new entries arrive.
- * Shows a "Thinking..." indicator while the agent is processing.
+ * Uses ResizeObserver for efficient auto-scrolling (no scroll event polling).
+ * User can scroll up to read history — auto-scroll pauses until they scroll back down.
  */
 
-import React, { useRef, useEffect } from "react";
+import React from "react";
 import type { ChatEntry } from "../types";
 import { isChatMessage, isToolCallEntry } from "../types";
 import { MessageBubble } from "./MessageBubble";
 import { ToolCallBubble } from "./ToolCallBubble";
 import { Welcome } from "./Welcome";
+import { useAutoScroll } from "../hooks/useAutoScroll";
 
 interface MessageListProps {
-  entries: ChatEntry[];                      // All entries to display
-  isProcessing: boolean;                     // Show typing indicator?
-  onQuickAction: (message: string) => void;  // Called when user clicks a Welcome quick action
+  entries: ChatEntry[];
+  isProcessing: boolean;
+  onQuickAction: (message: string) => void;
 }
 
 export const MessageList: React.FC<MessageListProps> = ({
@@ -25,20 +24,12 @@ export const MessageList: React.FC<MessageListProps> = ({
   isProcessing,
   onQuickAction,
 }) => {
-  // Invisible div at the bottom — we scroll to it whenever entries change
-  const bottomRef = useRef<HTMLDivElement>(null);
-
-  // Auto-scroll to bottom when new messages or tokens arrive
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [entries, isProcessing]);
+  const containerRef = useAutoScroll([entries, isProcessing]);
 
   return (
-    <div className="messages">
-      {/* Show Welcome screen when there are no messages yet */}
+    <div className="messages" ref={containerRef}>
       {entries.length === 0 && <Welcome onQuickAction={onQuickAction} />}
 
-      {/* Render each entry as either a message bubble or a tool call bubble */}
       {entries.map((entry) => {
         if (isChatMessage(entry)) {
           return <MessageBubble key={entry.id} message={entry} />;
@@ -49,7 +40,6 @@ export const MessageList: React.FC<MessageListProps> = ({
         return null;
       })}
 
-      {/* Animated dots shown while the agent is thinking */}
       {isProcessing && (
         <div className="typing active">
           <div className="typing-dots">
@@ -58,9 +48,6 @@ export const MessageList: React.FC<MessageListProps> = ({
           <span>Thinking...</span>
         </div>
       )}
-
-      {/* Scroll anchor — we scroll to this element to stay at the bottom */}
-      <div ref={bottomRef} />
     </div>
   );
 };
