@@ -60,6 +60,12 @@ export class ChatInterface {
   private conversation: Conversation;
   private lastSigint = 0;
   private suggestionsVisible = 0;
+  private selectedSuggestion = -1;
+  private currentMatches: { cmd: string; desc: string }[] = [];
+  private inSuggestionMode = false;
+  private messageQueue: string[] = [];
+  private isProcessing = false;
+  private currentAbortController: AbortController | null = null;
 
   constructor(
     modelConfig: Partial<ModelConfig>,
@@ -119,6 +125,7 @@ export class ChatInterface {
     { cmd: "/tasks", desc: "Show task list" },
     { cmd: "/doctor", desc: "Check system health" },
     { cmd: "/init", desc: "Initialize project" },
+    { cmd: "/queue", desc: "Show message queue" },
     { cmd: "/login", desc: "Authentication setup" },
     { cmd: "/logout", desc: "Clear OAuth tokens" },
     { cmd: "/auth-status", desc: "Show auth status" },
@@ -135,14 +142,99 @@ export class ChatInterface {
       this.handleSigint();
     });
 
-    // Real-time suggestions as user types
-    process.stdin.on("keypress", () => {
-      // Use setImmediate so readline has updated .line first
+    // Enable keypress events
+    if (process.stdin.isTTY) {
+      readline.emitKeypressEvents(process.stdin);
+      process.stdin.setRawMode(true);
+    }
+
+    // Handle keypress events including ESC and arrow keys for suggestions
+    process.stdin.on("keypress", (_char, key) => {
+      if (key) {
+        // ESC key to cancel current processing
+        if (key.name === "escape" && this.isProcessing) {
+          this.cancelCurrentOperation();
+          return;
+        }
+
+        // Arrow key navigation in suggestion list
+        if (this.inSuggestionMode && this.currentMatches.length > 0) {
+          if (key.name === "down") {
+            this.selectedSuggestion = Math.min(
+              this.selectedSuggestion + 1,
+              Math.min(this.currentMatches.length, 8) - 1,
+            );
+            this.renderSuggestionList();
+            return;
+          }
+          if (key.name === "up") {
+            this.selectedSuggestion = Math.max(this.selectedSuggestion - 1, -1);
+            this.renderSuggestionList();
+            return;
+          }
+          // Tab or Enter on a selected suggestion → accept it
+          if (
+            (key.name === "tab" || key.name === "return") &&
+            this.selectedSuggestion >= 0
+          ) {
+            const selected = this.currentMatches[this.selectedSuggestion];
+            if (selected) {
+              this.clearSuggestions();
+              this.inSuggestionMode = false;
+              this.selectedSuggestion = -1;
+              // Replace the current line with the selected command
+              const rlAny = this.rl as unknown as { line: string; cursor: number };
+              rlAny.line = selected.cmd + " ";
+              rlAny.cursor = selected.cmd.length + 1;
+              // Rewrite the prompt line
+              const prompt = chalk.green("❯ ");
+              process.stdout.write(`\r${prompt}${selected.cmd} \x1b[K`);
+              return;
+            }
+          }
+        }
+      }
+
+      // Real-time suggestions as user types
       setImmediate(() => {
         const line = (this.rl as unknown as { line: string }).line || "";
         this.renderSuggestions(line);
       });
     });
+  }
+
+  /** Cancel current operation with ESC */
+  private cancelCurrentOperation(): void {
+    if (this.currentAbortController) {
+      this.currentAbortController.abort();
+      this.spinner.stop();
+      console.log(chalk.hex("#FFB74D")("\n  ⏹️  Cancelled by ESC\n"));
+      this.isProcessing = false;
+      this.currentAbortController = null;
+
+      // Show queued messages if any
+      if (this.messageQueue.length > 0) {
+        console.log(chalk.hex("#78909C")(`  📬 ${this.messageQueue.length} message(s) in queue`));
+      }
+
+      this.createReadline();
+      this.promptUser();
+    }
+  }
+
+  /** Show message queue status */
+  private showQueueStatus(): void {
+    if (this.messageQueue.length > 0) {
+      console.log(chalk.hex("#4FC3F7")(`\n  📬 Message Queue (${this.messageQueue.length}):`));
+      for (let i = 0; i < Math.min(this.messageQueue.length, 3); i++) {
+        const preview = this.messageQueue[i].substring(0, 50);
+        console.log(chalk.hex("#90A4AE")(`     ${i + 1}. ${preview}${this.messageQueue[i].length > 50 ? "..." : ""}`));
+      }
+      if (this.messageQueue.length > 3) {
+        console.log(chalk.hex("#78909C")(`     ... and ${this.messageQueue.length - 3} more`));
+      }
+      console.log();
+    }
   }
 
   private completer(line: string): [string[], string] {
@@ -188,16 +280,35 @@ export class ChatInterface {
       ];
     }
 
+    this.currentMatches = matches;
+    this.inSuggestionMode = matches.length > 0;
+    this.selectedSuggestion = -1;
+
     if (matches.length === 0) return;
 
-    // Show max 6 suggestions
-    const shown = matches.slice(0, 6);
+    this.renderSuggestionList();
+  }
+
+  private renderSuggestionList(): void {
+    this.clearSuggestions();
+
+    if (this.currentMatches.length === 0) return;
+
+    const shown = this.currentMatches.slice(0, 8);
     process.stdout.write("\x1b[s"); // save cursor
-    for (const { cmd, desc } of shown) {
+    for (let i = 0; i < shown.length; i++) {
+      const { cmd, desc } = shown[i];
       process.stdout.write("\n");
-      process.stdout.write(
-        `  \x1b[36m${cmd.padEnd(18)}\x1b[0m\x1b[2m${desc}\x1b[0m`,
-      );
+      if (i === this.selectedSuggestion) {
+        // Highlighted: white bg, bold text
+        process.stdout.write(
+          `  \x1b[46m\x1b[30m\x1b[1m ${cmd.padEnd(17)}\x1b[22m${desc} \x1b[0m`,
+        );
+      } else {
+        process.stdout.write(
+          `  \x1b[36m ${cmd.padEnd(17)}\x1b[0m\x1b[2m${desc}\x1b[0m`,
+        );
+      }
     }
     this.suggestionsVisible = shown.length;
     process.stdout.write("\x1b[u"); // restore cursor
@@ -220,13 +331,49 @@ export class ChatInterface {
   }
 
   private promptUser(): void {
-    this.rl.question(chalk.green("❯ "), async (input) => {
+    // Check if there are queued messages to process
+    if (this.messageQueue.length > 0 && !this.isProcessing) {
+      const nextMessage = this.messageQueue.shift()!;
+      console.log(chalk.hex("#4FC3F7")(`\n  📤 Processing queued message: `) + chalk.hex("#B0BEC5")(nextMessage.substring(0, 40) + (nextMessage.length > 40 ? "..." : "")));
+      this.processMessage(nextMessage);
+      return;
+    }
+
+    // Show queue status if there are queued messages
+    if (this.messageQueue.length > 0) {
+      this.showQueueStatus();
+    }
+
+    const prompt = this.messageQueue.length > 0
+      ? chalk.hex("#FFB74D")(`❯ [${this.messageQueue.length} queued] `)
+      : chalk.hex("#6BCB77")("❯ ");
+
+    this.rl.question(prompt, async (input) => {
       const trimmed = input.trim();
       if (!trimmed) { this.promptUser(); return; }
 
       this.clearSuggestions();
 
       if (trimmed === "?") { printHelp(); this.promptUser(); return; }
+
+      // Queue command - show queued messages
+      if (trimmed === "/queue") {
+        if (this.messageQueue.length === 0) {
+          console.log(chalk.hex("#78909C")("\n  No messages in queue.\n"));
+        } else {
+          this.showQueueStatus();
+        }
+        this.promptUser();
+        return;
+      }
+
+      // Clear queue command
+      if (trimmed === "/queue clear") {
+        this.messageQueue = [];
+        console.log(chalk.hex("#81C784")("\n  ✓ Queue cleared.\n"));
+        this.promptUser();
+        return;
+      }
 
       if (trimmed.startsWith("!")) {
         await this.runShellCommand(trimmed.slice(1).trim());
@@ -247,9 +394,22 @@ export class ChatInterface {
         return;
       }
 
-      await this.sendMessage(trimmed);
+      await this.processMessage(trimmed);
       this.promptUser();
     });
+  }
+
+  /** Process a message (either directly or from queue) */
+  private async processMessage(message: string): Promise<void> {
+    // If already processing, add to queue
+    if (this.isProcessing) {
+      this.messageQueue.push(message);
+      console.log(chalk.hex("#4FC3F7")(`\n  📬 Message queued (${this.messageQueue.length} in queue)`));
+      console.log(chalk.hex("#78909C")(`     Press ESC to cancel current operation`));
+      return;
+    }
+
+    await this.sendMessage(message);
   }
 
   private handleCommand(command: string): boolean {
@@ -800,30 +960,42 @@ export class ChatInterface {
       },
     };
 
-    this.spinner.start(chalk.dim("  Thinking..."));
+    this.spinner.start(chalk.hex("#B0BEC5")("  🧠 Thinking..."));
     this.rl.close();
+
+    // Set up abort controller
+    this.isProcessing = true;
+    this.currentAbortController = new AbortController();
 
     let cancelled = false;
     const onSigint = () => {
       cancelled = true;
+      this.currentAbortController?.abort();
       this.spinner.stop();
-      console.log(chalk.yellow("\n  Cancelled.\n"));
+      console.log(chalk.hex("#FFB74D")("\n  ⏹️  Cancelled.\n"));
     };
     process.once("SIGINT", onSigint);
 
     try {
-      if (!cancelled) {
+      if (!cancelled && !this.currentAbortController.signal.aborted) {
         await this.agent.run(message, wrappedCallbacks);
       }
     } catch (error) {
       this.spinner.stop();
-      if (!cancelled) {
+      if (!cancelled && !this.currentAbortController?.signal.aborted) {
         const msg = error instanceof Error ? error.message : String(error);
-        console.log(chalk.red(`\n  Error: ${msg}\n`));
+        console.log(chalk.hex("#EF5350")(`\n  ❌ Error: ${msg}\n`));
       }
     }
 
+    this.isProcessing = false;
+    this.currentAbortController = null;
     process.removeListener("SIGINT", onSigint);
     this.createReadline();
+
+    // Process next queued message if any
+    if (this.messageQueue.length > 0) {
+      console.log(chalk.hex("#4FC3F7")(`\n  📬 ${this.messageQueue.length} message(s) remaining in queue`));
+    }
   }
 }

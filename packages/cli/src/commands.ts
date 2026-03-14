@@ -21,17 +21,19 @@ const PROJECT_CONFIG_FILE = "config.md";
 export function handleConfigCommand(action: string, key?: string, value?: string): void {
   switch (action) {
     case "list":
-      console.log(chalk.bold("\n  Stored Config") + chalk.dim(" (~/.cdoing/config.json):\n"));
+      console.log();
+      console.log(chalk.hex("#4FC3F7").bold("  ⚙️  Stored Config"));
+      console.log(chalk.hex("#78909C")("  ─────────────────────────────────────"));
       for (const line of getStoredConfigDisplay()) {
-        console.log(chalk.white(`  ${line}`));
+        console.log(chalk.hex("#B0BEC5")(`  ${line}`));
       }
       console.log();
       break;
 
     case "get":
       if (!key) {
-        console.log(chalk.red("\n  Usage: cdoing config get <key>\n"));
-        console.log(chalk.dim("  Keys: provider, model, mode, api-key, base-url\n"));
+        console.log(chalk.hex("#EF5350")("\n  ❌ Usage: cdoing config get <key>"));
+        console.log(chalk.hex("#78909C")("     Keys: provider, model, mode, api-key, base-url\n"));
         return;
       }
       const config = loadConfig();
@@ -47,30 +49,32 @@ export function handleConfigCommand(action: string, key?: string, value?: string
           if (val) val = val.slice(0, 8) + "..." + val.slice(-4);
           break;
         default:
-          console.log(chalk.red(`\n  Unknown key: ${key}\n`));
+          console.log(chalk.hex("#EF5350")(`\n  ❌ Unknown key: ${key}\n`));
           return;
       }
-      console.log(val || "(not set)");
+      console.log(val ? chalk.hex("#81C784")(val) : chalk.hex("#78909C")("(not set)"));
       break;
 
     case "set":
       if (!key || value === undefined) {
-        console.log(chalk.red("\n  Usage: cdoing config set <key> <value>\n"));
-        console.log(chalk.dim("  Keys: provider, model, mode, api-key, base-url\n"));
+        console.log(chalk.hex("#EF5350")("\n  ❌ Usage: cdoing config set <key> <value>"));
+        console.log(chalk.hex("#78909C")("     Keys: provider, model, mode, api-key, base-url\n"));
         return;
       }
       const result = updateStoredConfig(key, value);
       if (result.success) {
         const display = key === "api-key" ? value.slice(0, 8) + "..." : value;
-        console.log(chalk.green(`\n  Saved: ${key} = ${display}\n`));
+        console.log();
+        console.log(chalk.hex("#81C784")("  ✓ Saved: ") + chalk.hex("#4FC3F7")(key) + chalk.hex("#78909C")(" = ") + chalk.hex("#FFFFFF")(display));
+        console.log();
       } else {
-        console.log(chalk.red(`\n  ${result.error}\n`));
+        console.log(chalk.hex("#EF5350")(`\n  ❌ ${result.error}\n`));
       }
       break;
 
     default:
-      console.log(chalk.red(`\n  Unknown action: ${action}`));
-      console.log(chalk.dim("  Usage: cdoing config <list|get|set> [key] [value]\n"));
+      console.log(chalk.hex("#EF5350")(`\n  ❌ Unknown action: ${action}`));
+      console.log(chalk.hex("#78909C")("     Usage: cdoing config <list|get|set> [key] [value]\n"));
   }
 }
 
@@ -83,7 +87,10 @@ export function handleInit(): void {
   const configFile = path.join(configDir, PROJECT_CONFIG_FILE);
 
   if (fs.existsSync(configFile)) {
-    console.log(chalk.yellow("\n  Project already initialized: .cdoing/config.md exists\n"));
+    console.log();
+    console.log(chalk.hex("#FFB74D")("  ⚠️  Project already initialized"));
+    console.log(chalk.hex("#90A4AE")("     .cdoing/config.md exists"));
+    console.log();
     return;
   }
 
@@ -126,49 +133,75 @@ Files the agent should not modify:
 `;
 
   fs.writeFileSync(configFile, template, "utf-8");
-  console.log(chalk.green("\n  Created: .cdoing/config.md"));
-  console.log(chalk.dim("  Edit this file to customize agent behavior for your project.\n"));
+  console.log();
+  console.log(chalk.hex("#81C784")("  ✨ Project initialized!"));
+  console.log(chalk.hex("#90A4AE")("     Created: ") + chalk.hex("#4FC3F7")(".cdoing/config.md"));
+  console.log();
+  console.log(chalk.hex("#78909C")("  Edit this file to customize agent behavior for your project."));
+  console.log();
 }
 
 /**
  * Handle `cdoing doctor` - diagnose setup and configuration issues
  */
 export function handleDoctor(): void {
-  console.log(chalk.bold("\n  System Diagnostics\n"));
+  console.log();
+  console.log(chalk.hex("#4FC3F7").bold("  🏥 System Diagnostics"));
+  console.log(chalk.hex("#78909C")("  ─────────────────────────────────────"));
+  console.log();
 
   let issues = 0;
+  let passed = 0;
+
+  const ok = (msg: string) => {
+    passed++;
+    console.log(chalk.hex("#81C784")("  ✓ ") + chalk.hex("#B0BEC5")(msg));
+  };
+  const skip = (msg: string) => {
+    console.log(chalk.hex("#78909C")("  ○ ") + chalk.hex("#78909C")(msg));
+  };
+  const fail = (msg: string) => {
+    issues++;
+    console.log(chalk.hex("#EF5350")("  ✗ ") + chalk.hex("#FFCDD2")(msg));
+  };
 
   // Check global config directory
   if (fs.existsSync(CONFIG_DIR)) {
-    console.log(chalk.green("  [OK]") + chalk.dim("  Global config: ~/.cdoing/"));
+    ok("Global config: ~/.cdoing/");
   } else {
-    console.log(chalk.yellow("  [--]") + chalk.dim("  Global config: not created yet"));
+    skip("Global config: not created yet");
   }
 
   // Check API keys
   const config = loadConfig();
   const providers = ["anthropic", "openai", "google"];
+  const providerIcons: Record<string, string> = {
+    anthropic: "🤖",
+    openai: "🧠",
+    google: "🌐",
+  };
 
   for (const provider of providers) {
     const envVar = getApiKeyEnvVar(provider);
     const hasEnv = !!process.env[envVar];
     const hasStored = !!config.apiKeys?.[provider];
+    const icon = providerIcons[provider] || "🔑";
 
     if (hasEnv) {
-      console.log(chalk.green("  [OK]") + chalk.dim(`  ${provider}: API key in ${envVar}`));
+      ok(`${icon} ${provider}: API key in ${envVar}`);
     } else if (hasStored) {
-      console.log(chalk.green("  [OK]") + chalk.dim(`  ${provider}: API key in config`));
+      ok(`${icon} ${provider}: API key in config`);
     } else {
-      console.log(chalk.dim("  [--]") + chalk.dim(`  ${provider}: no API key configured`));
+      skip(`${icon} ${provider}: no API key configured`);
     }
   }
 
   // Check project config
   const projectConfig = path.join(process.cwd(), PROJECT_CONFIG_DIR, PROJECT_CONFIG_FILE);
   if (fs.existsSync(projectConfig)) {
-    console.log(chalk.green("  [OK]") + chalk.dim("  Project config: .cdoing/config.md"));
+    ok("📁 Project config: .cdoing/config.md");
   } else {
-    console.log(chalk.dim("  [--]") + chalk.dim("  Project config: not initialized (run: cdoing init)"));
+    skip("📁 Project config: not initialized (run: cdoing init)");
   }
 
   // Check hooks
@@ -176,10 +209,10 @@ export function handleDoctor(): void {
   const projectHooks = path.join(process.cwd(), PROJECT_CONFIG_DIR, "hooks.json");
 
   if (fs.existsSync(globalHooks)) {
-    console.log(chalk.green("  [OK]") + chalk.dim("  Global hooks: ~/.cdoing/hooks.json"));
+    ok("🪝 Global hooks: ~/.cdoing/hooks.json");
   }
   if (fs.existsSync(projectHooks)) {
-    console.log(chalk.green("  [OK]") + chalk.dim("  Project hooks: .cdoing/hooks.json"));
+    ok("🪝 Project hooks: .cdoing/hooks.json");
   }
 
   // Check permissions
@@ -187,27 +220,28 @@ export function handleDoctor(): void {
   const projectPerms = path.join(process.cwd(), PROJECT_CONFIG_DIR, "permissions.json");
 
   if (fs.existsSync(globalPerms)) {
-    console.log(chalk.green("  [OK]") + chalk.dim("  Global permissions: ~/.cdoing/permissions.json"));
+    ok("🔐 Global permissions: ~/.cdoing/permissions.json");
   }
   if (fs.existsSync(projectPerms)) {
-    console.log(chalk.green("  [OK]") + chalk.dim("  Project permissions: .cdoing/permissions.json"));
+    ok("🔐 Project permissions: .cdoing/permissions.json");
   }
 
   // Check Node.js version
   const nodeVersion = process.version;
   const major = parseInt(nodeVersion.slice(1).split(".")[0], 10);
   if (major >= 18) {
-    console.log(chalk.green("  [OK]") + chalk.dim(`  Node.js: ${nodeVersion}`));
+    ok(`📦 Node.js: ${nodeVersion}`);
   } else {
-    console.log(chalk.red("  [!!]") + chalk.red(`  Node.js: ${nodeVersion} (requires 18+)`));
-    issues++;
+    fail(`📦 Node.js: ${nodeVersion} (requires 18+)`);
   }
 
   // Summary
   console.log();
+  console.log(chalk.hex("#78909C")("  ─────────────────────────────────────"));
   if (issues === 0) {
-    console.log(chalk.green("  All checks passed!\n"));
+    console.log(chalk.hex("#81C784").bold(`  ✨ All ${passed} checks passed!`));
   } else {
-    console.log(chalk.yellow(`  ${issues} issue(s) found.\n`));
+    console.log(chalk.hex("#FFB74D")(`  ⚠️  ${passed} passed, ${issues} issue(s) found`));
   }
+  console.log();
 }

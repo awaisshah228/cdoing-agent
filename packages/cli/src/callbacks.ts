@@ -8,57 +8,101 @@ import type { Ora } from "ora";
 import type { AgentCallbacks } from "@cdoing/ai";
 import type { TurnUsage } from "@cdoing/ai";
 
+// Tool categories with icons and colors
+const TOOL_STYLES: Record<string, { icon: string; color: (s: string) => string }> = {
+  // File operations
+  file_read: { icon: "📖", color: chalk.hex("#4FC3F7") },
+  file_write: { icon: "✏️ ", color: chalk.hex("#81C784") },
+  file_edit: { icon: "🔧", color: chalk.hex("#FFB74D") },
+  // Search
+  glob_search: { icon: "🔍", color: chalk.hex("#BA68C8") },
+  grep_search: { icon: "🔎", color: chalk.hex("#9575CD") },
+  // Execution
+  shell_exec: { icon: "💻", color: chalk.hex("#4DD0E1") },
+  file_run: { icon: "▶️ ", color: chalk.hex("#4DB6AC") },
+  code_verify: { icon: "✅", color: chalk.hex("#AED581") },
+  // Web
+  web_fetch: { icon: "🌐", color: chalk.hex("#64B5F6") },
+  web_search: { icon: "🔮", color: chalk.hex("#7986CB") },
+  // Agent
+  sub_agent: { icon: "🤖", color: chalk.hex("#F06292") },
+  // Tasks
+  todo: { icon: "📋", color: chalk.hex("#FF8A65") },
+};
+
+/** Get tool style or default */
+function getToolStyle(name: string): { icon: string; color: (s: string) => string } {
+  return TOOL_STYLES[name] || { icon: "⚡", color: chalk.hex("#FFC107") };
+}
+
 /** Basic terminal markdown rendering */
 function renderMarkdown(text: string): string {
   let result = text;
 
   // Code blocks with language (```lang\n...\n```)
   result = result.replace(/```(\w+)?\n([\s\S]*?)```/g, (_match, lang, code) => {
-    const header = lang ? chalk.dim(`  ── ${lang} ──`) + "\n" : "";
+    const langColor = chalk.hex("#82AAFF");
+    const header = lang ? chalk.dim("  ┌─ ") + langColor(lang) + chalk.dim(" ─┐") + "\n" : "";
     const formatted = code
       .split("\n")
-      .map((line: string) => chalk.green(`  ${line}`))
+      .map((line: string) => chalk.hex("#C3E88D")(`  │ ${line}`))
       .join("\n");
-    return `\n${header}${formatted}\n`;
+    return `\n${header}${formatted}\n` + chalk.dim("  └────────┘\n");
   });
 
   // Inline code
-  result = result.replace(/`([^`]+)`/g, (_m: string, code: string) => chalk.yellow(code));
+  result = result.replace(/`([^`]+)`/g, (_m: string, code: string) =>
+    chalk.bgHex("#2D2D2D").hex("#FFD54F")(` ${code} `)
+  );
 
   // Bold
-  result = result.replace(/\*\*([^*]+)\*\*/g, (_m: string, t: string) => chalk.bold(t));
+  result = result.replace(/\*\*([^*]+)\*\*/g, (_m: string, t: string) => chalk.bold.hex("#FFFFFF")(t));
 
   // Italic
-  result = result.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, (_m: string, t: string) => chalk.italic(t));
+  result = result.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, (_m: string, t: string) => chalk.italic.hex("#B0BEC5")(t));
 
-  // Headers
-  result = result.replace(/^### (.+)$/gm, (_m: string, t: string) => chalk.bold.cyan(`   ${t}`));
-  result = result.replace(/^## (.+)$/gm, (_m: string, t: string) => chalk.bold.cyan(`  ${t}`));
-  result = result.replace(/^# (.+)$/gm, (_m: string, t: string) => chalk.bold.cyan(` ${t}`));
+  // Headers with gradient effect
+  result = result.replace(/^### (.+)$/gm, (_m: string, t: string) =>
+    chalk.hex("#4FC3F7")("   ▸ ") + chalk.bold.hex("#4FC3F7")(t)
+  );
+  result = result.replace(/^## (.+)$/gm, (_m: string, t: string) =>
+    chalk.hex("#29B6F6")("  ▸▸ ") + chalk.bold.hex("#29B6F6")(t)
+  );
+  result = result.replace(/^# (.+)$/gm, (_m: string, t: string) =>
+    chalk.hex("#03A9F4")(" ▸▸▸ ") + chalk.bold.hex("#03A9F4")(t)
+  );
 
-  // Bullet lists
-  result = result.replace(/^(\s*)[-*] (.+)$/gm, (_m: string, indent: string, t: string) => `${indent}  ${chalk.dim("•")} ${t}`);
+  // Bullet lists with colorful bullets
+  result = result.replace(/^(\s*)[-*] (.+)$/gm, (_m: string, indent: string, t: string) =>
+    `${indent}  ${chalk.hex("#FF7043")("●")} ${t}`
+  );
 
   // Numbered lists
-  result = result.replace(/^(\s*)(\d+)\. (.+)$/gm, (_m: string, indent: string, n: string, t: string) => `${indent}  ${chalk.dim(`${n}.`)} ${t}`);
+  result = result.replace(/^(\s*)(\d+)\. (.+)$/gm, (_m: string, indent: string, n: string, t: string) =>
+    `${indent}  ${chalk.hex("#AB47BC")(n + ".")} ${t}`
+  );
 
   // Horizontal rules
-  result = result.replace(/^---+$/gm, chalk.dim("  ────────────────────────────"));
+  result = result.replace(/^---+$/gm, chalk.hex("#546E7A")("  ═══════════════════════════════"));
 
   return result;
 }
 
-/** Format token usage for display */
+/** Format token usage for display with colors */
 function formatUsage(usage: TurnUsage): string {
   const parts: string[] = [];
   if (usage.inputTokens > 0 || usage.outputTokens > 0) {
-    parts.push(`${usage.inputTokens.toLocaleString()}→${usage.outputTokens.toLocaleString()}`);
+    parts.push(
+      chalk.hex("#4FC3F7")(usage.inputTokens.toLocaleString()) +
+      chalk.hex("#78909C")(" → ") +
+      chalk.hex("#81C784")(usage.outputTokens.toLocaleString())
+    );
   }
-  parts.push(`${usage.totalTokens.toLocaleString()} tokens`);
+  parts.push(chalk.hex("#B0BEC5")(`${usage.totalTokens.toLocaleString()} tokens`));
   if (usage.cost !== undefined) {
-    parts.push(`$${usage.cost.toFixed(4)}`);
+    parts.push(chalk.hex("#FFD54F")(`$${usage.cost.toFixed(4)}`));
   }
-  return parts.join(" · ");
+  return parts.join(chalk.hex("#546E7A")(" · "));
 }
 
 /** Interactive mode: spinner + colors + markdown */
@@ -70,7 +114,7 @@ export function createInteractiveCallbacks(spinner: Ora): AgentCallbacks {
     onToken: (token) => {
       if (isFirstToken) {
         spinner.stop();
-        process.stdout.write(chalk.cyan("  "));
+        process.stdout.write(chalk.hex("#E0E0E0")("  "));
         isFirstToken = false;
       }
       // Buffer tokens and render markdown on newlines
@@ -93,6 +137,8 @@ export function createInteractiveCallbacks(spinner: Ora): AgentCallbacks {
       }
       spinner.stop();
 
+      const style = getToolStyle(name);
+
       // Special formatting for todo tool
       if (name === "todo") {
         const action = (input as Record<string, unknown>).action;
@@ -101,32 +147,39 @@ export function createInteractiveCallbacks(spinner: Ora): AgentCallbacks {
         const id = (input as Record<string, unknown>).id;
 
         if (action === "create" && subject) {
-          console.log(chalk.magenta(`\n  📋 Creating task: `) + chalk.white(String(subject)));
+          console.log(chalk.hex("#FF8A65")(`\n  📋 Creating task: `) + chalk.bold.white(String(subject)));
         } else if (action === "update" && id && status) {
-          const icon = status === "completed" ? "✅" : status === "in_progress" ? "🔄" : "📌";
-          console.log(chalk.magenta(`\n  ${icon} Task #${id}: `) + chalk.white(String(status)));
+          const statusStyle = status === "completed"
+            ? { icon: "✅", color: chalk.hex("#81C784") }
+            : status === "in_progress"
+            ? { icon: "🔄", color: chalk.hex("#FFB74D") }
+            : { icon: "📌", color: chalk.hex("#90A4AE") };
+          console.log(statusStyle.color(`\n  ${statusStyle.icon} Task #${id}: `) + chalk.bold.white(String(status)));
         } else if (action === "list") {
-          console.log(chalk.magenta(`\n  📋 Listing tasks`));
+          console.log(chalk.hex("#FF8A65")(`\n  📋 Listing tasks`));
         } else {
-          console.log(chalk.yellow(`\n  ⚡ ${name}`) + chalk.dim(` ${JSON.stringify(input).substring(0, 80)}`));
+          const preview = JSON.stringify(input).substring(0, 60);
+          console.log(`\n  ${style.icon} ` + style.color(name) + chalk.hex("#78909C")(` ${preview}`));
         }
       } else {
-        const preview = JSON.stringify(input).substring(0, 80);
-        console.log(chalk.yellow(`\n  ⚡ ${name}`) + chalk.dim(` ${preview}`));
+        // Colorful tool call display
+        const preview = formatToolPreview(name, input);
+        console.log(`\n  ${style.icon} ` + style.color(name) + chalk.hex("#78909C")(` ${preview}`));
       }
     },
 
     onToolResult: (name, result, isError) => {
+      const style = getToolStyle(name);
+
       if (isError) {
-        console.log(chalk.red(`  ✗ ${name} failed`));
+        console.log(chalk.hex("#EF5350")(`  ✗ `) + chalk.hex("#EF5350").dim(name) + chalk.hex("#EF5350")(" failed"));
       } else if (name === "todo") {
-        // More concise output for todo tool
-        console.log(chalk.green(`  ✓`) + chalk.dim(` ${result.split("\n")[0]}`));
+        console.log(chalk.hex("#81C784")(`  ✓ `) + chalk.hex("#A5D6A7")(result.split("\n")[0]));
       } else {
-        const preview = result.substring(0, 120).replace(/\n/g, " ");
-        console.log(chalk.green(`  ✓ ${name}`) + chalk.dim(` ${preview}`));
+        const preview = result.substring(0, 100).replace(/\n/g, " ");
+        console.log(chalk.hex("#81C784")(`  ✓ `) + style.color(name) + chalk.hex("#90A4AE")(` ${preview}`));
       }
-      spinner.start(chalk.dim("  Thinking..."));
+      spinner.start(chalk.hex("#B0BEC5")("  🧠 Thinking..."));
       isFirstToken = true;
     },
 
@@ -146,27 +199,59 @@ export function createInteractiveCallbacks(spinner: Ora): AgentCallbacks {
         buffer = "";
       }
       spinner.stop();
-      console.log(chalk.red(`\n  Error: ${error.message}\n`));
+      console.log(chalk.hex("#EF5350")(`\n  ❌ Error: `) + chalk.hex("#FFCDD2")(error.message) + "\n");
     },
 
     onUsage: (usage) => {
-      // Show usage after spinner stops, before next prompt
+      // Show usage with nice formatting
       const formatted = formatUsage(usage);
-      console.log(chalk.dim(`  [${formatted}]`));
+      console.log(chalk.hex("#546E7A")(`  ╭─ `) + formatted + chalk.hex("#546E7A")(` ─╮`));
     },
   };
 }
 
-/** One-shot mode: minimal output */
+/** Format tool input preview based on tool type */
+function formatToolPreview(name: string, input: Record<string, unknown>): string {
+  switch (name) {
+    case "file_read":
+    case "file_write":
+    case "file_edit":
+      return String(input.path || input.file_path || "").split("/").pop() || "";
+    case "shell_exec":
+      const cmd = String(input.command || "").substring(0, 50);
+      return cmd.length < String(input.command || "").length ? cmd + "..." : cmd;
+    case "glob_search":
+      return String(input.pattern || "");
+    case "grep_search":
+      return `"${String(input.pattern || "").substring(0, 30)}"`;
+    case "web_fetch":
+    case "web_search":
+      return String(input.url || input.query || "").substring(0, 40);
+    default:
+      return JSON.stringify(input).substring(0, 60);
+  }
+}
+
+/** One-shot mode: colorful minimal output */
 export function createOneShotCallbacks(): AgentCallbacks {
   return {
     onToken: (token) => process.stdout.write(token),
-    onToolCall: (name) => console.log(chalk.yellow(`\n⚡ ${name}`)),
-    onToolResult: (name, _r, isErr) => console.log(isErr ? chalk.red(`✗ ${name}`) : chalk.green(`✓ ${name}`)),
+    onToolCall: (name) => {
+      const style = getToolStyle(name);
+      console.log(`\n${style.icon} ` + style.color(name));
+    },
+    onToolResult: (name, _r, isErr) => {
+      if (isErr) {
+        console.log(chalk.hex("#EF5350")(`✗ ${name} failed`));
+      } else {
+        const style = getToolStyle(name);
+        console.log(chalk.hex("#81C784")(`✓ `) + style.color(name));
+      }
+    },
     onComplete: () => console.log(),
-    onError: (err) => console.error(chalk.red(`Error: ${err.message}`)),
+    onError: (err) => console.error(chalk.hex("#EF5350")(`❌ Error: `) + chalk.hex("#FFCDD2")(err.message)),
     onUsage: (usage) => {
-      console.error(chalk.dim(`[${formatUsage(usage)}]`));
+      console.error(chalk.hex("#546E7A")(`╭─ `) + formatUsage(usage) + chalk.hex("#546E7A")(` ─╮`));
     },
   };
 }
