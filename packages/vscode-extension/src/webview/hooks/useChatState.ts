@@ -167,13 +167,11 @@ export function useChatState() {
         case "token":
           appendToken(msg.text);
           break;
-        case "discardStreaming":
-          // Remove current streaming assistant message (intermediate text before tool calls)
-          if (streamingRef.current) {
-            const discardId = streamingRef.current;
-            streamingRef.current = null;
-            setEntries((prev) => prev.filter((e) => e.id !== discardId));
-          }
+        case "finalizeStreaming":
+          // Flush any buffered tokens first, then finalize the current streaming message
+          // so it stays visible and next tokens create a new assistant message
+          if (tokenBufferRef.current) flushTokenBuffer();
+          streamingRef.current = null;
           break;
         case "toolCall":
           addToolCall(msg.name, msg.input);

@@ -422,9 +422,6 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
     const tabId = tab.id; // capture for callbacks (tab might change)
 
-    // Track whether current turn has streamed any text (to discard it if tool calls follow)
-    let hasStreamedText = false;
-
     // Accumulate usage across all turns, show only once at the end
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
@@ -435,17 +432,13 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       onToken: (token) => {
         if (this.activeTabId === tabId) {
           this.postMessage({ type: "token", text: token });
-          hasStreamedText = true;
         }
       },
       onToolCall: (name, input) => {
         if (this.activeTabId === tabId) {
-          // Discard the intermediate streamed text (e.g., "Let me search for...")
-          // The final turn after all tools will have the real answer
-          if (hasStreamedText) {
-            this.postMessage({ type: "discardStreaming" });
-            hasStreamedText = false;
-          }
+          // Finalize any streamed text so it stays visible above the tool calls
+          // (this is the LLM's thinking, e.g., "Let me search for the file...")
+          this.postMessage({ type: "finalizeStreaming" });
           this.postMessage({ type: "toolCall", name, input: JSON.stringify(input).substring(0, 200) });
         }
       },
@@ -453,8 +446,6 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         if (this.activeTabId === tabId) {
           this.postMessage({ type: "toolResult", name, result: result.substring(0, 500), isError });
         }
-        // Reset for next turn
-        hasStreamedText = false;
       },
       onComplete: () => {
         const t = this.tabs.get(tabId);
