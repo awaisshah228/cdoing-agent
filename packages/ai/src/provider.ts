@@ -8,6 +8,7 @@
 import { ChatAnthropic } from "@langchain/anthropic";
 import { ChatOpenAI } from "@langchain/openai";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
+import Anthropic from "@anthropic-ai/sdk";
 
 export enum ModelProvider {
   ANTHROPIC = "anthropic",
@@ -21,6 +22,8 @@ export interface ModelConfig {
   provider: ModelProvider | string;
   model: string;
   apiKey?: string;
+  /** OAuth access token — used with Bearer auth + beta headers */
+  oauthToken?: string;
   temperature?: number;
   maxTokens?: number;
   baseURL?: string;
@@ -34,7 +37,7 @@ export interface CustomProviderConfig {
 }
 
 const DEFAULT_MODELS: Record<string, string> = {
-  [ModelProvider.ANTHROPIC]: "claude-sonnet-4-20250514",
+  [ModelProvider.ANTHROPIC]: "claude-haiku-4-5-20251001",
   [ModelProvider.OPENAI]: "gpt-4o",
   [ModelProvider.GOOGLE]: "gemini-2.0-flash",
   [ModelProvider.OLLAMA]: "llama3.1",
@@ -75,13 +78,33 @@ export function createModel(config: Partial<ModelConfig> = {}) {
   const maxTokens = config.maxTokens ?? 8096;
 
   switch (provider) {
-    case ModelProvider.ANTHROPIC:
+    case ModelProvider.ANTHROPIC: {
+      // OAuth token: use Anthropic SDK's native authToken + defaultHeaders (same as Claude Code CLI)
+      if (config.oauthToken) {
+        const oauthToken = config.oauthToken;
+        return new ChatAnthropic({
+          model: modelName,
+          anthropicApiKey: "unused",
+          temperature,
+          maxTokens,
+          createClient: () => new Anthropic({
+            apiKey: null as unknown as string,
+            authToken: oauthToken,
+            dangerouslyAllowBrowser: true,
+            defaultHeaders: {
+              "anthropic-beta": "oauth-2025-04-20",
+            },
+            maxRetries: 0,
+          }),
+        });
+      }
       return new ChatAnthropic({
         model: modelName,
         anthropicApiKey: config.apiKey || process.env.ANTHROPIC_API_KEY,
         temperature,
         maxTokens,
       });
+    }
 
     case ModelProvider.OPENAI:
       return new ChatOpenAI({

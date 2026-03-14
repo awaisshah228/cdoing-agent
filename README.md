@@ -344,7 +344,39 @@ Options:
 | Google | `--provider google` | `GOOGLE_API_KEY` | Gemini family |
 | Custom | `--provider custom --base-url <url>` | `--api-key <key>` | Any compatible API |
 
-**API key resolution order:** `--api-key` flag → environment variable → `~/.cdoing/config.json` → interactive prompt.
+**API key resolution order:** `--api-key` flag → environment variable → `~/.cdoing/config.json` → OAuth token → interactive prompt.
+
+### OAuth Login (Claude Pro/Max)
+
+If you have a Claude Pro or Max subscription, you can authenticate via OAuth instead of an API key:
+
+```bash
+# Login with your Claude account (opens browser)
+cdoing --login
+
+# Check authentication status
+cdoing config list
+
+# Logout
+cdoing --logout
+```
+
+**Import token from Claude Code:** If you're already authenticated with Claude Code, you can import your token directly:
+
+```bash
+# 1. Get your Claude Code token
+security find-generic-password -s "Claude Code-credentials" -a "$(whoami)" -w | python3 -m json.tool
+
+# 2. Import it into Cdoing Agent
+security add-generic-password -s "cdoing-agent" -a "oauth-tokens" -w '{
+  "access_token": "<your-access-token>",
+  "refresh_token": "<your-refresh-token>",
+  "expires_at": <your-expires-at>,
+  "token_type": "Bearer"
+}' -U
+```
+
+The token auto-refreshes when expired. OAuth tokens are stored securely in macOS Keychain (or OS-equivalent credential store).
 
 ---
 

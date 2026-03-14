@@ -18,11 +18,11 @@
  *  6. Store tokens securely in OS credential store
  */
 
-import * as http from "http";
 import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import * as readline from "readline";
 import { execSync } from "child_process";
 import chalk from "chalk";
 
@@ -30,11 +30,12 @@ const CONFIG_DIR = path.join(os.homedir(), ".cdoing");
 const KEYCHAIN_SERVICE = "cdoing-agent";
 const KEYCHAIN_ACCOUNT = "oauth-tokens";
 
-// Claude OAuth endpoints (same as Claude Code)
+// Claude OAuth endpoints (matching Claude Code CLI)
 const CLAUDE_AUTH_URL = "https://claude.ai/oauth/authorize";
-const CLAUDE_TOKEN_URL = "https://claude.ai/oauth/token";
+const CLAUDE_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
+const CLAUDE_REDIRECT_URI = "https://console.anthropic.com/oauth/code/callback";
 const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-const SCOPES = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers";
+const SCOPES = "org:create_api_key user:profile user:inference";
 
 export interface OAuthTokens {
   access_token: string;
@@ -53,8 +54,9 @@ function generateCodeChallenge(verifier: string): string {
   return crypto.createHash("sha256").update(verifier).digest("base64url");
 }
 
-function generateState(): string {
-  return crypto.randomBytes(32).toString("base64url");
+function ask(question: string): Promise<string> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => rl.question(question, (a) => { rl.close(); resolve(a.trim()); }));
 }
 
 // ── Secure credential storage ───────────────────────────────
@@ -238,15 +240,67 @@ export function saveOAuthTokens(tokens: OAuthTokens): void {
 }
 
 export function loadOAuthTokens(): OAuthTokens | null {
+  // 1. Check cdoing-agent's own keychain
   const raw = loadSecret();
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as OAuthTokens;
-    if (!parsed.access_token) return null;
-    return parsed;
-  } catch {
-    return null;
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as OAuthTokens;
+      if (parsed.access_token) return parsed;
+    } catch {}
   }
+
+  // 2. Fallback: check Claude Code's keychain credentials
+  const claudeTokens = loadClaudeCodeTokens();
+  if (claudeTokens) return claudeTokens;
+
+  return null;
+}
+
+/**
+ * Load OAuth tokens from Claude Code's keychain or credentials file.
+ * Claude Code stores tokens in macOS Keychain under "Claude Code-credentials"
+ * or in ~/.claude/.credentials.json on other platforms.
+ */
+function loadClaudeCodeTokens(): OAuthTokens | null {
+  // Try macOS Keychain first
+  if (process.platform === "darwin") {
+    try {
+      const username = os.userInfo().username;
+      const result = execSync(
+        `security find-generic-password -s "Claude Code-credentials" -a "${username}" -w 2>/dev/null`,
+        { encoding: "utf-8" },
+      );
+      const parsed = JSON.parse(result.trim());
+      const oauth = parsed?.claudeAiOauth;
+      if (oauth?.accessToken) {
+        return {
+          access_token: oauth.accessToken,
+          refresh_token: oauth.refreshToken,
+          expires_at: oauth.expiresAt,
+          token_type: "Bearer",
+        };
+      }
+    } catch {}
+  }
+
+  // Try ~/.claude/.credentials.json (Linux/Windows/fallback)
+  try {
+    const credPath = path.join(os.homedir(), ".claude", ".credentials.json");
+    if (fs.existsSync(credPath)) {
+      const content = JSON.parse(fs.readFileSync(credPath, "utf-8"));
+      const oauth = content?.claudeAiOauth;
+      if (oauth?.accessToken) {
+        return {
+          access_token: oauth.accessToken,
+          refresh_token: oauth.refreshToken,
+          expires_at: oauth.expiresAt,
+          token_type: "Bearer",
+        };
+      }
+    }
+  } catch {}
+
+  return null;
 }
 
 export function clearOAuthTokens(): void {
@@ -293,16 +347,47 @@ export async function refreshAccessToken(refreshToken: string): Promise<OAuthTok
   }
 }
 
+// ── Exchange OAuth token for temporary API key ──────────────
+
+/**
+ * Exchange an OAuth access token for a temporary API key.
+ * This is how Claude Code uses subscription-based OAuth tokens
+ * with the standard Anthropic API.
+ */
+export async function createApiKeyFromOAuth(accessToken: string): Promise<string | null> {
+  try {
+    const response = await fetch("https://api.anthropic.com/api/oauth/claude_cli/create_api_key", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "authorization": `Bearer ${accessToken}`,
+      },
+    });
+
+    if (!response.ok) return null;
+
+    const json = (await response.json()) as Record<string, unknown>;
+    return (json.raw_key as string) || null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Resolve OAuth token (with auto-refresh) ─────────────────
 
+/**
+ * Resolve OAuth access token with auto-refresh.
+ * Returns the access token directly for Bearer auth.
+ */
 export async function resolveOAuthToken(): Promise<string | null> {
   const tokens = loadOAuthTokens();
   if (!tokens) return null;
 
+  // Refresh if expired
   if (isOAuthExpired(tokens) && tokens.refresh_token) {
     const refreshed = await refreshAccessToken(tokens.refresh_token);
-    if (refreshed) return refreshed.access_token;
-    return null;
+    if (!refreshed) return null;
+    return refreshed.access_token;
   }
 
   return tokens.access_token;
@@ -313,147 +398,67 @@ export async function resolveOAuthToken(): Promise<string | null> {
 export async function oauthLogin(): Promise<OAuthTokens> {
   const codeVerifier = generateCodeVerifier();
   const codeChallenge = generateCodeChallenge(codeVerifier);
-  const state = generateState();
 
-  return new Promise((resolve, reject) => {
-    const server = http.createServer();
-
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address() as { port: number };
-      const port = address.port;
-      const redirectUri = `http://localhost:${port}/callback`;
-
-      const authParams = new URLSearchParams({
-        code: "true",
-        client_id: CLAUDE_CLIENT_ID,
-        response_type: "code",
-        redirect_uri: redirectUri,
-        scope: SCOPES,
-        code_challenge: codeChallenge,
-        code_challenge_method: "S256",
-        state,
-      });
-
-      const authUrl = `${CLAUDE_AUTH_URL}?${authParams.toString()}`;
-
-      console.log();
-      console.log(chalk.bold.cyan("  Claude OAuth Login"));
-      console.log(chalk.dim("  Opening browser for authentication...\n"));
-      console.log(chalk.white("  If the browser doesn't open, visit:"));
-      console.log(chalk.dim(`  ${authUrl}\n`));
-      console.log(chalk.dim("  Waiting for authorization...\n"));
-
-      // Open browser
-      openBrowser(authUrl);
-
-      // Handle callback
-      server.on("request", async (req, res) => {
-        const parsedUrl = new URL(req.url || "", `http://localhost:${port}`);
-
-        if (parsedUrl.pathname !== "/callback") {
-          res.writeHead(404);
-          res.end("Not found");
-          return;
-        }
-
-        const query = Object.fromEntries(parsedUrl.searchParams);
-
-        // Verify state
-        if (query.state !== state) {
-          res.writeHead(400);
-          res.end("Invalid state parameter. Please try again.");
-          server.close();
-          reject(new Error("OAuth state mismatch"));
-          return;
-        }
-
-        if (query.error) {
-          const errorMsg = `${query.error}: ${query.error_description || "Authorization denied"}`;
-          res.writeHead(400);
-          res.end(`Authorization failed: ${errorMsg}`);
-          server.close();
-          reject(new Error(errorMsg));
-          return;
-        }
-
-        const code = query.code;
-        if (!code) {
-          res.writeHead(400);
-          res.end("No authorization code received.");
-          server.close();
-          reject(new Error("No authorization code"));
-          return;
-        }
-
-        // Exchange code for tokens (server-side with browser-like headers)
-        try {
-          const tokenBody = new URLSearchParams({
-            grant_type: "authorization_code",
-            code,
-            redirect_uri: redirectUri,
-            client_id: CLAUDE_CLIENT_ID,
-            code_verifier: codeVerifier,
-          });
-
-          const tokenResponse = await fetch(CLAUDE_TOKEN_URL, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/x-www-form-urlencoded",
-              "Accept": "application/json",
-              "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-              "Origin": "https://claude.ai",
-              "Referer": "https://claude.ai/",
-            },
-            body: tokenBody.toString(),
-          });
-
-          if (!tokenResponse.ok) {
-            const errText = await tokenResponse.text();
-            throw new Error(`Token exchange failed (${tokenResponse.status}): ${errText.substring(0, 200)}`);
-          }
-
-          const tokenData = (await tokenResponse.json()) as Record<string, unknown>;
-
-          const tokens: OAuthTokens = {
-            access_token: tokenData.access_token as string,
-            refresh_token: tokenData.refresh_token as string | undefined,
-            expires_at: tokenData.expires_in
-              ? Date.now() + (tokenData.expires_in as number) * 1000
-              : undefined,
-            token_type: (tokenData.token_type as string) || "Bearer",
-          };
-
-          saveOAuthTokens(tokens);
-
-          res.writeHead(200, { "Content-Type": "text/html" });
-          res.end(`<!DOCTYPE html>
-<html><body style="font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#1a1a2e;color:#e0e0e0">
-<div style="text-align:center"><h1 style="color:#00d4aa">✓ Logged in to Cdoing Agent</h1>
-<p style="color:#888;margin-top:.5rem">You can close this tab and return to your terminal.</p></div>
-</body></html>`);
-
-          server.close();
-          resolve(tokens);
-        } catch (err) {
-          res.writeHead(200, { "Content-Type": "text/html" });
-          res.end(`<!DOCTYPE html>
-<html><body style="font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#1a1a2e;color:#e0e0e0">
-<div style="text-align:center"><h1 style="color:#ff6b6b">✗ Login failed</h1>
-<p style="color:#888;margin-top:.5rem">${(err as Error).message}</p>
-<p style="color:#666;margin-top:1rem">Try again with <code>--login</code></p></div>
-</body></html>`);
-          server.close();
-          reject(err);
-        }
-      });
-
-      // Timeout after 2 minutes
-      setTimeout(() => {
-        server.close();
-        reject(new Error("OAuth login timed out after 2 minutes"));
-      }, 120_000);
-    });
+  const authParams = new URLSearchParams({
+    code: "true",
+    client_id: CLAUDE_CLIENT_ID,
+    response_type: "code",
+    redirect_uri: CLAUDE_REDIRECT_URI,
+    scope: SCOPES,
+    code_challenge: codeChallenge,
+    code_challenge_method: "S256",
+    state: codeVerifier,
   });
+
+  const authUrl = `${CLAUDE_AUTH_URL}?${authParams.toString()}`;
+
+  console.log();
+  console.log(chalk.bold.cyan("  Claude OAuth Login"));
+  console.log(chalk.dim("  Opening browser for authentication...\n"));
+  console.log(chalk.white("  If the browser doesn't open, visit:"));
+  console.log(chalk.dim(`  ${authUrl}\n`));
+
+  openBrowser(authUrl);
+
+  // User pastes the authorization code from the browser
+  const code = await ask(chalk.green("  Paste the authorization code here: "));
+  if (!code) {
+    throw new Error("No authorization code provided");
+  }
+
+  // Exchange code for tokens (matching Claude Code's flow)
+  const splits = code.split("#");
+  const tokenResponse = await fetch(CLAUDE_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      code: splits[0],
+      state: splits[1] || codeVerifier,
+      grant_type: "authorization_code",
+      client_id: CLAUDE_CLIENT_ID,
+      redirect_uri: CLAUDE_REDIRECT_URI,
+      code_verifier: codeVerifier,
+    }),
+  });
+
+  if (!tokenResponse.ok) {
+    const errText = await tokenResponse.text();
+    throw new Error(`Token exchange failed (${tokenResponse.status}): ${errText.substring(0, 200)}`);
+  }
+
+  const tokenData = (await tokenResponse.json()) as Record<string, unknown>;
+
+  const tokens: OAuthTokens = {
+    access_token: tokenData.access_token as string,
+    refresh_token: tokenData.refresh_token as string | undefined,
+    expires_at: tokenData.expires_in
+      ? Date.now() + (tokenData.expires_in as number) * 1000
+      : undefined,
+    token_type: (tokenData.token_type as string) || "Bearer",
+  };
+
+  saveOAuthTokens(tokens);
+  return tokens;
 }
 
 // ── Browser opener ──────────────────────────────────────────
