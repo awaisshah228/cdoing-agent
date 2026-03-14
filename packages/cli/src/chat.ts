@@ -946,22 +946,14 @@ export class ChatInterface {
       ...callbacks,
       onToken: (token: string) => {
         assistantResponse += token;
-        // Clear the input bar before writing token output
-        this.clearStreamingInputBar();
         callbacks.onToken(token);
-        // Redraw input bar after token
-        this.drawStreamingInputBar();
       },
       onToolCall: (name: string, input: Record<string, unknown>) => {
         addMessage(this.conversation, "tool", JSON.stringify(input), name);
-        this.clearStreamingInputBar();
         callbacks.onToolCall(name, input);
-        this.drawStreamingInputBar();
       },
       onToolResult: (name: string, result: string, isError?: boolean) => {
-        this.clearStreamingInputBar();
         callbacks.onToolResult(name, result, isError ?? false);
-        this.drawStreamingInputBar();
       },
       onComplete: () => {
         if (assistantResponse) {
@@ -1041,6 +1033,18 @@ export class ChatInterface {
     this.streamingInputActive = true;
     this.streamingInputBuffer = "";
 
+    if (process.stdout.isTTY) {
+      const rows = process.stdout.rows || 24;
+      // Set scroll region to all rows except the last one
+      // This makes streaming output scroll in rows 1..(rows-1)
+      // while the bottom row stays fixed for our input bar
+      process.stdout.write(`\x1b[1;${rows - 1}r`);
+      // Move cursor into the scroll region
+      process.stdout.write(`\x1b[${rows - 1};1H`);
+      // Draw the fixed input bar at the bottom
+      this.drawStreamingInputBar();
+    }
+
     // Use raw data handler to capture keystrokes during streaming
     this.streamingKeypressHandler = (chunk: Buffer) => {
       if (!this.streamingInputActive) return;
@@ -1050,11 +1054,16 @@ export class ChatInterface {
         if (byte === 13 || byte === 10) {
           if (this.streamingInputBuffer.trim()) {
             this.messageQueue.push(this.streamingInputBuffer.trim());
-            this.clearStreamingInputBar();
-            console.log(
+            // Print queued confirmation in the scroll region
+            process.stdout.write("\x1b[s");
+            const rows = process.stdout.rows || 24;
+            process.stdout.write(`\x1b[${rows - 1};1H`);
+            process.stdout.write(
               chalk.hex("#4FC3F7")(`  📬 Queued: `) +
-              chalk.dim(this.streamingInputBuffer.trim().substring(0, 60)),
+              chalk.dim(this.streamingInputBuffer.trim().substring(0, 50)) +
+              "\n",
             );
+            process.stdout.write("\x1b[u");
             this.streamingInputBuffer = "";
             this.drawStreamingInputBar();
           }
@@ -1096,35 +1105,43 @@ export class ChatInterface {
       this.streamingKeypressHandler = null;
     }
     this.clearStreamingInputBar();
+
+    if (process.stdout.isTTY) {
+      // Reset scroll region to full terminal
+      process.stdout.write("\x1b[r");
+      // Move cursor to bottom of content area
+      const rows = process.stdout.rows || 24;
+      process.stdout.write(`\x1b[${rows};1H`);
+    }
   }
 
   private drawStreamingInputBar(): void {
     if (!this.streamingInputActive || !process.stdout.isTTY) return;
+
+    const rows = process.stdout.rows || 24;
     const cols = process.stdout.columns || 80;
-    const prompt = chalk.dim("  ❯ ");
     const text = this.streamingInputBuffer;
     const hint = text
       ? ""
-      : chalk.dim("Type here while waiting... (Enter to queue)");
-    // Save cursor, go to bottom, draw bar, restore
-    process.stdout.write("\x1b[s"); // save cursor
-    process.stdout.write(`\x1b[${process.stdout.rows};1H`); // go to last row
-    process.stdout.write(`\x1b[2K`); // clear line
+      : chalk.dim(" Type while waiting... (Enter to queue)");
+
+    process.stdout.write("\x1b[s"); // save cursor position
+    process.stdout.write(`\x1b[${rows};1H`); // go to last row (outside scroll region)
+    process.stdout.write("\x1b[2K"); // clear the line
     process.stdout.write(
-      chalk.bgHex("#1a1a2e")(
-        `${prompt}${chalk.white(text)}${hint}`.padEnd(cols),
+      chalk.bgHex("#1e293b")(
+        (chalk.dim("  ❯ ") + chalk.white(text) + hint).padEnd(cols),
       ),
     );
-    process.stdout.write("\x1b[u"); // restore cursor
+    process.stdout.write("\x1b[u"); // restore cursor to where streaming output was
   }
 
   private clearStreamingInputBar(): void {
     if (!process.stdout.isTTY) return;
-    const cols = process.stdout.columns || 80;
+    const rows = process.stdout.rows || 24;
     process.stdout.write("\x1b[s");
-    process.stdout.write(`\x1b[${process.stdout.rows};1H`);
-    process.stdout.write(`\x1b[2K`);
-    process.stdout.write(" ".repeat(cols));
+    process.stdout.write(`\x1b[${rows};1H`);
+    process.stdout.write("\x1b[2K");
     process.stdout.write("\x1b[u");
   }
 }
