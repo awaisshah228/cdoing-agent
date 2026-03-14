@@ -1,9 +1,19 @@
+/**
+ * Interactive Chat Interface
+ *
+ * Provides a readline-based REPL for conversing with the
+ * AI agent. Handles slash commands and streams responses
+ * with visual feedback (spinners, colors).
+ */
+
 import * as readline from "readline";
 import chalk from "chalk";
 import ora from "ora";
-import { AgentRunner, type AgentCallbacks } from "@cdoing/ai";
+import { AgentRunner } from "@cdoing/ai";
 import type { ToolRegistry, PermissionManager } from "@cdoing/core";
 import type { ModelConfig } from "@cdoing/ai";
+import { printWelcome, printHelp } from "./help";
+import { createInteractiveCallbacks } from "./callbacks";
 
 export class ChatInterface {
   private rl: readline.Interface;
@@ -23,123 +33,81 @@ export class ChatInterface {
     this.agent = new AgentRunner(modelConfig, toolRegistry, permissionManager);
   }
 
+  /** Launch the interactive REPL */
   async start(): Promise<void> {
-    this.printWelcome();
+    printWelcome();
     this.promptUser();
   }
 
-  private printWelcome(): void {
-    console.log();
-    console.log(chalk.bold.cyan("  ╔══════════════════════════════════════╗"));
-    console.log(chalk.bold.cyan("  ║") + chalk.bold.white("       Cdoing Agent v0.1.0            ") + chalk.bold.cyan("║"));
-    console.log(chalk.bold.cyan("  ║") + chalk.dim("   AI-Powered Coding Assistant        ") + chalk.bold.cyan("║"));
-    console.log(chalk.bold.cyan("  ╚══════════════════════════════════════╝"));
-    console.log();
-    console.log(chalk.dim("  Type your message and press Enter to chat."));
-    console.log(chalk.dim("  Commands: /help, /clear, /model, /mode, /exit"));
-    console.log();
-  }
-
+  /**
+   * Show the prompt and wait for user input.
+   * Loops until the user exits.
+   */
   private promptUser(): void {
     this.rl.question(chalk.green("❯ "), async (input) => {
       const trimmed = input.trim();
 
+      // Skip empty input
       if (!trimmed) {
         this.promptUser();
         return;
       }
 
-      // Handle slash commands
+      // Route slash commands vs. agent messages
       if (trimmed.startsWith("/")) {
-        await this.handleCommand(trimmed);
-        this.promptUser();
+        const shouldContinue = await this.handleCommand(trimmed);
+        if (shouldContinue) this.promptUser();
         return;
       }
 
-      // Send to agent
+      // Send user message to the agent
       await this.sendMessage(trimmed);
       this.promptUser();
     });
   }
 
-  private async handleCommand(command: string): Promise<void> {
-    const [cmd, ...args] = command.split(" ");
+  /**
+   * Handle a slash command.
+   * Returns false if the REPL should stop (e.g. /exit).
+   */
+  private async handleCommand(command: string): Promise<boolean> {
+    const [cmd] = command.split(" ");
 
     switch (cmd) {
       case "/help":
-        console.log();
-        console.log(chalk.bold("Available commands:"));
-        console.log(chalk.cyan("  /help    ") + chalk.dim("Show this help message"));
-        console.log(chalk.cyan("  /clear   ") + chalk.dim("Clear conversation history"));
-        console.log(chalk.cyan("  /model   ") + chalk.dim("Show current model info"));
-        console.log(chalk.cyan("  /mode    ") + chalk.dim("Show/change permission mode"));
-        console.log(chalk.cyan("  /exit    ") + chalk.dim("Exit the agent"));
-        console.log();
-        break;
+        printHelp();
+        return true;
 
       case "/clear":
         this.agent.clearHistory();
         console.log(chalk.yellow("\n  Conversation cleared.\n"));
-        break;
+        return true;
 
       case "/model":
         console.log(chalk.dim("\n  Current model configuration loaded from env.\n"));
-        break;
+        return true;
 
       case "/mode":
         console.log(chalk.dim("\n  Permission mode: ask (use --mode flag to change)\n"));
-        break;
+        return true;
 
       case "/exit":
       case "/quit":
-        console.log(chalk.dim("\n  Goodbye! 👋\n"));
+        console.log(chalk.dim("\n  Goodbye!\n"));
         this.rl.close();
         process.exit(0);
 
       default:
-        console.log(chalk.red(`\n  Unknown command: ${cmd}\n`));
+        console.log(chalk.red(`\n  Unknown command: ${cmd}`));
+        console.log(chalk.dim("  Type /help to see available commands.\n"));
+        return true;
     }
   }
 
+  /** Send a message to the agent and stream the response */
   private async sendMessage(message: string): Promise<void> {
     console.log();
-    let isFirstToken = true;
-
-    const callbacks: AgentCallbacks = {
-      onToken: (token) => {
-        if (isFirstToken) {
-          this.spinner.stop();
-          process.stdout.write(chalk.cyan("  "));
-          isFirstToken = false;
-        }
-        process.stdout.write(token);
-      },
-      onToolCall: (name, input) => {
-        this.spinner.stop();
-        const inputPreview = JSON.stringify(input).substring(0, 80);
-        console.log(chalk.yellow(`\n  ⚡ ${name}`) + chalk.dim(` ${inputPreview}`));
-        this.spinner.start(chalk.dim("  Executing..."));
-      },
-      onToolResult: (name, result, isError) => {
-        this.spinner.stop();
-        if (isError) {
-          console.log(chalk.red(`  ✗ ${name} failed`));
-        } else {
-          const preview = result.substring(0, 120).replace(/\n/g, " ");
-          console.log(chalk.green(`  ✓ ${name}`) + chalk.dim(` ${preview}`));
-        }
-        this.spinner.start(chalk.dim("  Thinking..."));
-      },
-      onComplete: () => {
-        this.spinner.stop();
-        console.log("\n");
-      },
-      onError: (error) => {
-        this.spinner.stop();
-        console.log(chalk.red(`\n  Error: ${error.message}\n`));
-      },
-    };
-
+    const callbacks = createInteractiveCallbacks(this.spinner);
     this.spinner.start(chalk.dim("  Thinking..."));
 
     try {
@@ -151,6 +119,7 @@ export class ChatInterface {
     }
   }
 
+  /** Clean up readline resources */
   destroy(): void {
     this.rl.close();
   }
