@@ -123,6 +123,42 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand("cdoing.fixSelection", () => {
       sendEditorSelection("Fix any issues in this code:\n\n");
+    }),
+
+    // "Ask about this file" button in editor title bar
+    vscode.commands.registerCommand("cdoing.openFile", () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) return;
+
+      const filePath = vscode.workspace.asRelativePath(editor.document.uri);
+      const lang = editor.document.languageId;
+      const lineCount = editor.document.lineCount;
+
+      // If there's a selection, send just that; otherwise send file context
+      const selection = editor.selection;
+      const selectedText = editor.document.getText(selection);
+
+      let message: string;
+      if (selectedText) {
+        message = `\`\`\`${lang} (${filePath})\n${selectedText}\n\`\`\``;
+      } else {
+        message = `I'm working on \`${filePath}\` (${lang}, ${lineCount} lines). `;
+      }
+
+      chatProvider.postMessage({ type: "insertMessage", message });
+      vscode.commands.executeCommand("cdoing.chatPanel.focus");
+    }),
+
+    // Move panel to right (secondary) sidebar
+    vscode.commands.registerCommand("cdoing.moveToSecondarySidebar", () => {
+      vscode.commands.executeCommand("cdoing.chatPanel.focus");
+      vscode.commands.executeCommand("workbench.action.moveActivityBarEntryToSecondarySidebar", "cdoing");
+    }),
+
+    // Move panel to left (primary) sidebar
+    vscode.commands.registerCommand("cdoing.moveToPrimarySidebar", () => {
+      vscode.commands.executeCommand("cdoing.chatPanel.focus");
+      vscode.commands.executeCommand("workbench.action.moveActivityBarEntryToPrimarySidebar", "cdoing");
     })
   );
 

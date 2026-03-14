@@ -29,14 +29,16 @@
         {
           "type": "webview",
           "id": "cdoing.chatPanel",
-          "name": "Chat"
+          "name": "Chat",
+          "visibility": "visible"
         }
       ]
     },
     "commands": [
       {
         "command": "cdoing.newChat",
-        "title": "Cdoing: New Chat"
+        "title": "Cdoing: New Chat",
+        "icon": "$(add)"
       },
       {
         "command": "cdoing.clearHistory",
@@ -52,11 +54,13 @@
       },
       {
         "command": "cdoing.sendSelection",
-        "title": "Cdoing: Send Selection to Chat"
+        "title": "Cdoing: Send Selection to Chat",
+        "icon": "$(comment-discussion)"
       },
       {
         "command": "cdoing.explainSelection",
-        "title": "Cdoing: Explain Selection"
+        "title": "Cdoing: Explain Selection",
+        "icon": "$(lightbulb)"
       },
       {
         "command": "cdoing.refactorSelection",
@@ -65,9 +69,29 @@
       {
         "command": "cdoing.fixSelection",
         "title": "Cdoing: Fix Selection"
+      },
+      {
+        "command": "cdoing.openFile",
+        "title": "Cdoing: Ask About This File",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "cdoing.moveToSecondarySidebar",
+        "title": "Cdoing: Move to Right Sidebar"
+      },
+      {
+        "command": "cdoing.moveToPrimarySidebar",
+        "title": "Cdoing: Move to Left Sidebar"
       }
     ],
     "menus": {
+      "editor/title": [
+        {
+          "command": "cdoing.openFile",
+          "group": "navigation",
+          "when": "editorIsOpen"
+        }
+      ],
       "editor/context": [
         {
           "command": "cdoing.sendSelection",
