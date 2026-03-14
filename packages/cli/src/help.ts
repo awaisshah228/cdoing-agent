@@ -10,7 +10,7 @@ export function printWelcome(): void {
   console.log(chalk.bold.cyan("  ╚══════════════════════════════════════╝"));
   console.log();
   console.log(chalk.dim("  Type your message and press Enter to chat."));
-  console.log(chalk.dim("  Type " + chalk.white("?") + " or " + chalk.white("/help") + " for shortcuts & commands."));
+  console.log(chalk.dim("  Type " + chalk.white("?") + " for help, " + chalk.white("!cmd") + " to run commands, " + chalk.white("/config") + " to view settings."));
   console.log();
 }
 
