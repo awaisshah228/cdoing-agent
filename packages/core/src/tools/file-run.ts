@@ -61,16 +61,21 @@ export class FileRunTool implements BaseTool {
     return new Promise((resolve) => {
       exec(command, { cwd: this.workingDir, timeout, maxBuffer: 10 * 1024 * 1024, env: { ...process.env } },
         (error, stdout, stderr) => {
-          if (error?.killed)
-            return resolve({ success: false, output: stdout || "", error: `Timed out after ${timeout}ms` });
+          // Always capture full output so LLM can debug errors
+          const outputParts: string[] = [];
+          if (stdout) outputParts.push(stdout.trimEnd());
+          if (stderr) outputParts.push(`STDERR:\n${stderr.trimEnd()}`);
+          const output = outputParts.join("\n\n") || "(no output)";
 
-          const parts: string[] = [];
-          if (stdout) parts.push(stdout);
-          if (stderr) parts.push(`STDERR:\n${stderr}`);
-          const output = parts.join("\n\n") || "(no output)";
+          if (error?.killed) {
+            return resolve({ success: false, output, error: `Timed out after ${timeout}ms` });
+          }
 
-          if (error) resolve({ success: false, output, error: `Exit code: ${error.code}` });
-          else resolve({ success: true, output });
+          if (error) {
+            resolve({ success: false, output, error: `Exit code: ${error.code}` });
+          } else {
+            resolve({ success: true, output });
+          }
         });
     });
   }

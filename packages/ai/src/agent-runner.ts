@@ -297,7 +297,24 @@ export class AgentRunner {
 
           // Execute tool
           const result = await this.toolRegistry.execute(tc.name, tc.args);
-          const resultText = result.success ? result.output : `ERROR: ${result.error}`;
+          let resultText: string;
+
+          if (result.success) {
+            resultText = result.output;
+          } else {
+            // On error: include BOTH the output (stdout/stderr) AND the error message
+            // so the LLM has full context to debug
+            const parts: string[] = [`ERROR: ${result.error}`];
+            if (result.output) {
+              parts.push(`\nFull output:\n${result.output}`);
+            }
+            parts.push(
+              `\n[Auto-debug]: The command/tool failed. Analyze the error output above carefully. ` +
+              `Read the relevant source files if needed, identify the root cause, fix the code, and re-run to verify.`
+            );
+            resultText = parts.join("\n");
+          }
+
           this.messages.push(new ToolMessage({ content: resultText, tool_call_id: tc.id }));
           callbacks.onToolResult(tc.name, resultText, !result.success);
 
