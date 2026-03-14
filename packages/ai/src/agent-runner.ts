@@ -7,27 +7,26 @@
  *   3. If tool calls → run hooks → check permissions → execute → feed results back
  *   4. Repeat until LLM responds with just text
  *
- * Features:
- *   - Real token-by-token streaming
- *   - Context window management (auto-compression)
- *   - API retry with exponential backoff
- *   - Hooks (pre/post tool execution)
- *   - Token counting and cost tracking
+ * LangChain improvements:
+ *   - Real streaming via .stream() with chunk accumulation
+ *   - Raw JSON Schema tool definitions via bindTools() (no Zod, no DynamicStructuredTool)
+ *   - Proper token tracking via UsageMetadata on AIMessageChunk
+ *   - Retry with exponential backoff
+ *   - Context window compression
  */
 
 import { createModel, type ModelConfig } from "./provider";
 import { buildSystemPrompt } from "./system-prompt";
 import { ContextManager, type TurnUsage } from "./context-manager";
-import { DynamicStructuredTool } from "@langchain/core/tools";
 import {
   HumanMessage,
   AIMessage,
   SystemMessage,
   ToolMessage,
 } from "@langchain/core/messages";
+import { AIMessageChunk } from "@langchain/core/messages";
 import type { BaseMessage } from "@langchain/core/messages";
 import type { ToolRegistry, PermissionManager, HookManager } from "@cdoing/core";
-import { z } from "zod";
 
 export interface AgentCallbacks {
   onToken: (token: string) => void;
@@ -73,79 +72,68 @@ export class AgentRunner {
       memory: options?.memory || undefined,
     });
 
-    // Context manager with appropriate limits
-    const maxContext = this.getMaxContext(modelConfig.provider, modelConfig.model);
+    const maxContext = this.getMaxContext(modelConfig.provider);
     this.contextManager = new ContextManager(maxContext, modelConfig.model || "");
   }
 
-  private getMaxContext(provider?: string, model?: string): number {
-    // Sensible defaults per provider
+  private getMaxContext(provider?: string): number {
     if (provider === "anthropic") return 200000;
     if (provider === "google") return 1000000;
-    return 128000; // OpenAI and others
+    return 128000;
   }
 
   /**
-   * Convert our JSON Schema tools into LangChain's DynamicStructuredTool.
+   * Convert our tool definitions to OpenAI-format for bindTools().
+   * No Zod, no DynamicStructuredTool — just raw JSON Schema.
    */
-  private buildLangChainTools() {
-    return this.toolRegistry.getAll().map((t) => {
-      const schema = this.jsonSchemaToZod(t.definition.inputSchema);
-      return new DynamicStructuredTool({
+  private buildToolDefinitions() {
+    return this.toolRegistry.getAll().map((t) => ({
+      type: "function" as const,
+      function: {
         name: t.definition.name,
         description: t.definition.description,
-        schema,
-        func: async (input: Record<string, unknown>) => {
-          const result = await t.execute(input);
-          return result.success ? result.output : `ERROR: ${result.error || "Unknown error"}`;
-        },
-      } as any);
-    });
+        parameters: t.definition.inputSchema,
+      },
+    }));
   }
 
-  private jsonSchemaToZod(schema: Record<string, unknown>): z.ZodObject<any> {
-    const props = (schema.properties || {}) as Record<string, any>;
-    const required = (schema.required || []) as string[];
-    const shape: Record<string, z.ZodTypeAny> = {};
-
-    for (const [key, prop] of Object.entries(props)) {
-      let field: z.ZodTypeAny;
-      switch (prop.type) {
-        case "number": field = z.number().describe(prop.description || ""); break;
-        case "boolean": field = z.boolean().describe(prop.description || ""); break;
-        default: field = z.string().describe(prop.description || ""); break;
-      }
-      if (!required.includes(key)) field = field.optional();
-      shape[key] = field;
-    }
-    return z.object(shape);
-  }
-
-  private extractText(content: unknown): string {
-    if (typeof content === "string") return content;
-    if (Array.isArray(content)) {
-      return content.map((b) => {
-        if (typeof b === "string") return b;
-        if (b?.type === "text" && b?.text) return b.text;
-        return "";
-      }).join("");
+  /**
+   * Extract text content from a message chunk during streaming.
+   */
+  private extractChunkText(chunk: AIMessageChunk): string {
+    if (typeof chunk.content === "string") return chunk.content;
+    if (Array.isArray(chunk.content)) {
+      return chunk.content
+        .map((b) => {
+          if (typeof b === "string") return b;
+          if (b && typeof b === "object" && "type" in b && b.type === "text" && "text" in b) {
+            return (b as { type: "text"; text: string }).text;
+          }
+          return "";
+        })
+        .join("");
     }
     return "";
   }
 
-  private extractToolCalls(response: any): Array<{ id: string; name: string; args: Record<string, unknown> }> {
-    if (response.tool_calls?.length > 0) {
-      const calls = response.tool_calls
-        .filter((tc: any) => tc.name)
-        .map((tc: any) => ({
-          id: tc.id || `call_${Date.now()}`,
+  /**
+   * Extract tool calls from the accumulated AIMessageChunk.
+   * After streaming is complete, the concatenated chunk has fully-formed tool_calls.
+   */
+  private extractToolCalls(accumulated: AIMessageChunk): Array<{ id: string; name: string; args: Record<string, unknown> }> {
+    // LangChain concatenates tool_call_chunks into tool_calls
+    if (accumulated.tool_calls && accumulated.tool_calls.length > 0) {
+      return accumulated.tool_calls
+        .filter((tc) => tc.name)
+        .map((tc) => ({
+          id: tc.id || `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           name: tc.name,
           args: (tc.args || {}) as Record<string, unknown>,
         }));
-      if (calls.some((c: any) => Object.keys(c.args).length > 0)) return calls;
     }
 
-    const raw = response.additional_kwargs?.tool_calls;
+    // Fallback: check additional_kwargs for OpenAI-style raw tool calls
+    const raw = (accumulated as any).additional_kwargs?.tool_calls;
     if (raw?.length > 0) {
       return raw.map((rtc: any) => {
         let args: Record<string, unknown> = {};
@@ -155,34 +143,58 @@ export class AgentRunner {
           name: rtc.function?.name || "",
           args,
         };
-      }).filter((c: any) => c.name);
+      }).filter((c: { name: string }) => c.name);
     }
 
     return [];
   }
 
   /**
-   * Call the model with retry and exponential backoff.
+   * Stream a model response, emitting text tokens as they arrive.
+   * Returns the fully accumulated AIMessageChunk with complete tool_calls.
    */
-  private async invokeWithRetry(
-    modelWithTools: any,
+  private async streamWithRetry(
+    modelWithTools: ReturnType<typeof this.model.bindTools>,
     allMessages: BaseMessage[],
-  ): Promise<any> {
+    callbacks: AgentCallbacks,
+  ): Promise<AIMessageChunk> {
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
-        return await modelWithTools.invoke(allMessages);
+        let accumulated: AIMessageChunk | null = null;
+
+        const stream = await modelWithTools.stream(allMessages);
+
+        for await (const chunk of stream) {
+          // Accumulate chunks for complete tool_calls
+          if (accumulated === null) {
+            accumulated = chunk as AIMessageChunk;
+          } else {
+            accumulated = accumulated.concat(chunk as AIMessageChunk);
+          }
+
+          // Emit text tokens as they arrive
+          const text = this.extractChunkText(chunk as AIMessageChunk);
+          if (text) {
+            callbacks.onToken(text);
+          }
+        }
+
+        if (!accumulated) {
+          throw new Error("Empty response from model");
+        }
+
+        return accumulated;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
 
         // Don't retry on auth errors or invalid requests
         const msg = lastError.message.toLowerCase();
-        if (msg.includes("401") || msg.includes("403") || msg.includes("invalid")) {
+        if (msg.includes("401") || msg.includes("403") || msg.includes("invalid_api_key") || msg.includes("authentication")) {
           throw lastError;
         }
 
-        // Retry on rate limits and server errors
         if (attempt < this.maxRetries) {
           const delay = this.retryDelayMs * Math.pow(2, attempt);
           await new Promise((resolve) => setTimeout(resolve, delay));
@@ -194,13 +206,13 @@ export class AgentRunner {
   }
 
   /**
-   * Run the agentic loop with streaming, context management, and hooks.
+   * Run the agentic loop with real streaming, context management, and hooks.
    */
   async run(userMessage: string, callbacks: AgentCallbacks): Promise<string> {
     this.messages.push(new HumanMessage(userMessage));
 
-    const lcTools = this.buildLangChainTools();
-    const modelWithTools = this.model.bindTools(lcTools);
+    const toolDefs = this.buildToolDefinitions();
+    const modelWithTools = this.model.bindTools(toolDefs);
     let fullResponse = "";
 
     try {
@@ -208,7 +220,7 @@ export class AgentRunner {
         // Compress context if needed
         this.messages = this.contextManager.compressIfNeeded(
           this.messages,
-          this.systemPrompt
+          this.systemPrompt,
         );
 
         const allMessages: BaseMessage[] = [
@@ -216,42 +228,53 @@ export class AgentRunner {
           ...this.messages,
         ];
 
-        // Invoke with retry
-        const response = await this.invokeWithRetry(modelWithTools, allMessages);
+        // Stream response with retry
+        const accumulated = await this.streamWithRetry(modelWithTools, allMessages, callbacks);
 
-        // Track token usage
-        const usage = this.contextManager.recordFromResponse(response);
-        if (usage && callbacks.onUsage) {
-          callbacks.onUsage(usage);
+        // Track token usage from the accumulated response
+        const usageMeta = accumulated.usage_metadata;
+        if (usageMeta) {
+          const usage = this.contextManager.recordTurn(
+            usageMeta.input_tokens,
+            usageMeta.output_tokens,
+          );
+          if (callbacks.onUsage) callbacks.onUsage(usage);
+        } else {
+          // Estimate if no metadata available
+          const usage = this.contextManager.recordFromResponse(accumulated);
+          if (usage && callbacks.onUsage) callbacks.onUsage(usage);
         }
 
-        // Stream text to the user
-        const text = this.extractText(response.content);
-        if (text) callbacks.onToken(text);
+        // Extract complete tool calls from accumulated chunks
+        const toolCalls = this.extractToolCalls(accumulated);
 
-        const toolCalls = this.extractToolCalls(response);
+        // Get full text (already streamed to user, but need for history)
+        const fullText = this.extractChunkText(accumulated);
 
         // No tools → model is done
         if (toolCalls.length === 0) {
-          this.messages.push(new AIMessage(text));
-          fullResponse += text;
+          this.messages.push(new AIMessage(fullText));
+          fullResponse += fullText;
           break;
         }
 
-        // Save AI message with tool calls
+        // Save AI message with tool calls to history
         this.messages.push(new AIMessage({
-          content: text,
+          content: fullText,
           tool_calls: toolCalls.map((tc) => ({
-            id: tc.id, name: tc.name, args: tc.args, type: "tool_call" as const,
+            id: tc.id,
+            name: tc.name,
+            args: tc.args,
+            type: "tool_call" as const,
           })),
         }));
-        fullResponse += text;
+        fullResponse += fullText;
 
-        // Execute each tool
+        // Execute each tool call
         for (const tc of toolCalls) {
           callbacks.onToolCall(tc.name, tc.args);
 
-          // Run pre-hooks
+          // Pre-hooks
           if (this.hookManager) {
             await this.hookManager.runHooks(`pre:${tc.name}`, {
               tool_name: tc.name,
@@ -272,13 +295,13 @@ export class AgentRunner {
             }
           }
 
-          // Execute
+          // Execute tool
           const result = await this.toolRegistry.execute(tc.name, tc.args);
           const resultText = result.success ? result.output : `ERROR: ${result.error}`;
           this.messages.push(new ToolMessage({ content: resultText, tool_call_id: tc.id }));
           callbacks.onToolResult(tc.name, resultText, !result.success);
 
-          // Run post-hooks
+          // Post-hooks
           if (this.hookManager) {
             await this.hookManager.runHooks(`post:${tc.name}`, {
               tool_name: tc.name,
@@ -289,7 +312,7 @@ export class AgentRunner {
             });
           }
         }
-        // Loop back — model sees tool results and decides next step
+        // Loop: model sees tool results, decides next step
       }
 
       callbacks.onComplete();
@@ -300,7 +323,6 @@ export class AgentRunner {
     return fullResponse;
   }
 
-  /** Get context manager for usage tracking */
   getContextManager(): ContextManager {
     return this.contextManager;
   }
