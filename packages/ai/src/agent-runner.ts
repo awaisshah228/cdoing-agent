@@ -1,9 +1,9 @@
 /**
  * agent-runner.ts — The Agentic Loop
  *
- * Streams text live to the UI. When tool calls appear in the stream,
- * collects their arg chunks until the stream ends, parses the complete
- * JSON, then executes the tools.
+ * Uses invoke() for reliable tool call parsing.
+ * Text is displayed all at once (not streamed token-by-token)
+ * to guarantee tool call args are always complete.
  */
 
 import { createModel, type ModelConfig } from "./provider";
@@ -15,7 +15,7 @@ import {
   SystemMessage,
   ToolMessage,
 } from "@langchain/core/messages";
-import type { BaseMessage } from "@langchain/core/messages";
+import type { BaseMessage, AIMessageChunk } from "@langchain/core/messages";
 import type { ToolRegistry, PermissionManager } from "@cdoing/core";
 import { z } from "zod";
 
@@ -25,13 +25,6 @@ export interface AgentCallbacks {
   onToolResult: (name: string, result: string, isError: boolean) => void;
   onComplete: () => void;
   onError: (error: Error) => void;
-}
-
-/** Raw accumulator for a tool call built from streaming chunks */
-interface ToolCallAccumulator {
-  id: string;
-  name: string;
-  argsJson: string;
 }
 
 export class AgentRunner {
@@ -119,12 +112,108 @@ The user's working directory is available to all tools. File paths can be relati
   }
 
   /**
-   * Main agentic loop.
-   *
-   * Phase 1: Stream response — text goes to UI, tool call chunks accumulate
-   * Phase 2: Parse complete tool call args from accumulated JSON
-   * Phase 3: Execute tools with proper permission checks
-   * Repeat until model responds with text only (no tools)
+   * Extract text from response content (string or array format).
+   */
+  private extractText(content: unknown): string {
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      return content
+        .map((block) => {
+          if (typeof block === "string") return block;
+          if (block?.type === "text" && block?.text) return block.text;
+          return "";
+        })
+        .join("");
+    }
+    return "";
+  }
+
+  /**
+   * Extract tool calls from the response, checking multiple possible locations.
+   */
+  private extractToolCalls(
+    response: AIMessageChunk
+  ): Array<{ id: string; name: string; args: Record<string, unknown> }> {
+    const result: Array<{ id: string; name: string; args: Record<string, unknown> }> = [];
+    const responseAny = response as any;
+
+    // 1. Check response.tool_calls (standard LangChain)
+    if (response.tool_calls && response.tool_calls.length > 0) {
+      for (const tc of response.tool_calls) {
+        if (tc.name) {
+          result.push({
+            id: tc.id || `call_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+            name: tc.name,
+            args: (tc.args || {}) as Record<string, unknown>,
+          });
+        }
+      }
+      // Only use this if args are non-empty
+      if (result.length > 0 && result.some((tc) => Object.keys(tc.args).length > 0)) {
+        return result;
+      }
+    }
+
+    // 2. Check additional_kwargs.tool_calls (raw API response)
+    const rawToolCalls = responseAny.additional_kwargs?.tool_calls;
+    if (rawToolCalls && Array.isArray(rawToolCalls) && rawToolCalls.length > 0) {
+      const fromRaw: Array<{ id: string; name: string; args: Record<string, unknown> }> = [];
+      for (const rtc of rawToolCalls) {
+        let args: Record<string, unknown> = {};
+        if (rtc.function?.arguments) {
+          try {
+            args = JSON.parse(rtc.function.arguments);
+          } catch {
+            // ignore parse error
+          }
+        }
+        fromRaw.push({
+          id: rtc.id || `call_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+          name: rtc.function?.name || rtc.name || "",
+          args,
+        });
+      }
+      if (fromRaw.length > 0 && fromRaw.some((tc) => Object.keys(tc.args).length > 0)) {
+        return fromRaw;
+      }
+    }
+
+    // 3. Check tool_call_chunks and manually parse
+    if (responseAny.tool_call_chunks && responseAny.tool_call_chunks.length > 0) {
+      const accumulators = new Map<number, { id: string; name: string; argsJson: string }>();
+      for (const tcc of responseAny.tool_call_chunks) {
+        const idx = tcc.index ?? 0;
+        const existing = accumulators.get(idx);
+        if (existing) {
+          if (tcc.id) existing.id = tcc.id;
+          if (tcc.name) existing.name += tcc.name;
+          existing.argsJson += tcc.args || "";
+        } else {
+          accumulators.set(idx, {
+            id: tcc.id || "",
+            name: tcc.name || "",
+            argsJson: tcc.args || "",
+          });
+        }
+      }
+      for (const [, acc] of accumulators) {
+        let args: Record<string, unknown> = {};
+        try {
+          if (acc.argsJson.trim()) args = JSON.parse(acc.argsJson);
+        } catch { /* ignore */ }
+        result.push({
+          id: acc.id || `call_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+          name: acc.name,
+          args,
+        });
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Main agentic loop using invoke() for reliable tool calls.
    */
   async run(userMessage: string, callbacks: AgentCallbacks): Promise<string> {
     this.messages.push(new HumanMessage(userMessage));
@@ -141,130 +230,27 @@ The user's working directory is available to all tools. File paths can be relati
           ...this.messages,
         ];
 
-        const stream = await modelWithTools.stream(allMessages);
+        // invoke() returns the complete message with fully parsed tool calls
+        const response = await modelWithTools.invoke(allMessages);
 
-        let currentResponse = "";
-        let hasToolCalls = false;
-        const toolAccumulators = new Map<number, ToolCallAccumulator>();
-
-        // ── Phase 1: Stream and collect ──
-        for await (const chunk of stream) {
-          const chunkAny = chunk as any;
-
-          // Check tool_call_chunks first (Anthropic, newer LangChain)
-          // These arrive as: { index, id?, name?, args? } where args is
-          // a JSON string fragment that we concatenate across chunks
-          if (chunkAny.tool_call_chunks?.length > 0) {
-            hasToolCalls = true;
-            for (const tcc of chunkAny.tool_call_chunks) {
-              const idx: number = tcc.index ?? 0;
-              const existing = toolAccumulators.get(idx);
-              if (existing) {
-                if (tcc.id) existing.id = tcc.id;
-                if (tcc.name) existing.name = tcc.name;
-                existing.argsJson += tcc.args || "";
-              } else {
-                toolAccumulators.set(idx, {
-                  id: tcc.id || "",
-                  name: tcc.name || "",
-                  argsJson: tcc.args || "",
-                });
-              }
-            }
-            continue;
-          }
-
-          // Check tool_calls (OpenAI style — may come with partial or full args)
-          const tcList = chunk.tool_calls;
-          if (tcList && tcList.length > 0) {
-            hasToolCalls = true;
-            for (let i = 0; i < tcList.length; i++) {
-              const tc = tcList[i];
-              const idx = i;
-              const existing = toolAccumulators.get(idx);
-              const argsStr = typeof tc.args === "string"
-                ? tc.args
-                : JSON.stringify(tc.args || {});
-
-              if (existing) {
-                if (tc.id) existing.id = tc.id;
-                if (tc.name) existing.name += tc.name;
-                existing.argsJson += argsStr;
-              } else {
-                toolAccumulators.set(idx, {
-                  id: tc.id || "",
-                  name: tc.name || "",
-                  argsJson: argsStr,
-                });
-              }
-            }
-            continue;
-          }
-
-          // Stream text tokens only while no tool calls detected
-          if (!hasToolCalls && chunk.content) {
-            if (typeof chunk.content === "string") {
-              currentResponse += chunk.content;
-              callbacks.onToken(chunk.content);
-            } else if (Array.isArray(chunk.content)) {
-              for (const block of chunk.content) {
-                let text = "";
-                if (typeof block === "string") {
-                  text = block;
-                } else if (block?.type === "text" && block?.text) {
-                  text = block.text;
-                }
-                if (text) {
-                  currentResponse += text;
-                  callbacks.onToken(text);
-                }
-              }
-            }
-          }
+        const text = this.extractText(response.content);
+        if (text) {
+          callbacks.onToken(text);
         }
 
-        // ── No tool calls → done ──
-        if (!hasToolCalls || toolAccumulators.size === 0) {
-          this.messages.push(new AIMessage(currentResponse));
-          fullResponse += currentResponse;
+        // Extract tool calls — tries multiple sources for compatibility
+        const toolCalls = this.extractToolCalls(response);
+
+        // No tool calls → done
+        if (toolCalls.length === 0) {
+          this.messages.push(new AIMessage(text));
+          fullResponse += text;
           break;
         }
 
-        // ── Phase 2: Parse accumulated tool call args ──
-        const toolCalls: Array<{
-          id: string;
-          name: string;
-          args: Record<string, unknown>;
-        }> = [];
-
-        for (const [, acc] of toolAccumulators) {
-          let args: Record<string, unknown> = {};
-
-          // Parse the concatenated JSON string
-          const trimmed = acc.argsJson.trim();
-          if (trimmed) {
-            try {
-              args = JSON.parse(trimmed);
-            } catch {
-              // Try to handle double-encoded JSON like '"{\"key\":\"val\"}"'
-              try {
-                args = JSON.parse(JSON.parse(trimmed));
-              } catch {
-                console.error(`  Warning: Could not parse args for ${acc.name}: ${trimmed.substring(0, 100)}`);
-              }
-            }
-          }
-
-          toolCalls.push({
-            id: acc.id || `call_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-            name: acc.name,
-            args,
-          });
-        }
-
-        // Save AI message with tool calls to history
+        // Save AI message with tool calls
         const aiMsg = new AIMessage({
-          content: currentResponse,
+          content: text,
           tool_calls: toolCalls.map((tc) => ({
             id: tc.id,
             name: tc.name,
@@ -273,13 +259,12 @@ The user's working directory is available to all tools. File paths can be relati
           })),
         });
         this.messages.push(aiMsg);
-        fullResponse += currentResponse;
+        fullResponse += text;
 
-        // ── Phase 3: Execute tool calls ──
+        // Execute each tool
         for (const tc of toolCalls) {
           callbacks.onToolCall(tc.name, tc.args);
 
-          // Permission check
           const toolInstance = this.toolRegistry.get(tc.name);
           if (toolInstance) {
             const allowed = await this.permissionManager.requestPermission(
