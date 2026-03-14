@@ -1,13 +1,20 @@
 {
-  "name": "example",
+  "name": "example-express-server",
   "version": "1.0.0",
-  "description": "Test project for cdoing-agent",
-  "main": "index.js",
+  "description": "Example Express server with tests",
+  "main": "server.js",
   "scripts": {
-    "start": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js",
+    "test": "jest"
   },
   "keywords": [],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "jest": "^29.5.0",
+    "supertest": "^6.3.3"
+  }
 }

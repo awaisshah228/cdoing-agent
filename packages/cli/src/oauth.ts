@@ -240,7 +240,7 @@ export function saveOAuthTokens(tokens: OAuthTokens): void {
 }
 
 export function loadOAuthTokens(): OAuthTokens | null {
-  // 1. Check cdoing-agent's own keychain
+  // Only use tokens explicitly stored by `cdoing --login`
   const raw = loadSecret();
   if (raw) {
     try {
@@ -248,11 +248,6 @@ export function loadOAuthTokens(): OAuthTokens | null {
       if (parsed.access_token) return parsed;
     } catch {}
   }
-
-  // 2. Fallback: check Claude Code's keychain credentials
-  const claudeTokens = loadClaudeCodeTokens();
-  if (claudeTokens) return claudeTokens;
-
   return null;
 }
 
@@ -261,47 +256,6 @@ export function loadOAuthTokens(): OAuthTokens | null {
  * Claude Code stores tokens in macOS Keychain under "Claude Code-credentials"
  * or in ~/.claude/.credentials.json on other platforms.
  */
-function loadClaudeCodeTokens(): OAuthTokens | null {
-  // Try macOS Keychain first
-  if (process.platform === "darwin") {
-    try {
-      const username = os.userInfo().username;
-      const result = execSync(
-        `security find-generic-password -s "Claude Code-credentials" -a "${username}" -w 2>/dev/null`,
-        { encoding: "utf-8" },
-      );
-      const parsed = JSON.parse(result.trim());
-      const oauth = parsed?.claudeAiOauth;
-      if (oauth?.accessToken) {
-        return {
-          access_token: oauth.accessToken,
-          refresh_token: oauth.refreshToken,
-          expires_at: oauth.expiresAt,
-          token_type: "Bearer",
-        };
-      }
-    } catch {}
-  }
-
-  // Try ~/.claude/.credentials.json (Linux/Windows/fallback)
-  try {
-    const credPath = path.join(os.homedir(), ".claude", ".credentials.json");
-    if (fs.existsSync(credPath)) {
-      const content = JSON.parse(fs.readFileSync(credPath, "utf-8"));
-      const oauth = content?.claudeAiOauth;
-      if (oauth?.accessToken) {
-        return {
-          access_token: oauth.accessToken,
-          refresh_token: oauth.refreshToken,
-          expires_at: oauth.expiresAt,
-          token_type: "Bearer",
-        };
-      }
-    }
-  } catch {}
-
-  return null;
-}
 
 export function clearOAuthTokens(): void {
   deleteSecret();

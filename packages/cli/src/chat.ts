@@ -374,69 +374,58 @@ export class ChatInterface {
 
   private clearSuggestions(): void {
     if (this.suggestionsVisible > 0) {
-      // Save cursor, move below, clear suggestion lines, restore cursor
-      const cols = process.stdout.columns || 80;
-      process.stdout.write("\x1b[s"); // save cursor
-      for (let i = 0; i < this.suggestionsVisible; i++) {
-        process.stdout.write("\x1b[1B"); // move down
-        process.stdout.write(`\r${" ".repeat(cols)}`); // clear line
+      const n = this.suggestionsVisible;
+      // Move down n lines clearing each, then back up — no save/restore cursor
+      for (let i = 0; i < n; i++) {
+        process.stdout.write("\x1b[1B\r\x1b[2K");
       }
-      process.stdout.write("\x1b[u"); // restore cursor
+      process.stdout.write(`\x1b[${n}A`);
       this.suggestionsVisible = 0;
     }
   }
 
   private renderSuggestions(line: string): void {
-    this.clearSuggestions();
-
     if (!process.stdout.isTTY) return;
 
     let matches: { cmd: string; desc: string }[] = [];
-
     if (line.startsWith("/") && line.length >= 1) {
-      matches = ChatInterface.SLASH_COMMANDS.filter((c) =>
-        c.cmd.startsWith(line),
-      );
-      // Don't show if exact match
+      matches = ChatInterface.SLASH_COMMANDS.filter((c) => c.cmd.startsWith(line));
       if (matches.length === 1 && matches[0].cmd === line) matches = [];
     } else if (line === "!") {
-      matches = [
-        { cmd: "!<cmd>", desc: "Run shell command (e.g. !git status)" },
-      ];
+      matches = [{ cmd: "!<cmd>", desc: "Run shell command" }];
     }
 
     this.currentMatches = matches;
     this.inSuggestionMode = matches.length > 0;
     this.selectedSuggestion = -1;
 
-    if (matches.length === 0) return;
-
+    if (matches.length === 0) {
+      this.clearSuggestions();
+      return;
+    }
     this.renderSuggestionList();
   }
 
   private renderSuggestionList(): void {
     this.clearSuggestions();
-
     if (this.currentMatches.length === 0) return;
 
-    const shown = this.currentMatches.slice(0, 8);
-    process.stdout.write("\x1b[s"); // save cursor
+    const shown = this.currentMatches.slice(0, 6);
+    const line = (this.rl as unknown as { line: string }).line || "";
+
+    // Draw suggestions below current line
     for (let i = 0; i < shown.length; i++) {
       const { cmd, desc } = shown[i];
-      process.stdout.write("\n");
       if (i === this.selectedSuggestion) {
-        // Highlighted: white bg, bold text
-        process.stdout.write(
-          `  \x1b[46m\x1b[30m\x1b[1m ${cmd.padEnd(17)}\x1b[22m${desc} \x1b[0m`,
-        );
+        process.stdout.write(`\n  \x1b[46m\x1b[30m\x1b[1m ${cmd.padEnd(17)}\x1b[22m${desc} \x1b[0m\x1b[K`);
       } else {
-        process.stdout.write(
-          `  \x1b[36m ${cmd.padEnd(17)}\x1b[0m\x1b[2m${desc}\x1b[0m`,
-        );
+        process.stdout.write(`\n  \x1b[36m${cmd.padEnd(18)}\x1b[0m\x1b[2m${desc}\x1b[0m\x1b[K`);
       }
     }
     this.suggestionsVisible = shown.length;
-    process.stdout.write("\x1b[u"); // restore cursor
+
+    // Move back up and reposition cursor where readline expects it
+    process.stdout.write(`\x1b[${shown.length}A\r\x1b[${2 + line.length}C`);
   }
 
   private handleSigint(): void {
