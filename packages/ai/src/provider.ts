@@ -13,6 +13,7 @@ export enum ModelProvider {
   ANTHROPIC = "anthropic",
   OPENAI = "openai",
   GOOGLE = "google",
+  OLLAMA = "ollama",
   CUSTOM = "custom",
 }
 
@@ -36,6 +37,7 @@ const DEFAULT_MODELS: Record<string, string> = {
   [ModelProvider.ANTHROPIC]: "claude-sonnet-4-20250514",
   [ModelProvider.OPENAI]: "gpt-4o",
   [ModelProvider.GOOGLE]: "gemini-2.0-flash",
+  [ModelProvider.OLLAMA]: "llama3.1",
 };
 
 const customProviders = new Map<string, CustomProviderConfig>();
@@ -46,7 +48,7 @@ export function registerCustomProvider(config: CustomProviderConfig): void {
 }
 
 export function getRegisteredProviders(): string[] {
-  return [ModelProvider.ANTHROPIC, ModelProvider.OPENAI, ModelProvider.GOOGLE, ...Array.from(customProviders.keys())];
+  return [ModelProvider.ANTHROPIC, ModelProvider.OPENAI, ModelProvider.GOOGLE, ModelProvider.OLLAMA, ...Array.from(customProviders.keys())];
 }
 
 export function getDefaultModel(provider: string): string | undefined {
@@ -58,6 +60,7 @@ export function getApiKeyEnvVar(provider: string): string {
     case ModelProvider.ANTHROPIC: return "ANTHROPIC_API_KEY";
     case ModelProvider.OPENAI: return "OPENAI_API_KEY";
     case ModelProvider.GOOGLE: return "GOOGLE_API_KEY";
+    case ModelProvider.OLLAMA: return "OLLAMA_API_KEY"; // not required, but for consistency
     default: {
       const custom = customProviders.get(provider.toLowerCase());
       return custom?.apiKeyEnvVar || `${provider.toUpperCase()}_API_KEY`;
@@ -95,6 +98,17 @@ export function createModel(config: Partial<ModelConfig> = {}) {
         apiKey: config.apiKey || process.env.GOOGLE_API_KEY,
         temperature,
         maxOutputTokens: maxTokens,
+      });
+
+    case ModelProvider.OLLAMA:
+      return new ChatOpenAI({
+        model: modelName,
+        openAIApiKey: config.apiKey || process.env.OLLAMA_API_KEY || "ollama", // Ollama doesn't require a key
+        temperature,
+        maxTokens,
+        configuration: {
+          baseURL: config.baseURL || "http://localhost:11434/v1",
+        },
       });
 
     default: {

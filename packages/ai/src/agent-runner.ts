@@ -304,9 +304,19 @@ export class AgentRunner {
 
   // ── Parallel Tool Execution (Claude Code approach) ──────
 
-  /** Tools that are safe to run in parallel (read-only, no side effects) */
-  private static readonly PARALLEL_SAFE = new Set([
+  /** Tools that are always safe to run in parallel (read-only, no side effects) */
+  private static readonly ALWAYS_PARALLEL = new Set([
     "file_read", "glob_search", "grep_search", "web_fetch", "web_search", "sub_agent",
+  ]);
+
+  /** Tools that can run in parallel IF they target different files */
+  private static readonly PARALLEL_IF_DIFFERENT_FILES = new Set([
+    "file_write", "file_edit",
+  ]);
+
+  /** Tools that must always run sequentially (side effects, shared state) */
+  private static readonly ALWAYS_SEQUENTIAL = new Set([
+    "shell_exec", "file_run",
   ]);
 
   /** Execute a single tool call with hooks, permissions, and error handling */
@@ -369,10 +379,19 @@ export class AgentRunner {
   }
 
   /**
+   * Get the file path a tool call targets (if any).
+   */
+  private static getTargetFile(tc: { name: string; args: Record<string, unknown> }): string | null {
+    const path = tc.args.file_path || tc.args.path;
+    return typeof path === "string" ? path : null;
+  }
+
+  /**
    * Execute tool calls with smart parallelism:
-   *   - Read-only tools (file_read, grep, glob, web_fetch, sub_agent) → run in parallel
-   *   - Mutating tools (file_write, file_edit, shell_exec) → run sequentially
-   *   - Mixed batch → run all parallel-safe first, then sequential ones in order
+   *
+   *   1. Always-parallel tools (reads, searches, sub_agent) → all run concurrently
+   *   2. File write/edit → parallel IF targeting different files, sequential if same file
+   *   3. Shell/run → always sequential (shared state, side effects)
    *
    * Results are matched to calls by tool_call_id — order doesn't matter.
    */
@@ -380,33 +399,61 @@ export class AgentRunner {
     toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }>,
     callbacks: AgentCallbacks,
   ): Promise<void> {
-    // Single tool call — no need for parallel logic
     if (toolCalls.length === 1) {
       await this.executeSingleTool(toolCalls[0], callbacks);
       return;
     }
 
-    // Split into parallel-safe and sequential
-    const parallel: typeof toolCalls = [];
-    const sequential: typeof toolCalls = [];
+    // Categorize tool calls
+    const alwaysParallel: typeof toolCalls = [];
+    const fileOps: typeof toolCalls = [];
+    const alwaysSequential: typeof toolCalls = [];
 
     for (const tc of toolCalls) {
-      if (AgentRunner.PARALLEL_SAFE.has(tc.name)) {
-        parallel.push(tc);
+      if (AgentRunner.ALWAYS_PARALLEL.has(tc.name)) {
+        alwaysParallel.push(tc);
+      } else if (AgentRunner.PARALLEL_IF_DIFFERENT_FILES.has(tc.name)) {
+        fileOps.push(tc);
       } else {
-        sequential.push(tc);
+        alwaysSequential.push(tc);
       }
     }
 
-    // Run all parallel-safe tools concurrently
-    if (parallel.length > 0) {
-      await Promise.all(
-        parallel.map((tc) => this.executeSingleTool(tc, callbacks))
+    // Group file ops by target file — same file = sequential, different files = parallel
+    const fileGroups = new Map<string, typeof toolCalls>();
+    for (const tc of fileOps) {
+      const file = AgentRunner.getTargetFile(tc) || `__unknown_${tc.id}`;
+      const group = fileGroups.get(file) || [];
+      group.push(tc);
+      fileGroups.set(file, group);
+    }
+
+    // Build parallel batch: all reads + one op per unique file
+    const parallelBatch: Array<Promise<void>> = [];
+
+    // 1. All always-parallel tools run concurrently
+    for (const tc of alwaysParallel) {
+      parallelBatch.push(this.executeSingleTool(tc, callbacks));
+    }
+
+    // 2. File ops: each file group runs its ops sequentially, but different files run in parallel
+    for (const [, group] of fileGroups) {
+      parallelBatch.push(
+        (async () => {
+          for (const tc of group) {
+            await this.executeSingleTool(tc, callbacks);
+          }
+        })()
       );
     }
 
-    // Run mutating tools sequentially (order matters for writes)
-    for (const tc of sequential) {
+    // Run batch 1+2 concurrently
+    if (parallelBatch.length > 0) {
+      await Promise.all(parallelBatch);
+    }
+
+    // 3. Shell/run tools always sequential (after all file ops are done)
+    for (const tc of alwaysSequential) {
       await this.executeSingleTool(tc, callbacks);
     }
   }
