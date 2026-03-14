@@ -6,5 +6,6 @@ export { FileEditTool } from "./tools/file-edit";
 export { GlobSearchTool } from "./tools/glob-search";
 export { GrepSearchTool } from "./tools/grep-search";
 export { ShellExecTool } from "./tools/shell-exec";
+export { FileRunTool } from "./tools/file-run";
 export { PermissionManager, PermissionMode } from "./permissions";
 export type { ToolDefinition, ToolResult } from "./tools/types";

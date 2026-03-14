@@ -13,6 +13,7 @@ import {
   GlobSearchTool,
   GrepSearchTool,
   ShellExecTool,
+  FileRunTool,
 } from "@cdoing/core";
 
 /**
@@ -33,6 +34,9 @@ export function createToolRegistry(workingDir: string): ToolRegistry {
 
   // Shell execution
   registry.register(new ShellExecTool(workingDir));
+
+  // File runner — auto-detects language and runs programs
+  registry.register(new FileRunTool(workingDir));
 
   return registry;
 }
