@@ -288,65 +288,9 @@ export class AgentRunner {
         }));
         fullResponse += fullText;
 
-        // Execute each tool call
-        for (const tc of toolCalls) {
-          callbacks.onToolCall(tc.name, tc.args);
-
-          // Pre-hooks
-          if (this.hookManager) {
-            await this.hookManager.runHooks(`pre:${tc.name}`, {
-              tool_name: tc.name,
-              ...Object.fromEntries(
-                Object.entries(tc.args).map(([k, v]) => [k, String(v)])
-              ),
-            });
-          }
-
-          // Permission check
-          const tool = this.toolRegistry.get(tc.name);
-          if (tool) {
-            const allowed = await this.permissionManager.requestPermission(tool.definition, tc.args);
-            if (!allowed) {
-              this.messages.push(new ToolMessage({ content: "Permission denied by user.", tool_call_id: tc.id }));
-              callbacks.onToolResult(tc.name, "Permission denied", true);
-              continue;
-            }
-          }
-
-          // Execute tool
-          const result = await this.toolRegistry.execute(tc.name, tc.args);
-          let resultText: string;
-
-          if (result.success) {
-            resultText = result.output;
-          } else {
-            // On error: include BOTH the output (stdout/stderr) AND the error message
-            // so the LLM has full context to debug
-            const parts: string[] = [`ERROR: ${result.error}`];
-            if (result.output) {
-              parts.push(`\nFull output:\n${result.output}`);
-            }
-            parts.push(
-              `\n[Auto-debug]: The command/tool failed. Analyze the error output above carefully. ` +
-              `Read the relevant source files if needed, identify the root cause, fix the code, and re-run to verify.`
-            );
-            resultText = parts.join("\n");
-          }
-
-          this.messages.push(new ToolMessage({ content: resultText, tool_call_id: tc.id }));
-          callbacks.onToolResult(tc.name, resultText, !result.success);
-
-          // Post-hooks
-          if (this.hookManager) {
-            await this.hookManager.runHooks(`post:${tc.name}`, {
-              tool_name: tc.name,
-              success: String(result.success),
-              ...Object.fromEntries(
-                Object.entries(tc.args).map(([k, v]) => [k, String(v)])
-              ),
-            });
-          }
-        }
+        // Execute tool calls — parallel for reads, sequential for writes
+        // Claude Code approach: split by safety, run safe tools concurrently
+        await this.executeToolCalls(toolCalls, callbacks);
         // Loop: model sees tool results, decides next step
       }
 
@@ -357,6 +301,117 @@ export class AgentRunner {
 
     return fullResponse;
   }
+
+  // ── Parallel Tool Execution (Claude Code approach) ──────
+
+  /** Tools that are safe to run in parallel (read-only, no side effects) */
+  private static readonly PARALLEL_SAFE = new Set([
+    "file_read", "glob_search", "grep_search", "web_fetch", "web_search", "sub_agent",
+  ]);
+
+  /** Execute a single tool call with hooks, permissions, and error handling */
+  private async executeSingleTool(
+    tc: { id: string; name: string; args: Record<string, unknown> },
+    callbacks: AgentCallbacks,
+  ): Promise<void> {
+    callbacks.onToolCall(tc.name, tc.args);
+
+    // Pre-hooks
+    if (this.hookManager) {
+      await this.hookManager.runHooks(`pre:${tc.name}`, {
+        tool_name: tc.name,
+        ...Object.fromEntries(
+          Object.entries(tc.args).map(([k, v]) => [k, String(v)])
+        ),
+      });
+    }
+
+    // Permission check
+    const tool = this.toolRegistry.get(tc.name);
+    if (tool) {
+      const allowed = await this.permissionManager.requestPermission(tool.definition, tc.args);
+      if (!allowed) {
+        this.messages.push(new ToolMessage({ content: "Permission denied by user.", tool_call_id: tc.id }));
+        callbacks.onToolResult(tc.name, "Permission denied", true);
+        return;
+      }
+    }
+
+    // Execute tool
+    const result = await this.toolRegistry.execute(tc.name, tc.args);
+    let resultText: string;
+
+    if (result.success) {
+      resultText = result.output;
+    } else {
+      const parts: string[] = [`ERROR: ${result.error}`];
+      if (result.output) parts.push(`\nFull output:\n${result.output}`);
+      parts.push(
+        `\n[Auto-debug]: The command/tool failed. Analyze the error output above carefully. ` +
+        `Read the relevant source files if needed, identify the root cause, fix the code, and re-run to verify.`
+      );
+      resultText = parts.join("\n");
+    }
+
+    this.messages.push(new ToolMessage({ content: resultText, tool_call_id: tc.id }));
+    callbacks.onToolResult(tc.name, resultText, !result.success);
+
+    // Post-hooks
+    if (this.hookManager) {
+      await this.hookManager.runHooks(`post:${tc.name}`, {
+        tool_name: tc.name,
+        success: String(result.success),
+        ...Object.fromEntries(
+          Object.entries(tc.args).map(([k, v]) => [k, String(v)])
+        ),
+      });
+    }
+  }
+
+  /**
+   * Execute tool calls with smart parallelism:
+   *   - Read-only tools (file_read, grep, glob, web_fetch, sub_agent) → run in parallel
+   *   - Mutating tools (file_write, file_edit, shell_exec) → run sequentially
+   *   - Mixed batch → run all parallel-safe first, then sequential ones in order
+   *
+   * Results are matched to calls by tool_call_id — order doesn't matter.
+   */
+  private async executeToolCalls(
+    toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }>,
+    callbacks: AgentCallbacks,
+  ): Promise<void> {
+    // Single tool call — no need for parallel logic
+    if (toolCalls.length === 1) {
+      await this.executeSingleTool(toolCalls[0], callbacks);
+      return;
+    }
+
+    // Split into parallel-safe and sequential
+    const parallel: typeof toolCalls = [];
+    const sequential: typeof toolCalls = [];
+
+    for (const tc of toolCalls) {
+      if (AgentRunner.PARALLEL_SAFE.has(tc.name)) {
+        parallel.push(tc);
+      } else {
+        sequential.push(tc);
+      }
+    }
+
+    // Run all parallel-safe tools concurrently
+    if (parallel.length > 0) {
+      await Promise.all(
+        parallel.map((tc) => this.executeSingleTool(tc, callbacks))
+      );
+    }
+
+    // Run mutating tools sequentially (order matters for writes)
+    for (const tc of sequential) {
+      await this.executeSingleTool(tc, callbacks);
+    }
+  }
+
+  // ── Public API ─────────────────────────────────────────
 
   getContextManager(): ContextManager {
     return this.contextManager;
