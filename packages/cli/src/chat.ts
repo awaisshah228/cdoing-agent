@@ -121,6 +121,9 @@ export class ChatInterface {
   /** Whether plan mode is active (read-only tools only) */
   private planModeActive = false;
 
+  /** Stored keypress handler — removed before re-adding to prevent stacking */
+  private keypressHandler: ((_char: string, key: { name?: string }) => void) | null = null;
+
   constructor(
     modelConfig: Partial<ModelConfig>,
     toolRegistry: ToolRegistry,
@@ -244,6 +247,17 @@ export class ChatInterface {
   ];
 
   private createReadline(): void {
+    // Close existing interface before creating a new one to prevent double-echo
+    if (this.rl) {
+      this.rl.close();
+      process.stdin.resume();
+    }
+    // Remove previous keypress handler to prevent stacking
+    if (this.keypressHandler) {
+      process.stdin.removeListener("keypress", this.keypressHandler);
+      this.keypressHandler = null;
+    }
+
     this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
@@ -259,7 +273,7 @@ export class ChatInterface {
     }
 
     // Handle keypress events including ESC and arrow keys for suggestions
-    process.stdin.on("keypress", (_char, key) => {
+    this.keypressHandler = (_char: string, key: { name?: string }) => {
       if (key) {
         // ESC key to cancel current processing
         if (key.name === "escape" && this.isProcessing) {
@@ -310,7 +324,8 @@ export class ChatInterface {
         const line = (this.rl as unknown as { line: string }).line || "";
         this.renderSuggestions(line);
       });
-    });
+    };
+    process.stdin.on("keypress", this.keypressHandler);
   }
 
   /** Cancel current operation with ESC */
