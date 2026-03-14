@@ -48,6 +48,7 @@ export class ChatInterface {
   private permissionManager: PermissionManager;
   private workingDir: string;
   private conversation: Conversation;
+  private lastSigint = 0; // Track double Ctrl+C for force exit
 
   constructor(
     modelConfig: Partial<ModelConfig>,
@@ -71,15 +72,26 @@ export class ChatInterface {
       input: process.stdin,
       output: process.stdout,
     });
+    // Ctrl+C on readline → don't exit, just cancel current input
+    this.rl.on("SIGINT", () => {
+      this.handleSigint();
+    });
+  }
+
+  /** Handle Ctrl+C — double press within 1s force exits */
+  private handleSigint(): void {
+    const now = Date.now();
+    if (now - this.lastSigint < 1000) {
+      // Double Ctrl+C → force exit
+      console.log(chalk.dim("\n  Goodbye!\n"));
+      process.exit(0);
+    }
+    this.lastSigint = now;
+    console.log(chalk.dim("\n  Press Ctrl+C again to exit, or type /exit.\n"));
+    this.promptUser();
   }
 
   async start(): Promise<void> {
-    // Ctrl+C during idle prompt → show hint instead of killing CLI
-    process.on("SIGINT", () => {
-      console.log(chalk.dim("\n  Type /exit to quit, or Ctrl+C twice to force exit.\n"));
-      this.promptUser();
-    });
-
     printWelcome();
     this.promptUser();
   }
@@ -352,14 +364,28 @@ export class ChatInterface {
     this.spinner.start(chalk.dim("  Thinking..."));
     this.rl.close();
 
+    // Ctrl+C during thinking/execution → cancel and return to prompt
+    let cancelled = false;
+    const onSigint = () => {
+      cancelled = true;
+      this.spinner.stop();
+      console.log(chalk.yellow("\n  Cancelled.\n"));
+    };
+    process.once("SIGINT", onSigint);
+
     try {
-      await this.agent.run(message, wrappedCallbacks);
+      if (!cancelled) {
+        await this.agent.run(message, wrappedCallbacks);
+      }
     } catch (error) {
       this.spinner.stop();
-      const msg = error instanceof Error ? error.message : String(error);
-      console.log(chalk.red(`\n  Error: ${msg}\n`));
+      if (!cancelled) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.log(chalk.red(`\n  Error: ${msg}\n`));
+      }
     }
 
+    process.removeListener("SIGINT", onSigint);
     this.createReadline();
   }
 }
