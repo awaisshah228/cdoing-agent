@@ -1,0 +1,24 @@
+{
+  "name": "@cdoing/ai",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@langchain/core": "^0.3.40",
+    "@langchain/anthropic": "^0.3.14",
+    "@langchain/openai": "^0.4.4",
+    "@langchain/google-genai": "^0.2.3",
+    "@cdoing/core": "*",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2"
+  }
+}

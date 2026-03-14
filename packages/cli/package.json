@@ -1,0 +1,28 @@
+{
+  "name": "@cdoing/cli",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "cdoing": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "start": "node dist/index.js",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@cdoing/core": "*",
+    "@cdoing/ai": "*",
+    "chalk": "^4.1.2",
+    "commander": "^13.1.0",
+    "ora": "^5.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2",
+    "ts-node": "^10.9.2"
+  }
+}
