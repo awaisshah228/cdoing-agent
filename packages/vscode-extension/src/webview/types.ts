@@ -23,6 +23,7 @@ export type IncomingMessage =
   | { type: "endResponse" }                                            // Agent done, no more tokens
   | { type: "error"; text: string }                                    // Something went wrong
   | { type: "systemMessage"; text: string }                            // System info (e.g. /help output)
+  | { type: "usageInfo"; text: string }                                // Token usage info after each turn
   | { type: "clear" }                                                  // Clear all messages
   | { type: "configUpdated"; provider: string; model: string }         // Model/provider changed
   | { type: "insertMessage"; message: string };                        // Insert text into the input box

@@ -7,6 +7,7 @@ export { GlobSearchTool } from "./tools/glob-search";
 export { GrepSearchTool } from "./tools/grep-search";
 export { ShellExecTool } from "./tools/shell-exec";
 export { FileRunTool } from "./tools/file-run";
+export { CodeVerifyTool } from "./tools/code-verify";
 export { WebFetchTool } from "./tools/web-fetch";
 export { WebSearchTool } from "./tools/web-search";
 export { SubAgentTool } from "./tools/sub-agent";

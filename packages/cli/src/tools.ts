@@ -11,6 +11,7 @@ import {
   GrepSearchTool,
   ShellExecTool,
   FileRunTool,
+  CodeVerifyTool,
   WebFetchTool,
   WebSearchTool,
   SubAgentTool,
@@ -35,6 +36,7 @@ export function createToolRegistry(
   // Execution tools
   registry.register(new ShellExecTool(workingDir));
   registry.register(new FileRunTool(workingDir));
+  registry.register(new CodeVerifyTool(workingDir));
 
   // Web tools
   registry.register(new WebFetchTool());

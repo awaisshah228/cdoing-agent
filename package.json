@@ -12,6 +12,7 @@
     "clean": "turbo run clean"
   },
   "devDependencies": {
+    "@types/node": "^25.5.0",
     "turbo": "^2.4.4",
     "typescript": "^5.8.2"
   },

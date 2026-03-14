@@ -14,8 +14,13 @@ import {
   GrepSearchTool,
   ShellExecTool,
   FileRunTool,
+  WebFetchTool,
+  WebSearchTool,
   PermissionManager,
   PermissionMode,
+  HookManager,
+  MemoryStore,
+  loadProjectConfig,
 } from "@cdoing/core";
 import {
   AgentRunner,
@@ -31,6 +36,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private agent?: AgentRunner;
   private toolRegistry?: ToolRegistry;
   private permissionManager?: PermissionManager;
+  private hookManager?: HookManager;
+  private memoryStore?: MemoryStore;
   private isProcessing = false;
 
   constructor(private context: vscode.ExtensionContext) {}
@@ -106,11 +113,12 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     return { modelConfig, permMode, provider, model };
   }
 
-  /** Create agent with all 7 tools */
+  /** Create agent with all tools, hooks, memory, and project config */
   private initAgent() {
     const workingDir = this.getWorkingDir();
     const { modelConfig, permMode } = this.getConfig();
 
+    // Tool registry with all tools
     this.toolRegistry = new ToolRegistry();
     this.toolRegistry.register(new FileReadTool(workingDir));
     this.toolRegistry.register(new FileWriteTool(workingDir));
@@ -119,13 +127,28 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     this.toolRegistry.register(new GrepSearchTool(workingDir));
     this.toolRegistry.register(new ShellExecTool(workingDir));
     this.toolRegistry.register(new FileRunTool(workingDir));
+    this.toolRegistry.register(new WebFetchTool());
+    this.toolRegistry.register(new WebSearchTool());
 
-    this.permissionManager = new PermissionManager(permMode);
+    // Permission manager with project dir
+    this.permissionManager = new PermissionManager(permMode, workingDir);
+
+    // Hooks and memory
+    this.hookManager = new HookManager(workingDir);
+    this.memoryStore = this.memoryStore || new MemoryStore();
+
+    // Load project config
+    const projectConfig = loadProjectConfig(workingDir);
 
     this.agent = new AgentRunner(
       modelConfig,
       this.toolRegistry,
-      this.permissionManager
+      this.permissionManager,
+      this.hookManager,
+      {
+        projectConfig: projectConfig || undefined,
+        memory: this.memoryStore.formatForPrompt() || undefined,
+      },
     );
   }
 
@@ -216,6 +239,20 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         this.postMessage({ type: "error", text: error.message });
         this.isProcessing = false;
       },
+      onUsage: (usage) => {
+        const parts: string[] = [];
+        if (usage.inputTokens > 0 || usage.outputTokens > 0) {
+          parts.push(`${usage.inputTokens.toLocaleString()}→${usage.outputTokens.toLocaleString()}`);
+        }
+        parts.push(`${usage.totalTokens.toLocaleString()} tokens`);
+        if (usage.cost !== undefined) {
+          parts.push(`$${usage.cost.toFixed(4)}`);
+        }
+        this.postMessage({
+          type: "usageInfo",
+          text: parts.join(" · "),
+        });
+      },
     };
 
     try {
@@ -249,10 +286,28 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         const { provider, model } = this.getConfig();
         const dir = this.getWorkingDir();
         const permMode = this.permissionManager?.getMode() || "ask";
+        const usage = this.agent?.getContextManager().formatTotalUsage() || "no usage data";
         this.postMessage({
           type: "systemMessage",
-          text: `**Current Configuration:**\n- Provider: ${provider}\n- Model: ${model || "(default)"}\n- Mode: ${permMode}\n- Directory: ${dir}`,
+          text: `**Current Configuration:**\n- Provider: ${provider}\n- Model: ${model || "(default)"}\n- Mode: ${permMode}\n- Directory: ${dir}\n- Usage: ${usage}`,
         });
+        break;
+      }
+
+      case "/usage": {
+        const usage = this.agent?.getContextManager().formatTotalUsage() || "No usage data yet.";
+        this.postMessage({ type: "systemMessage", text: `**Token Usage:** ${usage}` });
+        break;
+      }
+
+      case "/memory": {
+        const memories = this.memoryStore?.getAll() || [];
+        if (memories.length === 0) {
+          this.postMessage({ type: "systemMessage", text: "No stored memories." });
+        } else {
+          const lines = memories.map((m) => `- **${m.key}**: ${m.value}`).join("\n");
+          this.postMessage({ type: "systemMessage", text: `**Stored Memories:**\n${lines}` });
+        }
         break;
       }
 
@@ -268,6 +323,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 - \`/new\` — Start new conversation
 - \`/clear\` — Clear chat history
 - \`/config\` — Show current configuration
+- \`/usage\` — Show token usage and cost
+- \`/memory\` — View stored memories
 - \`/model\` — Change model/provider
 - \`/settings\` — Open extension settings
 
@@ -277,7 +334,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
 **Right-click** on selected code for Explain, Refactor, Fix.
 
-**Tools available:** file_read, file_write, file_edit, glob_search, grep_search, shell_exec, file_run`,
+**Tools available:** file_read, file_write, file_edit, glob_search, grep_search, shell_exec, file_run, web_fetch, web_search`,
         });
         break;
 

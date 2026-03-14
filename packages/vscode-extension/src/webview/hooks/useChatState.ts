@@ -155,6 +155,10 @@ export function useChatState() {
           // Clear all messages (from /clear command or New Chat)
           clearAll();
           break;
+        case "usageInfo":
+          // Token usage info — show as subtle system message
+          addSystemMessage(`📊 ${msg.text}`);
+          break;
         case "configUpdated":
           // Model/provider changed — update the header badge
           setProviderLabel(msg.provider);
