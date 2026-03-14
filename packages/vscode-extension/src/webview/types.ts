@@ -26,7 +26,11 @@ export type IncomingMessage =
   | { type: "usageInfo"; text: string }                                // Token usage info after each turn
   | { type: "clear" }                                                  // Clear all messages
   | { type: "configUpdated"; provider: string; model: string }         // Model/provider changed
-  | { type: "insertMessage"; message: string };                        // Insert text into the input box
+  | { type: "insertMessage"; message: string }                         // Insert text into the input box
+  | { type: "tabCreated"; tabId: string; title: string }               // New tab created
+  | { type: "tabSwitched"; tabId: string }                             // Switched to a tab
+  | { type: "tabClosed"; tabId: string }                               // Tab closed
+  | { type: "tabTitleUpdated"; tabId: string; title: string };         // Tab title changed
 
 // ─── Messages FROM webview TO extension host ───
 
@@ -35,8 +39,11 @@ export type IncomingMessage =
  * Sent via vscode.postMessage().
  */
 export type OutgoingMessage =
-  | { type: "sendMessage"; text: string }                    // User sent a chat message
+  | { type: "sendMessage"; text: string; tabId?: string }    // User sent a chat message
   | { type: "command"; command: string; args?: string[] }    // Slash command (e.g. /clear)
+  | { type: "switchTab"; tabId: string }                     // Switch to a tab
+  | { type: "newTab" }                                       // Create a new tab
+  | { type: "closeTab"; tabId: string }                      // Close a tab
   | { type: "ready" };                                       // Webview loaded, ready for data
 
 // ─── UI Data Types ───

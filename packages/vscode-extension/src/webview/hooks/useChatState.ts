@@ -1,61 +1,85 @@
 /**
- * useChatState.ts — Central Chat State Management
+ * useChatState.ts — Central Chat State Management (Multi-Tab)
  *
- * This hook manages ALL chat state and communication with the extension host.
- * It handles:
- *   - The list of chat entries (messages + tool calls)
- *   - Processing state (is the agent thinking?)
- *   - Message queuing (send while processing)
- *   - Current model/provider labels (shown in the header badge)
- *   - Sending messages to the extension host
- *   - Listening for incoming messages (tokens, tool results, errors)
- *
- * All React components get their state from this hook via ChatPanel.
+ * Each tab has its own entries, streaming ref, and processing state.
+ * Switching tabs preserves history — messages are stored per-tab.
  */
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { ChatEntry, ChatMessage, ToolCallEntry, IncomingMessage } from "../types";
 import { useVsCode } from "./useVsCode";
 
-/** Simple counter for generating unique IDs for each chat entry */
 let idCounter = 0;
 function nextId(): string {
   return `entry-${++idCounter}-${Date.now()}`;
 }
 
+export interface Tab {
+  id: string;
+  title: string;
+}
+
+/** Per-tab stored state */
+interface TabData {
+  entries: ChatEntry[];
+  streamingId: string | null;
+}
+
 export function useChatState() {
   const vscode = useVsCode();
 
-  // All entries shown in the message list (messages, tool calls, tool results)
+  // Tab management
+  const [tabs, setTabs] = useState<Tab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+
+  // Per-tab entries stored in a ref (avoids re-renders when switching)
+  const tabDataRef = useRef<Map<string, TabData>>(new Map());
+
+  // Current tab's entries (copied on switch for React rendering)
   const [entries, setEntries] = useState<ChatEntry[]>([]);
-  // True while the agent is processing (shows typing indicator, but input stays enabled)
   const [isProcessing, setIsProcessing] = useState(false);
-  // Number of messages waiting in queue
   const [queueCount, setQueueCount] = useState(0);
-  // Current model and provider names (displayed in the header badge)
   const [modelLabel, setModelLabel] = useState("anthropic");
   const [providerLabel, setProviderLabel] = useState("anthropic");
 
-  // Ref to track the ID of the currently streaming assistant message.
-  // When tokens arrive, we append them to this message instead of creating a new one.
   const streamingRef = useRef<string | null>(null);
 
-  /**
-   * Appends a token to the current streaming assistant message.
-   * If no streaming message exists yet, creates one.
-   * This is called rapidly as the LLM streams its response token by token.
-   */
+  /** Get or create tab data */
+  const getTabData = useCallback((tabId: string): TabData => {
+    let data = tabDataRef.current.get(tabId);
+    if (!data) {
+      data = { entries: [], streamingId: null };
+      tabDataRef.current.set(tabId, data);
+    }
+    return data;
+  }, []);
+
+  /** Save current entries to active tab's data */
+  const saveCurrentTab = useCallback(() => {
+    if (activeTabId) {
+      const data = getTabData(activeTabId);
+      // We read entries from the latest state via a ref trick
+      data.streamingId = streamingRef.current;
+    }
+  }, [activeTabId, getTabData]);
+
+  // Keep tab data in sync with React state
+  useEffect(() => {
+    if (activeTabId) {
+      const data = getTabData(activeTabId);
+      data.entries = entries;
+    }
+  }, [entries, activeTabId, getTabData]);
+
   const appendToken = useCallback((token: string) => {
     setEntries((prev) => {
       if (streamingRef.current) {
-        // Append to the existing streaming message
         return prev.map((e) =>
           e.id === streamingRef.current
             ? { ...e, content: (e as ChatMessage).content + token }
             : e
         );
       }
-      // First token — create a new assistant message
       const id = nextId();
       streamingRef.current = id;
       const msg: ChatMessage = { id, role: "assistant", content: token };
@@ -63,41 +87,32 @@ export function useChatState() {
     });
   }, []);
 
-  /** Adds a user message bubble to the list */
   const addUserMessage = useCallback((text: string) => {
     const msg: ChatMessage = { id: nextId(), role: "user", content: text };
     setEntries((prev) => [...prev, msg]);
   }, []);
 
-  /** Adds a system or error message to the list */
   const addSystemMessage = useCallback((text: string, role: "system" | "error" = "system") => {
     const msg: ChatMessage = { id: nextId(), role, content: text };
     setEntries((prev) => [...prev, msg]);
   }, []);
 
-  /** Adds a "tool invoked" entry (shown when the agent calls a tool like file_read) */
   const addToolCall = useCallback((name: string, input: string) => {
     const entry: ToolCallEntry = { id: nextId(), kind: "call", name, detail: input };
     setEntries((prev) => [...prev, entry]);
   }, []);
 
-  /** Adds a "tool finished" entry (shown after a tool returns its result) */
   const addToolResult = useCallback((name: string, result: string, isError: boolean) => {
     const entry: ToolCallEntry = { id: nextId(), kind: "result", name, detail: result, isError };
     setEntries((prev) => [...prev, entry]);
   }, []);
 
-  /** Clears the entire chat history */
   const clearAll = useCallback(() => {
     setEntries([]);
     streamingRef.current = null;
     setQueueCount(0);
   }, []);
 
-  /**
-   * Sends a user message to the extension host.
-   * Always adds to UI immediately. If processing, message gets queued on the host side.
-   */
   const sendMessage = useCallback(
     (text: string) => {
       if (!text.trim()) return;
@@ -107,7 +122,6 @@ export function useChatState() {
     [addUserMessage, vscode]
   );
 
-  /** Sends a slash command to the extension host (e.g. /model, /clear) */
   const sendCommand = useCallback(
     (command: string) => {
       vscode.postMessage({ type: "command", command });
@@ -115,7 +129,23 @@ export function useChatState() {
     [vscode]
   );
 
-  // ─── Listen for messages FROM the extension host ───
+  // Tab actions
+  const createNewTab = useCallback(() => {
+    vscode.postMessage({ type: "newTab" });
+  }, [vscode]);
+
+  const switchToTab = useCallback((tabId: string) => {
+    // Save current tab data before switching
+    saveCurrentTab();
+    vscode.postMessage({ type: "switchTab", tabId });
+  }, [vscode, saveCurrentTab]);
+
+  const closeTab = useCallback((tabId: string) => {
+    tabDataRef.current.delete(tabId);
+    vscode.postMessage({ type: "closeTab", tabId });
+  }, [vscode]);
+
+  // Listen for messages
   useEffect(() => {
     function handler(event: MessageEvent<IncomingMessage>) {
       const msg = event.data;
@@ -155,9 +185,41 @@ export function useChatState() {
           setProviderLabel(msg.provider);
           setModelLabel(msg.model || msg.provider);
           break;
+
+        // Tab messages
+        case "tabCreated":
+          setTabs((prev) => {
+            // Don't add duplicates
+            if (prev.some((t) => t.id === msg.tabId)) return prev;
+            return [...prev, { id: msg.tabId, title: msg.title }];
+          });
+          break;
+        case "tabSwitched": {
+          // Save current tab data
+          setEntries((currentEntries) => {
+            if (activeTabId) {
+              const data = getTabData(activeTabId);
+              data.entries = currentEntries;
+              data.streamingId = streamingRef.current;
+            }
+            // Load new tab data
+            const newData = getTabData(msg.tabId);
+            streamingRef.current = newData.streamingId;
+            return newData.entries;
+          });
+          setActiveTabId(msg.tabId);
+          setIsProcessing(false);
+          break;
+        }
+        case "tabClosed":
+          setTabs((prev) => prev.filter((t) => t.id !== msg.tabId));
+          tabDataRef.current.delete(msg.tabId);
+          break;
+        case "tabTitleUpdated":
+          setTabs((prev) => prev.map((t) => t.id === msg.tabId ? { ...t, title: msg.title } : t));
+          break;
       }
 
-      // Update queue count from any message that includes it
       if ("queueCount" in msg && typeof (msg as any).queueCount === "number") {
         setQueueCount((msg as any).queueCount);
       }
@@ -165,21 +227,27 @@ export function useChatState() {
 
     window.addEventListener("message", handler);
     return () => window.removeEventListener("message", handler);
-  }, [appendToken, addToolCall, addToolResult, addSystemMessage, clearAll]);
+  }, [activeTabId, appendToken, addToolCall, addToolResult, addSystemMessage, clearAll, getTabData]);
 
-  // On mount, tell the extension host we're ready to receive messages
   useEffect(() => {
     vscode.postMessage({ type: "ready" });
   }, [vscode]);
 
   return {
-    entries,        // All chat entries to render
-    isProcessing,   // Whether the agent is currently working
-    queueCount,     // Number of queued messages
-    modelLabel,     // Current model name (for header badge)
-    providerLabel,  // Current provider name
-    sendMessage,    // Function to send a user message (always works, queues if busy)
-    sendCommand,    // Function to send a slash command
-    clearAll,       // Function to clear chat
+    // Tab state
+    tabs,
+    activeTabId,
+    createNewTab,
+    switchToTab,
+    closeTab,
+    // Chat state
+    entries,
+    isProcessing,
+    queueCount,
+    modelLabel,
+    providerLabel,
+    sendMessage,
+    sendCommand,
+    clearAll,
   };
 }

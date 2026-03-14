@@ -1,6 +1,7 @@
 /**
  * chat-panel-provider.ts — Bridge between Webview and Agent
  *
+ * Supports multiple chat tabs, each with its own AgentRunner and history.
  * React Webview (browser) <--postMessage()--> Extension Host (Node.js) --> @cdoing/ai --> @cdoing/core
  */
 
@@ -34,17 +35,40 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 
+/** Per-tab conversation state */
+interface TabState {
+  id: string;
+  title: string;
+  agent: AgentRunner;
+  isProcessing: boolean;
+  messageQueue: string[];
+}
+
 export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
-  private agent?: AgentRunner;
   private toolRegistry?: ToolRegistry;
   private permissionManager?: PermissionManager;
   private hookManager?: HookManager;
   private memoryStore?: MemoryStore;
-  private isProcessing = false;
-  private messageQueue: string[] = [];
+
+  // Multi-tab state
+  private tabs = new Map<string, TabState>();
+  private activeTabId: string | null = null;
+  private nextTabNum = 1;
 
   constructor(private context: vscode.ExtensionContext) {}
+
+  // ── Helpers ─────────────────────────────────────────────
+
+  private getTab(id?: string): TabState | undefined {
+    return this.tabs.get(id || this.activeTabId || "");
+  }
+
+  private generateTabId(): string {
+    return `tab-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  }
+
+  // ── Webview Setup ──────────────────────────────────────
 
   resolveWebviewView(
     webviewView: vscode.WebviewView,
@@ -68,20 +92,115 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         case "command":
           await this.handleCommand(message.command, message.args);
           break;
+        case "newTab":
+          this.createTab();
+          break;
+        case "switchTab":
+          this.switchTab(message.tabId);
+          break;
+        case "closeTab":
+          this.closeTab(message.tabId);
+          break;
         case "ready":
           this.sendCurrentConfig();
+          // Create first tab on ready
+          if (this.tabs.size === 0) {
+            this.createTab();
+          } else {
+            // Restore tab list
+            this.sendAllTabs();
+          }
           break;
       }
     });
 
     try {
-      this.initAgent();
+      this.initSharedServices();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error("[Cdoing] initAgent error:", msg);
+      console.error("[Cdoing] init error:", msg);
       this.postMessage({ type: "error", text: `Init error: ${msg}` });
     }
   }
+
+  // ── Tab Management ─────────────────────────────────────
+
+  /** Create a new tab with its own AgentRunner */
+  createTab(title?: string): string {
+    const id = this.generateTabId();
+    const tabTitle = title || `Chat ${this.nextTabNum++}`;
+    const agent = this.createAgentRunner();
+
+    const tab: TabState = {
+      id,
+      title: tabTitle,
+      agent,
+      isProcessing: false,
+      messageQueue: [],
+    };
+
+    this.tabs.set(id, tab);
+    this.activeTabId = id;
+
+    this.postMessage({ type: "tabCreated", tabId: id, title: tabTitle });
+    this.postMessage({ type: "tabSwitched", tabId: id });
+    this.postMessage({ type: "clear" });
+
+    return id;
+  }
+
+  /** Switch to an existing tab */
+  private switchTab(tabId: string) {
+    const tab = this.tabs.get(tabId);
+    if (!tab) return;
+
+    this.activeTabId = tabId;
+    this.postMessage({ type: "tabSwitched", tabId });
+    // Clear webview and let it restore from its own state
+    this.postMessage({ type: "clear" });
+    // Tell webview if this tab is currently processing
+    if (tab.isProcessing) {
+      this.postMessage({ type: "startResponse" });
+    }
+  }
+
+  /** Close a tab */
+  private closeTab(tabId: string) {
+    this.tabs.delete(tabId);
+    this.postMessage({ type: "tabClosed", tabId });
+
+    // If we closed the active tab, switch to another
+    if (this.activeTabId === tabId) {
+      const remaining = Array.from(this.tabs.keys());
+      if (remaining.length > 0) {
+        this.switchTab(remaining[remaining.length - 1]);
+      } else {
+        // No tabs left — create a new one
+        this.createTab();
+      }
+    }
+  }
+
+  /** Send all existing tabs to webview (on reconnect) */
+  private sendAllTabs() {
+    for (const tab of this.tabs.values()) {
+      this.postMessage({ type: "tabCreated", tabId: tab.id, title: tab.title });
+    }
+    if (this.activeTabId) {
+      this.postMessage({ type: "tabSwitched", tabId: this.activeTabId });
+    }
+  }
+
+  /** Update a tab's title (e.g., from first user message) */
+  private updateTabTitle(tabId: string, title: string) {
+    const tab = this.tabs.get(tabId);
+    if (tab) {
+      tab.title = title;
+      this.postMessage({ type: "tabTitleUpdated", tabId, title });
+    }
+  }
+
+  // ── Config ─────────────────────────────────────────────
 
   private getConfig(): {
     modelConfig: Partial<ModelConfig>;
@@ -123,12 +242,14 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     return { modelConfig, permMode, provider, model };
   }
 
-  /** Create agent with all tools, hooks, memory, and project config */
-  private initAgent() {
+  // ── Agent Initialization ───────────────────────────────
+
+  /** Initialize shared services (tool registry, permissions, hooks, memory) */
+  private initSharedServices() {
     const workingDir = this.getWorkingDir();
     const { modelConfig, permMode, provider } = this.getConfig();
 
-    // Ensure API key is available in process.env (VS Code doesn't inherit shell env)
+    // Ensure API key is available
     if (!modelConfig.apiKey) {
       const envVar = getApiKeyEnvVar(provider);
       if (!process.env[envVar]) {
@@ -139,7 +260,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       }
     }
 
-    // Tool registry with all tools
+    // Tool registry
     this.toolRegistry = new ToolRegistry();
     this.toolRegistry.register(new FileReadTool(workingDir));
     this.toolRegistry.register(new FileWriteTool(workingDir));
@@ -151,40 +272,45 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     this.toolRegistry.register(new WebFetchTool());
     this.toolRegistry.register(new WebSearchTool());
 
-    // Permission manager with VS Code prompt UI
+    // Permission manager with VS Code UI prompt
     this.permissionManager = new PermissionManager(permMode, workingDir);
-    this.permissionManager.setPromptFn(async (toolName, message, hasProject) => {
+    this.permissionManager.setPromptFn(async (_toolName, message, hasProject) => {
       const items = ["Allow Once", "Always Allow"];
       if (hasProject) items.push("Allow for Project");
       items.push("Deny");
 
-      const choice = await vscode.window.showInformationMessage(
-        `⚡ ${message}`,
-        ...items
-      );
+      const choice = await vscode.window.showInformationMessage(`⚡ ${message}`, ...items);
 
       if (choice === "Always Allow") return "always";
       if (choice === "Allow for Project") return "project";
       if (choice === "Deny") return "deny";
       if (choice === "Allow Once") return "allow";
-      return "deny"; // dismissed = deny
+      return "deny";
     });
 
     // Hooks and memory
     this.hookManager = new HookManager(workingDir);
     this.memoryStore = this.memoryStore || new MemoryStore();
+  }
 
-    // Load project config
+  /** Create a new AgentRunner instance (one per tab) */
+  private createAgentRunner(): AgentRunner {
+    if (!this.toolRegistry || !this.permissionManager) {
+      this.initSharedServices();
+    }
+
+    const { modelConfig } = this.getConfig();
+    const workingDir = this.getWorkingDir();
     const projectConfig = loadProjectConfig(workingDir);
 
-    this.agent = new AgentRunner(
+    return new AgentRunner(
       modelConfig,
-      this.toolRegistry,
-      this.permissionManager,
-      this.hookManager,
+      this.toolRegistry!,
+      this.permissionManager!,
+      this.hookManager || undefined,
       {
         projectConfig: projectConfig || undefined,
-        memory: this.memoryStore.formatForPrompt() || undefined,
+        memory: this.memoryStore?.formatForPrompt() || undefined,
       },
     );
   }
@@ -202,30 +328,24 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         const data = JSON.parse(fs.readFileSync(configPath, "utf-8"));
         const envVar = getApiKeyEnvVar(provider);
         const p = provider.toLowerCase();
-        // Check all possible locations:
-        // { apiKeys: { anthropic: "..." } }
-        // { ANTHROPIC_API_KEY: "..." }
-        // { apiKey: "..." }
-        // { anthropic: { apiKey: "..." } }
-        return data?.apiKeys?.[p]
-          || data?.[envVar]
-          || data?.apiKey
-          || data?.[p]?.apiKey
-          || null;
+        return data?.apiKeys?.[p] || data?.[envVar] || data?.apiKey || data?.[p]?.apiKey || null;
       }
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
     return null;
   }
 
   refreshConfig() {
-    this.initAgent();
+    this.initSharedServices();
+    // Rebuild agents for all tabs
+    for (const tab of this.tabs.values()) {
+      tab.agent = this.createAgentRunner();
+    }
     this.sendCurrentConfig();
   }
 
   clearHistory() {
-    this.agent?.clearHistory();
+    const tab = this.getTab();
+    tab?.agent.clearHistory();
   }
 
   postMessage(message: any) {
@@ -235,134 +355,133 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private sendCurrentConfig() {
     const { provider, model } = this.getConfig();
     const displayModel = model || getDefaultModel(provider) || provider;
-    this.postMessage({
-      type: "configUpdated",
-      provider,
-      model: displayModel,
-    });
+    this.postMessage({ type: "configUpdated", provider, model: displayModel });
   }
+
+  // ── Message Handling ───────────────────────────────────
 
   /** Handle user messages — slash commands or agent messages */
   private async handleUserMessage(text: string) {
-    // Slash commands always run immediately
     if (text.startsWith("/")) {
       const [cmd, ...args] = text.split(" ");
       await this.handleCommand(cmd, args);
       return;
     }
 
-    // If already processing, queue the message
-    if (this.isProcessing) {
-      this.messageQueue.push(text);
-      this.postMessage({
-        type: "systemMessage",
-        text: `📬 Message queued (${this.messageQueue.length} in queue)`,
-        queueCount: this.messageQueue.length,
-      } as any);
+    const tab = this.getTab();
+    if (!tab) {
+      this.createTab();
+      // Retry after tab is created
+      setTimeout(() => this.handleUserMessage(text), 50);
       return;
     }
 
-    this.isProcessing = true;
+    // Update tab title from first message
+    if (tab.title.startsWith("Chat ")) {
+      const title = text.length > 30 ? text.substring(0, 27) + "..." : text;
+      this.updateTabTitle(tab.id, title);
+    }
+
+    // Queue if tab is busy
+    if (tab.isProcessing) {
+      tab.messageQueue.push(text);
+      this.postMessage({
+        type: "systemMessage",
+        text: `📬 Message queued (${tab.messageQueue.length} in queue)`,
+      });
+      return;
+    }
+
+    tab.isProcessing = true;
     this.postMessage({ type: "startResponse" });
 
-    // Try to load API key from ~/.cdoing/config.json if not in settings or env
+    // Ensure API key
     const { provider, modelConfig } = this.getConfig();
     if (!modelConfig.apiKey) {
       const envVar = getApiKeyEnvVar(provider);
       if (!process.env[envVar]) {
-        // Check ~/.cdoing/config.json
         const storedKey = this.loadApiKeyFromConfig(provider);
-        if (storedKey) {
-          process.env[envVar] = storedKey;
-        }
+        if (storedKey) process.env[envVar] = storedKey;
       }
     }
 
-    if (!this.agent) {
-      try {
-        this.initAgent();
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        this.postMessage({ type: "error", text: `Failed to initialize agent: ${msg}` });
-        this.isProcessing = false;
-        return;
-      }
-    }
+    const tabId = tab.id; // capture for callbacks (tab might change)
 
     const callbacks: AgentCallbacks = {
       onToken: (token) => {
-        this.postMessage({ type: "token", text: token });
+        if (this.activeTabId === tabId) this.postMessage({ type: "token", text: token });
       },
       onToolCall: (name, input) => {
-        this.postMessage({
-          type: "toolCall",
-          name,
-          input: JSON.stringify(input).substring(0, 200),
-        });
+        if (this.activeTabId === tabId) {
+          this.postMessage({ type: "toolCall", name, input: JSON.stringify(input).substring(0, 200) });
+        }
       },
       onToolResult: (name, result, isError) => {
-        this.postMessage({
-          type: "toolResult",
-          name,
-          result: result.substring(0, 500),
-          isError,
-        });
+        if (this.activeTabId === tabId) {
+          this.postMessage({ type: "toolResult", name, result: result.substring(0, 500), isError });
+        }
       },
       onComplete: () => {
-        this.postMessage({ type: "endResponse" });
-        this.isProcessing = false;
-        this.processQueue();
+        const t = this.tabs.get(tabId);
+        if (t) {
+          t.isProcessing = false;
+          if (this.activeTabId === tabId) this.postMessage({ type: "endResponse" });
+          this.processTabQueue(tabId);
+        }
       },
       onError: (error) => {
-        this.postMessage({ type: "error", text: error.message });
-        this.isProcessing = false;
-        this.processQueue();
+        const t = this.tabs.get(tabId);
+        if (t) {
+          t.isProcessing = false;
+          if (this.activeTabId === tabId) this.postMessage({ type: "error", text: error.message });
+          this.processTabQueue(tabId);
+        }
       },
       onUsage: (usage) => {
-        const parts: string[] = [];
-        if (usage.inputTokens > 0 || usage.outputTokens > 0) {
-          parts.push(`${usage.inputTokens.toLocaleString()}→${usage.outputTokens.toLocaleString()}`);
+        if (this.activeTabId === tabId) {
+          const parts: string[] = [];
+          if (usage.inputTokens > 0 || usage.outputTokens > 0) {
+            parts.push(`${usage.inputTokens.toLocaleString()}→${usage.outputTokens.toLocaleString()}`);
+          }
+          parts.push(`${usage.totalTokens.toLocaleString()} tokens`);
+          if (usage.cost !== undefined) parts.push(`$${usage.cost.toFixed(4)}`);
+          this.postMessage({ type: "usageInfo", text: parts.join(" · ") });
         }
-        parts.push(`${usage.totalTokens.toLocaleString()} tokens`);
-        if (usage.cost !== undefined) {
-          parts.push(`$${usage.cost.toFixed(4)}`);
-        }
-        this.postMessage({
-          type: "usageInfo",
-          text: parts.join(" · "),
-        });
       },
     };
 
     try {
-      await this.agent!.run(text, callbacks);
+      await tab.agent.run(text, callbacks);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.postMessage({ type: "error", text: msg });
-      this.isProcessing = false;
-      this.processQueue();
+      tab.isProcessing = false;
+      if (this.activeTabId === tabId) this.postMessage({ type: "error", text: msg });
+      this.processTabQueue(tabId);
     }
   }
 
-  /** Process the next message in the queue */
-  private processQueue() {
-    if (this.messageQueue.length === 0) return;
-    const next = this.messageQueue.shift()!;
-    // Small delay so the UI can update
+  /** Process the next queued message for a specific tab */
+  private processTabQueue(tabId: string) {
+    const tab = this.tabs.get(tabId);
+    if (!tab || tab.messageQueue.length === 0) return;
+    const next = tab.messageQueue.shift()!;
     setTimeout(() => {
-      this.handleUserMessage(next);
+      // Only process if this tab is still active
+      if (this.activeTabId === tabId) {
+        this.handleUserMessage(next);
+      }
     }, 100);
   }
 
-  // ── Conversation History ─────────────────────────────────
+  // ── Conversation History ───────────────────────────────
 
   private readonly convDir = path.join(os.homedir(), ".cdoing", "conversations");
 
-  private listConversations(): Array<{ id: string; title: string; updatedAt: number; msgCount: number; provider: string; model: string }> {
+  private listConversations(): Array<{ id: string; title: string; updatedAt: number; msgCount: number }> {
     try {
       if (!fs.existsSync(this.convDir)) return [];
       const files = fs.readdirSync(this.convDir).filter((f) => f.endsWith(".json"));
-      const results: Array<{ id: string; title: string; updatedAt: number; msgCount: number; provider: string; model: string }> = [];
+      const results: Array<{ id: string; title: string; updatedAt: number; msgCount: number }> = [];
       for (const file of files) {
         try {
           const data = JSON.parse(fs.readFileSync(path.join(this.convDir, file), "utf-8"));
@@ -371,10 +490,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
             title: data.title || "Untitled",
             updatedAt: data.updatedAt || 0,
             msgCount: (data.messages || []).filter((m: any) => m.role === "user").length,
-            provider: data.provider || "",
-            model: data.model || "",
           });
-        } catch {}
+        } catch { /* skip */ }
       }
       return results.sort((a, b) => b.updatedAt - a.updatedAt);
     } catch { return []; }
@@ -384,7 +501,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     try {
       const filePath = path.join(this.convDir, `${id}.json`);
       if (fs.existsSync(filePath)) return JSON.parse(fs.readFileSync(filePath, "utf-8"));
-    } catch {}
+    } catch { /* skip */ }
     return null;
   }
 
@@ -392,27 +509,24 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     try {
       const filePath = path.join(this.convDir, `${id}.json`);
       if (fs.existsSync(filePath)) { fs.unlinkSync(filePath); return true; }
-    } catch {}
+    } catch { /* skip */ }
     return false;
   }
 
   // ── Slash Commands ─────────────────────────────────────
 
-  /** Handle slash commands — all CLI commands supported */
   private async handleCommand(cmd: string, args?: string[]) {
     const arg = (args || []).join(" ").trim();
+    const tab = this.getTab();
 
     switch (cmd) {
-      // ── Conversation management ──
       case "/clear":
         this.clearHistory();
         this.postMessage({ type: "clear" });
         break;
 
       case "/new":
-        this.clearHistory();
-        this.postMessage({ type: "clear" });
-        this.postMessage({ type: "systemMessage", text: "New conversation started." });
+        this.createTab();
         break;
 
       case "/history": {
@@ -424,62 +538,40 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
             const date = new Date(c.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
             return `- \`${c.id}\` — ${c.title} *(${date}, ${c.msgCount} msgs)*`;
           }).join("\n");
-          this.postMessage({ type: "systemMessage", text: `**Conversations:**\n${lines}\n\nUse \`/resume <id>\` to continue, \`/delete <id>\` to remove.` });
+          this.postMessage({ type: "systemMessage", text: `**Conversations:**\n${lines}\n\nUse \`/resume <id>\` to continue.` });
         }
         break;
       }
 
       case "/resume": {
-        if (!arg) {
-          this.postMessage({ type: "systemMessage", text: "Usage: `/resume <id>` — use `/history` to see IDs." });
-          break;
-        }
+        if (!arg) { this.postMessage({ type: "systemMessage", text: "Usage: `/resume <id>`" }); break; }
         const conv = this.loadConversation(arg);
-        if (!conv) {
-          this.postMessage({ type: "systemMessage", text: `Conversation not found: ${arg}` });
-          break;
-        }
-        this.clearHistory();
-        this.postMessage({ type: "clear" });
-        // Replay messages into agent history
-        for (const msg of (conv.messages || [])) {
-          if (msg.role === "user") this.agent?.addToHistory("user", msg.content);
-          else if (msg.role === "assistant") this.agent?.addToHistory("assistant", msg.content);
-        }
-        this.postMessage({ type: "systemMessage", text: `Resumed: **${conv.title}** (${conv.messages?.length || 0} messages loaded)` });
-        // Show recent messages in chat
-        const recent = (conv.messages || []).slice(-6);
-        for (const msg of recent) {
-          if (msg.role === "user") {
-            this.postMessage({ type: "insertMessage", message: "" }); // dummy
-            this.postMessage({ type: "systemMessage", text: `**You:** ${msg.content.substring(0, 200)}` });
-          } else if (msg.role === "assistant") {
-            this.postMessage({ type: "systemMessage", text: `**Assistant:** ${msg.content.substring(0, 300)}` });
+        if (!conv) { this.postMessage({ type: "systemMessage", text: `Not found: ${arg}` }); break; }
+        // Create new tab for resumed conversation
+        const tabId = this.createTab(conv.title || "Resumed");
+        const resumedTab = this.tabs.get(tabId);
+        if (resumedTab) {
+          for (const msg of (conv.messages || [])) {
+            if (msg.role === "user") resumedTab.agent.addToHistory("user", msg.content);
+            else if (msg.role === "assistant") resumedTab.agent.addToHistory("assistant", msg.content);
           }
         }
+        this.postMessage({ type: "systemMessage", text: `Resumed: **${conv.title}** (${conv.messages?.length || 0} messages)` });
         break;
       }
 
       case "/delete": {
-        if (!arg) {
-          this.postMessage({ type: "systemMessage", text: "Usage: `/delete <id>` — use `/history` to see IDs." });
-          break;
-        }
-        if (this.deleteConversation(arg)) {
-          this.postMessage({ type: "systemMessage", text: `Deleted conversation: ${arg}` });
-        } else {
-          this.postMessage({ type: "systemMessage", text: `Conversation not found: ${arg}` });
-        }
+        if (!arg) { this.postMessage({ type: "systemMessage", text: "Usage: `/delete <id>`" }); break; }
+        this.postMessage({ type: "systemMessage", text: this.deleteConversation(arg) ? `Deleted: ${arg}` : `Not found: ${arg}` });
         break;
       }
 
-      // ── Model / Provider ──
       case "/model": {
         if (arg) {
           const config = vscode.workspace.getConfiguration("cdoing");
           await config.update("model", arg, vscode.ConfigurationTarget.Global);
           this.refreshConfig();
-          this.postMessage({ type: "systemMessage", text: `Model switched to: **${arg}**` });
+          this.postMessage({ type: "systemMessage", text: `Model: **${arg}**` });
         } else {
           vscode.commands.executeCommand("cdoing.selectModel");
         }
@@ -489,22 +581,20 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       case "/provider": {
         if (!arg) {
           const { provider } = this.getConfig();
-          this.postMessage({ type: "systemMessage", text: `Current provider: **${provider}**\nUsage: \`/provider <name>\` (anthropic, openai, google)` });
+          this.postMessage({ type: "systemMessage", text: `Provider: **${provider}**\nUsage: \`/provider <name>\`` });
           break;
         }
         const config = vscode.workspace.getConfiguration("cdoing");
         await config.update("provider", arg.toLowerCase(), vscode.ConfigurationTarget.Global);
         await config.update("model", "", vscode.ConfigurationTarget.Global);
         this.refreshConfig();
-        this.postMessage({ type: "systemMessage", text: `Provider switched to: **${arg}**` });
+        this.postMessage({ type: "systemMessage", text: `Provider: **${arg}**` });
         break;
       }
 
-      // ── Permission mode ──
       case "/mode": {
         if (!arg) {
-          const mode = this.permissionManager?.getMode() || "ask";
-          this.postMessage({ type: "systemMessage", text: `Current mode: **${mode}**\nUsage: \`/mode <mode>\` (ask, auto-edit, auto)` });
+          this.postMessage({ type: "systemMessage", text: `Mode: **${this.permissionManager?.getMode() || "ask"}**\nUsage: \`/mode <mode>\`` });
           break;
         }
         let newMode: PermissionMode;
@@ -514,199 +604,126 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           default: newMode = PermissionMode.ASK;
         }
         this.permissionManager?.setMode(newMode);
-        const config2 = vscode.workspace.getConfiguration("cdoing");
-        await config2.update("permissionMode", arg.toLowerCase(), vscode.ConfigurationTarget.Global);
-        this.postMessage({ type: "systemMessage", text: `Permission mode: **${arg}**` });
+        this.postMessage({ type: "systemMessage", text: `Mode: **${arg}**` });
         break;
       }
 
-      // ── Permissions ──
       case "/permissions": {
-        if (arg === "clear") {
-          this.permissionManager?.removeRule();
-          this.postMessage({ type: "systemMessage", text: "All stored permissions cleared." });
-          break;
-        }
-        if (arg === "clear-global") {
-          this.permissionManager?.removeRule(undefined, "global");
-          this.postMessage({ type: "systemMessage", text: "Global permissions cleared." });
-          break;
-        }
-        if (arg === "clear-project") {
-          this.permissionManager?.removeRule(undefined, "project");
-          this.postMessage({ type: "systemMessage", text: "Project permissions cleared." });
-          break;
-        }
-        if (arg && !arg.startsWith("clear")) {
-          this.permissionManager?.removeRule(arg);
-          this.postMessage({ type: "systemMessage", text: `Permissions cleared for: ${arg}` });
-          break;
-        }
+        if (arg === "clear") { this.permissionManager?.removeRule(); this.postMessage({ type: "systemMessage", text: "Permissions cleared." }); break; }
+        if (arg === "clear-global") { this.permissionManager?.removeRule(undefined, "global"); this.postMessage({ type: "systemMessage", text: "Global permissions cleared." }); break; }
+        if (arg === "clear-project") { this.permissionManager?.removeRule(undefined, "project"); this.postMessage({ type: "systemMessage", text: "Project permissions cleared." }); break; }
+        if (arg && !arg.startsWith("clear")) { this.permissionManager?.removeRule(arg); this.postMessage({ type: "systemMessage", text: `Cleared: ${arg}` }); break; }
         const { global: gRules, project: pRules } = this.permissionManager?.getStoredRules() || { global: [], project: [] };
-        if (gRules.length === 0 && pRules.length === 0) {
-          this.postMessage({ type: "systemMessage", text: "No stored permissions.\nWhen prompted, choose **Always Allow** or **Allow for Project** to save permissions." });
-          break;
-        }
-        let permText = "";
-        if (gRules.length > 0) {
-          permText += "**Global permissions:**\n" + gRules.map((r) => `- ✓ ${r.tool.replace(/_/g, " ")}${r.inputMatch ? ` (${r.inputMatch})` : " (all)"}`).join("\n") + "\n\n";
-        }
-        if (pRules.length > 0) {
-          permText += "**Project permissions:**\n" + pRules.map((r) => `- ✓ ${r.tool.replace(/_/g, " ")}${r.inputMatch ? ` (${r.inputMatch})` : " (all)"}`).join("\n") + "\n\n";
-        }
-        permText += "`/permissions clear` — remove all\n`/permissions <tool>` — remove specific";
-        this.postMessage({ type: "systemMessage", text: permText });
+        if (gRules.length === 0 && pRules.length === 0) { this.postMessage({ type: "systemMessage", text: "No stored permissions." }); break; }
+        let t = "";
+        if (gRules.length > 0) t += "**Global:**\n" + gRules.map((r) => `- ✓ ${r.tool}${r.inputMatch ? ` (${r.inputMatch})` : ""}`).join("\n") + "\n";
+        if (pRules.length > 0) t += "**Project:**\n" + pRules.map((r) => `- ✓ ${r.tool}${r.inputMatch ? ` (${r.inputMatch})` : ""}`).join("\n");
+        this.postMessage({ type: "systemMessage", text: t });
         break;
       }
 
-      // ── Config ──
       case "/config": {
         const { provider, model } = this.getConfig();
         const dir = this.getWorkingDir();
-        const permMode = this.permissionManager?.getMode() || "ask";
-        const usage = this.agent?.getContextManager().formatTotalUsage() || "no usage data";
-        this.postMessage({
-          type: "systemMessage",
-          text: `**Current Configuration:**\n- Provider: ${provider}\n- Model: ${model || "(default)"}\n- Mode: ${permMode}\n- Directory: ${dir}\n- Usage: ${usage}`,
-        });
+        const mode = this.permissionManager?.getMode() || "ask";
+        const usage = tab?.agent.getContextManager().formatTotalUsage() || "none";
+        const tabCount = this.tabs.size;
+        this.postMessage({ type: "systemMessage", text: `**Config:**\n- Provider: ${provider}\n- Model: ${model || "(default)"}\n- Mode: ${mode}\n- Dir: ${dir}\n- Tabs: ${tabCount}\n- Usage: ${usage}` });
         break;
       }
 
-      // ── Token usage / cost ──
       case "/usage": {
-        const usage = this.agent?.getContextManager().formatTotalUsage() || "No usage data yet.";
-        this.postMessage({ type: "systemMessage", text: `**Token Usage:** ${usage}` });
+        const usage = tab?.agent.getContextManager().formatTotalUsage() || "No data.";
+        this.postMessage({ type: "systemMessage", text: `**Usage:** ${usage}` });
         break;
       }
 
       case "/cost": {
-        const cm = this.agent?.getContextManager();
-        if (!cm) { this.postMessage({ type: "systemMessage", text: "No usage data yet." }); break; }
+        const cm = tab?.agent.getContextManager();
+        if (!cm) { this.postMessage({ type: "systemMessage", text: "No data." }); break; }
         const { tokens, cost, turns } = cm.getTotalUsage();
-        this.postMessage({ type: "systemMessage", text: `**Session Cost Breakdown:**\n- Turns: ${turns}\n- Input tokens: ${tokens.inputTokens.toLocaleString()}\n- Output tokens: ${tokens.outputTokens.toLocaleString()}\n- Total tokens: ${tokens.totalTokens.toLocaleString()}\n- Estimated cost: $${(cost || 0).toFixed(4)}` });
+        this.postMessage({ type: "systemMessage", text: `**Cost:**\n- Turns: ${turns}\n- In: ${tokens.inputTokens.toLocaleString()}\n- Out: ${tokens.outputTokens.toLocaleString()}\n- Total: ${tokens.totalTokens.toLocaleString()}\n- Cost: $${(cost || 0).toFixed(4)}` });
         break;
       }
 
-      // ── Context management ──
       case "/compact": {
-        const cm = this.agent?.getContextManager();
-        const history = this.agent?.getHistory();
+        const cm = tab?.agent.getContextManager();
+        const history = tab?.agent.getHistory();
         if (!cm || !history) { this.postMessage({ type: "systemMessage", text: "Nothing to compress." }); break; }
         const before = cm.estimateMessages(history);
         const compressed = cm.compressIfNeeded(history, "");
         const after = cm.estimateMessages(compressed);
-        if (before === after) {
-          this.postMessage({ type: "systemMessage", text: "Context is already compact." });
-        } else {
-          this.agent!.setHistory(compressed);
-          this.postMessage({ type: "systemMessage", text: `Compressed: **${before.toLocaleString()}** → **${after.toLocaleString()}** tokens` });
-        }
+        if (before === after) { this.postMessage({ type: "systemMessage", text: "Already compact." }); }
+        else { tab!.agent.setHistory(compressed); this.postMessage({ type: "systemMessage", text: `Compressed: **${before.toLocaleString()}** → **${after.toLocaleString()}** tokens` }); }
         break;
       }
 
-      // ── Memory ──
       case "/memory": {
-        if (arg === "clear") {
-          this.memoryStore?.clear();
-          this.postMessage({ type: "systemMessage", text: "All memories cleared." });
-          break;
-        }
+        if (arg === "clear") { this.memoryStore?.clear(); this.postMessage({ type: "systemMessage", text: "Memories cleared." }); break; }
         if (arg.startsWith("forget ")) {
           const key = arg.slice(7).trim();
-          if (this.memoryStore?.forget(key)) {
-            this.postMessage({ type: "systemMessage", text: `Forgot: ${key}` });
-          } else {
-            this.postMessage({ type: "systemMessage", text: `Memory not found: ${key}` });
-          }
+          this.postMessage({ type: "systemMessage", text: this.memoryStore?.forget(key) ? `Forgot: ${key}` : `Not found: ${key}` });
           break;
         }
         const memories = this.memoryStore?.getAll() || [];
-        if (memories.length === 0) {
-          this.postMessage({ type: "systemMessage", text: "No stored memories.\nThe agent can save memories during conversations." });
-        } else {
-          const lines = memories.map((m) => `- **${m.key}** *(${m.category})*: ${m.value}`).join("\n");
-          this.postMessage({ type: "systemMessage", text: `**Stored Memories:**\n${lines}\n\n\`/memory clear\` — clear all\n\`/memory forget <key>\` — forget specific` });
-        }
+        if (memories.length === 0) { this.postMessage({ type: "systemMessage", text: "No memories." }); }
+        else { this.postMessage({ type: "systemMessage", text: `**Memories:**\n${memories.map((m) => `- **${m.key}** *(${m.category})*: ${m.value}`).join("\n")}` }); }
         break;
       }
 
-      // ── Hooks ──
       case "/hooks": {
         const hooks = this.hookManager?.getHooks() || [];
-        if (hooks.length === 0) {
-          this.postMessage({ type: "systemMessage", text: "No hooks configured.\nAdd hooks in `~/.cdoing/hooks.json` or `.cdoing/hooks.json`" });
-        } else {
-          const lines = hooks.map((h) => `- \`${h.event}\` → \`${h.command}\``).join("\n");
-          this.postMessage({ type: "systemMessage", text: `**Configured Hooks:**\n${lines}` });
-        }
+        if (hooks.length === 0) { this.postMessage({ type: "systemMessage", text: "No hooks configured." }); }
+        else { this.postMessage({ type: "systemMessage", text: `**Hooks:**\n${hooks.map((h) => `- \`${h.event}\` → \`${h.command}\``).join("\n")}` }); }
         break;
       }
 
-      // ── Queue ──
       case "/queue": {
-        if (arg === "clear") {
-          this.messageQueue = [];
-          this.postMessage({ type: "systemMessage", text: "Queue cleared." });
-          break;
-        }
-        if (this.messageQueue.length === 0) {
-          this.postMessage({ type: "systemMessage", text: "No messages in queue." });
-        } else {
-          const lines = this.messageQueue.map((m, i) => `${i + 1}. ${m.substring(0, 60)}${m.length > 60 ? "..." : ""}`).join("\n");
-          this.postMessage({ type: "systemMessage", text: `**Message Queue (${this.messageQueue.length}):**\n${lines}\n\n\`/queue clear\` — clear queue` });
-        }
+        if (arg === "clear" && tab) { tab.messageQueue.length = 0; this.postMessage({ type: "systemMessage", text: "Queue cleared." }); break; }
+        if (!tab || tab.messageQueue.length === 0) { this.postMessage({ type: "systemMessage", text: "Queue empty." }); }
+        else { this.postMessage({ type: "systemMessage", text: `**Queue (${tab.messageQueue.length}):**\n${tab.messageQueue.map((m, i) => `${i + 1}. ${m.substring(0, 60)}`).join("\n")}` }); }
         break;
       }
 
-      // ── Settings ──
       case "/settings":
         vscode.commands.executeCommand("cdoing.openSettings");
         break;
 
-      // ── Help ──
       case "/help":
         this.postMessage({
           type: "systemMessage",
           text: `**Commands:**
 
 **Chat:**
-- \`/new\` — Start new conversation
-- \`/clear\` — Clear chat history
+- \`/new\` — New conversation tab
+- \`/clear\` — Clear current tab
 - \`/history\` — List saved conversations
-- \`/resume <id>\` — Resume a conversation
-- \`/delete <id>\` — Delete a conversation
+- \`/resume <id>\` — Resume in new tab
+- \`/delete <id>\` — Delete conversation
 - \`/queue\` — View message queue
-- \`/compact\` — Compress context window
+- \`/compact\` — Compress context
 
 **Model:**
-- \`/model [name]\` — View or change model
-- \`/provider [name]\` — View or change provider
-- \`/mode [mode]\` — Permission mode (ask, auto-edit, auto)
+- \`/model [name]\` — View/change model
+- \`/provider [name]\` — View/change provider
+- \`/mode [mode]\` — Permission mode
 
 **Info:**
-- \`/config\` — Show current configuration
-- \`/usage\` — Show token usage
-- \`/cost\` — Show cost breakdown
-- \`/permissions\` — View/clear stored permissions
-- \`/memory\` — View/manage persistent memory
-- \`/hooks\` — View configured hooks
-- \`/settings\` — Open VS Code settings
+- \`/config\` — Configuration
+- \`/usage\` — Token usage
+- \`/cost\` — Cost breakdown
+- \`/permissions\` — Stored permissions
+- \`/memory\` — Persistent memory
+- \`/hooks\` — Configured hooks
+- \`/settings\` — VS Code settings
 
-**Shortcuts:**
-- \`Cmd+Shift+L\` — New chat
-- \`Cmd+Shift+Enter\` — Send selection to chat
-
-**Right-click** on selected code for Explain, Refactor, Fix.
-
-**Tools:** file_read, file_write, file_edit, glob_search, grep_search, shell_exec, file_run, web_fetch, web_search`,
+**Tabs:** Click \`+\` for new tab, \`×\` to close.
+**Shortcuts:** \`Cmd+Shift+L\` new chat, \`Cmd+Shift+Enter\` send selection.`,
         });
         break;
 
       default:
-        this.postMessage({
-          type: "systemMessage",
-          text: `Unknown command: ${cmd}. Type \`/help\` for commands.`,
-        });
+        this.postMessage({ type: "systemMessage", text: `Unknown: ${cmd}. Type \`/help\`.` });
     }
   }
 }

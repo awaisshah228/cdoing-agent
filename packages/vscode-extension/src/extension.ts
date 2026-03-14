@@ -38,11 +38,9 @@ export function activate(context: vscode.ExtensionContext) {
   // VS Code wires the command palette and keybindings to these IDs.
 
   context.subscriptions.push(
-    // Start a fresh chat — clears agent memory and tells the webview to reset
+    // Start a fresh chat — creates a new tab
     vscode.commands.registerCommand("cdoing.newChat", () => {
-      chatProvider.clearHistory();
-      chatProvider.postMessage({ type: "clear" });
-      vscode.window.showInformationMessage("Cdoing: New chat started");
+      chatProvider.createTab();
     }),
 
     // Clear just the history (same as /clear in chat)

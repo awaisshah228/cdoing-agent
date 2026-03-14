@@ -1,55 +1,63 @@
 /**
- * ChatPanel.tsx — Root Component
- *
- * The top-level component that assembles the entire chat UI.
- * Pulls all state from the useChatState() hook and passes it down to child components.
+ * ChatPanel.tsx — Root Component (Multi-Tab)
  *
  * Layout:
  *   ┌─────────────────────┐
- *   │  Header              │  ← Model badge, New Chat, Settings buttons
+ *   │  Header              │  ← Model badge, New Chat (+), Settings
  *   ├─────────────────────┤
- *   │                     │
- *   │  MessageList         │  ← Messages, tool calls, or Welcome screen
- *   │                     │
+ *   │  TabBar              │  ← Tabs (shown when 2+ tabs open)
  *   ├─────────────────────┤
- *   │  InputArea           │  ← Textarea + Send button (always enabled)
+ *   │  MessageList         │  ← Messages, tool calls, or Welcome
+ *   ├─────────────────────┤
+ *   │  InputArea           │  ← Textarea + Send/Queue button
  *   └─────────────────────┘
  */
 
 import React from "react";
 import { Header } from "./Header";
+import { TabBar } from "./TabBar";
 import { MessageList } from "./MessageList";
 import { InputArea } from "./InputArea";
 import { useChatState } from "../hooks/useChatState";
 
 export const ChatPanel: React.FC = () => {
   const {
-    entries,       // All chat entries (messages + tool calls)
-    isProcessing,  // Is the agent currently working?
-    queueCount,    // Number of queued messages
-    modelLabel,    // Current model name for the header badge
-    sendMessage,   // Send a user message to the agent
-    sendCommand,   // Send a slash command (e.g. /model, /clear)
+    tabs,
+    activeTabId,
+    createNewTab,
+    switchToTab,
+    closeTab,
+    entries,
+    isProcessing,
+    queueCount,
+    modelLabel,
+    sendMessage,
+    sendCommand,
   } = useChatState();
 
   return (
     <div className="chat-container">
-      {/* Header with model badge and action buttons */}
       <Header
         modelLabel={modelLabel}
         onSelectModel={() => sendCommand("/model")}
-        onNewChat={() => sendCommand("/clear")}
+        onNewChat={createNewTab}
         onOpenSettings={() => sendCommand("/settings")}
       />
 
-      {/* Message list — shows Welcome screen when empty */}
+      <TabBar
+        tabs={tabs}
+        activeTabId={activeTabId}
+        onSwitchTab={switchToTab}
+        onNewTab={createNewTab}
+        onCloseTab={closeTab}
+      />
+
       <MessageList
         entries={entries}
         isProcessing={isProcessing}
         onQuickAction={sendMessage}
       />
 
-      {/* Input area — always enabled, queues messages if busy */}
       <InputArea
         isProcessing={isProcessing}
         queueCount={queueCount}
