@@ -131,6 +131,13 @@ export class ChatInterface {
         return;
       }
 
+      // Auto-detect common shell commands and run directly
+      if (this.isShellCommand(trimmed)) {
+        await this.runShellCommand(trimmed);
+        this.promptUser();
+        return;
+      }
+
       if (trimmed.startsWith("/")) {
         const cont = this.handleCommand(trimmed);
         if (cont) this.promptUser();
@@ -509,6 +516,19 @@ export class ChatInterface {
         resolve();
       });
     });
+  }
+
+  private isShellCommand(input: string): boolean {
+    const cmd = input.split(/\s+/)[0];
+    const shellCommands = [
+      "ls", "pwd", "cd", "cat", "mkdir", "rmdir", "rm", "cp", "mv",
+      "touch", "head", "tail", "wc", "find", "grep", "echo", "which",
+      "whoami", "date", "df", "du", "ps", "kill", "chmod", "chown",
+      "curl", "wget", "tar", "zip", "unzip", "man",
+      "git", "npm", "npx", "yarn", "pnpm", "node", "python", "python3",
+      "pip", "pip3", "cargo", "go", "make", "docker", "brew",
+    ];
+    return shellCommands.includes(cmd);
   }
 
   private rebuildAgent(): void {
