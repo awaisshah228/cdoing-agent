@@ -8,7 +8,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import type { ChatEntry, ChatMessage, ContextAttachment, IncomingMessage } from "../types";
+import type { ChatEntry, ChatMessage, ConversationSummary, ContextAttachment, IncomingMessage } from "../types";
 import { useVsCode } from "./useVsCode";
 
 let idCounter = 0;
@@ -38,6 +38,8 @@ export function useChatState() {
   const [queueCount, setQueueCount] = useState(0);
   const [modelLabel, setModelLabel] = useState("anthropic");
   const [providerLabel, setProviderLabel] = useState("anthropic");
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
 
   const streamingRef = useRef<string | null>(null);
 
@@ -184,6 +186,24 @@ export function useChatState() {
     vscode.postMessage({ type: "closeTab", tabId });
   }, [vscode]);
 
+  const openHistory = useCallback(() => {
+    vscode.postMessage({ type: "listHistory" });
+    setShowHistory(true);
+  }, [vscode]);
+
+  const closeHistory = useCallback(() => {
+    setShowHistory(false);
+  }, []);
+
+  const resumeConversation = useCallback((id: string) => {
+    vscode.postMessage({ type: "resumeConversation", id });
+    setShowHistory(false);
+  }, [vscode]);
+
+  const deleteConversation = useCallback((id: string) => {
+    vscode.postMessage({ type: "deleteConversation", id });
+  }, [vscode]);
+
   // ── Message Handler ──────────────────────────────────
 
   useEffect(() => {
@@ -273,6 +293,24 @@ export function useChatState() {
         case "tabTitleUpdated":
           setTabs((prev) => prev.map((t) => t.id === msg.tabId ? { ...t, title: msg.title } : t));
           break;
+
+        // Conversation history
+        case "conversationList":
+          setConversations((msg as any).conversations || []);
+          break;
+        case "conversationMessages": {
+          // Restore messages from a resumed conversation into the UI
+          const restored = (msg as any).messages as Array<{ role: string; content: string }>;
+          if (restored && restored.length > 0) {
+            const restoredEntries: ChatEntry[] = restored.map((m) => ({
+              id: nextId(),
+              role: m.role as "user" | "assistant",
+              content: m.content,
+            }));
+            setEntries(restoredEntries);
+          }
+          break;
+        }
       }
 
       if ("queueCount" in msg && typeof (msg as any).queueCount === "number") {
@@ -292,5 +330,7 @@ export function useChatState() {
     tabs, activeTabId, createNewTab, switchToTab, closeTab,
     entries, isProcessing, queueCount, modelLabel, providerLabel,
     sendMessage, sendCommand, clearAll,
+    conversations, showHistory, openHistory, closeHistory,
+    resumeConversation, deleteConversation,
   };
 }

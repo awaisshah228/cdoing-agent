@@ -30,6 +30,8 @@ export type IncomingMessage =
   | { type: "insertMessage"; message: string }                         // Insert text into the input box
   | { type: "contextAttached"; attachment: ContextAttachment }          // File/folder picked and attached
   | { type: "fileSearchResults"; results: Array<{ path: string; isDir: boolean; language?: string }> } // File search results for @ autocomplete
+  | { type: "conversationList"; conversations: ConversationSummary[] }   // Past conversations list
+  | { type: "conversationMessages"; id: string; messages: Array<{ role: string; content: string }> } // Messages for a resumed conversation
   | { type: "tabCreated"; tabId: string; title: string }               // New tab created
   | { type: "tabSwitched"; tabId: string }                             // Switched to a tab
   | { type: "tabClosed"; tabId: string }                               // Tab closed
@@ -51,7 +53,18 @@ export type OutgoingMessage =
   | { type: "pickFolder" }                                   // Request folder picker
   | { type: "searchFiles"; query: string }                   // Search workspace files for @ autocomplete
   | { type: "getActiveFile" }                                // Request active file as context
+  | { type: "listHistory" }                                  // Request conversation history list
+  | { type: "resumeConversation"; id: string }               // Resume a past conversation
+  | { type: "deleteConversation"; id: string }               // Delete a past conversation
   | { type: "ready" };                                       // Webview loaded, ready for data
+
+/** A saved conversation summary (for history view) */
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  updatedAt: number;
+  msgCount: number;
+}
 
 /** A file/folder/selection attached as context */
 export interface ContextAttachment {

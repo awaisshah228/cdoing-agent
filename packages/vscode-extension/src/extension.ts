@@ -328,6 +328,16 @@ function openEditorPanel(context: vscode.ExtensionContext) {
       case "getActiveFile":
         (chatProvider as any).sendActiveFileAsContext?.();
         break;
+      case "listHistory":
+        (chatProvider as any).sendConversationList?.();
+        break;
+      case "resumeConversation":
+        (chatProvider as any).resumeConversationById?.(message.id);
+        break;
+      case "deleteConversation":
+        (chatProvider as any).deleteConversation?.(message.id);
+        (chatProvider as any).sendConversationList?.();
+        break;
       case "ready":
         chatProvider.postMessage({ type: "configUpdated", provider: "anthropic", model: "" });
         // Flush any pending file context from cdoing.openFile command

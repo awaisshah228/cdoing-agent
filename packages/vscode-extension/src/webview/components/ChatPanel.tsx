@@ -3,7 +3,7 @@
  *
  * Layout:
  *   ┌─────────────────────┐
- *   │  Header              │  ← Model badge, New Chat (+), Settings
+ *   │  Header              │  ← Model badge, History, New Chat (+), Settings
  *   ├─────────────────────┤
  *   │  TabBar              │  ← Tabs (shown when 2+ tabs open)
  *   ├─────────────────────┤
@@ -11,6 +11,7 @@
  *   ├─────────────────────┤
  *   │  InputArea           │  ← Textarea + Send/Queue button
  *   └─────────────────────┘
+ *   │  ConversationHistory │  ← Overlay when history is open
  */
 
 import React from "react";
@@ -18,6 +19,7 @@ import { Header } from "./Header";
 import { TabBar } from "./TabBar";
 import { MessageList } from "./MessageList";
 import { InputArea } from "./InputArea";
+import { ConversationHistory } from "./ConversationHistory";
 import { useChatState } from "../hooks/useChatState";
 
 export const ChatPanel: React.FC = () => {
@@ -33,6 +35,12 @@ export const ChatPanel: React.FC = () => {
     modelLabel,
     sendMessage,
     sendCommand,
+    conversations,
+    showHistory,
+    openHistory,
+    closeHistory,
+    resumeConversation,
+    deleteConversation,
   } = useChatState();
 
   return (
@@ -42,6 +50,7 @@ export const ChatPanel: React.FC = () => {
         onSelectModel={() => sendCommand("/model")}
         onNewChat={createNewTab}
         onOpenSettings={() => sendCommand("/settings")}
+        onOpenHistory={openHistory}
       />
 
       <TabBar
@@ -63,6 +72,15 @@ export const ChatPanel: React.FC = () => {
         queueCount={queueCount}
         onSend={sendMessage}
       />
+
+      {showHistory && (
+        <ConversationHistory
+          conversations={conversations}
+          onResume={resumeConversation}
+          onDelete={deleteConversation}
+          onClose={closeHistory}
+        />
+      )}
     </div>
   );
 };

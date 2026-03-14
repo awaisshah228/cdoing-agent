@@ -120,6 +120,16 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         case "getActiveFile":
           this.sendActiveFileAsContext();
           break;
+        case "listHistory":
+          this.sendConversationList();
+          break;
+        case "resumeConversation":
+          this.resumeConversationById(message.id);
+          break;
+        case "deleteConversation":
+          this.deleteConversation(message.id);
+          this.sendConversationList(); // refresh the list
+          break;
         case "ready":
           this.webviewReady = true;
           this.sendCurrentConfig();
@@ -746,6 +756,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
           t.isProcessing = false;
           if (this.activeTabId === tabId) this.postMessage({ type: "endResponse" });
+          // Auto-save conversation after each completed turn
+          this.saveConversation(tabId);
           this.processTabQueue(tabId);
         }
       },
@@ -827,6 +839,71 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       if (fs.existsSync(filePath)) { fs.unlinkSync(filePath); return true; }
     } catch { /* skip */ }
     return false;
+  }
+
+  /** Send the conversation list to the webview */
+  private sendConversationList() {
+    const conversations = this.listConversations();
+    this.postMessage({ type: "conversationList" as any, conversations });
+  }
+
+  /** Resume a conversation by ID — creates a new tab with the history restored */
+  private resumeConversationById(id: string) {
+    const conv = this.loadConversation(id);
+    if (!conv) {
+      this.postMessage({ type: "error", text: `Conversation not found: ${id}` });
+      return;
+    }
+    const tabId = this.createTab(conv.title || "Resumed");
+    const tab = this.tabs.get(tabId);
+    if (tab) {
+      for (const msg of (conv.messages || [])) {
+        if (msg.role === "user") tab.agent.addToHistory("user", msg.content);
+        else if (msg.role === "assistant") tab.agent.addToHistory("assistant", msg.content);
+      }
+      // Send the messages to the webview so the user can see the history
+      const messages = (conv.messages || []).map((m: any) => ({ role: m.role, content: m.content }));
+      this.postMessage({ type: "conversationMessages" as any, id, messages });
+    }
+  }
+
+  /** Save a conversation to disk */
+  private saveConversation(tabId: string) {
+    const tab = this.tabs.get(tabId);
+    if (!tab) return;
+
+    const history = tab.agent.getHistory();
+    if (!history || history.length === 0) return;
+
+    // Convert LangChain messages to simple objects
+    const messages: Array<{ role: string; content: string }> = [];
+    for (const msg of history) {
+      const type = msg._getType();
+      if (type === "human") {
+        messages.push({ role: "user", content: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content) });
+      } else if (type === "ai") {
+        messages.push({ role: "assistant", content: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content) });
+      }
+    }
+
+    // Only save if there's at least one user message
+    if (!messages.some((m) => m.role === "user")) return;
+
+    // Use tab ID as conversation ID
+    const convId = tab.id;
+    const conv = {
+      id: convId,
+      title: tab.title,
+      updatedAt: Date.now(),
+      messages,
+    };
+
+    try {
+      if (!fs.existsSync(this.convDir)) {
+        fs.mkdirSync(this.convDir, { recursive: true });
+      }
+      fs.writeFileSync(path.join(this.convDir, `${convId}.json`), JSON.stringify(conv, null, 2));
+    } catch { /* ignore save errors */ }
   }
 
   // ── Slash Commands ─────────────────────────────────────
