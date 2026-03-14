@@ -3,6 +3,21 @@
  * Modeled after Claude Code's comprehensive system prompt.
  */
 
+/**
+ * Build the complete system prompt from all configuration sources.
+ *
+ * The prompt is composed of layers:
+ *   1. Core prompt (always included — tool usage, code quality, etc.)
+ *   2. Environment info (working dir, platform)
+ *   3. Project config (.cdoing/config.md or CDOING.md)
+ *   4. Project rules (.cdoing/rules/*.md — with glob scoping)
+ *   5. Effort level instructions (low/medium/high/max)
+ *   6. Memory from previous conversations
+ *
+ * Learning note: The system prompt is the single most important
+ * factor in agent behavior. Each layer adds context that helps
+ * the model make better decisions.
+ */
 export function buildSystemPrompt(options: {
   workingDir: string;
   projectConfig?: string;
@@ -13,7 +28,7 @@ export function buildSystemPrompt(options: {
   parts.push(`\n# Environment\n- Working directory: ${options.workingDir}\n- Platform: ${process.platform}\n- Node version: ${process.version}`);
 
   if (options.projectConfig) {
-    parts.push(`\n# Project Configuration\nThe following project-specific instructions were loaded from .cdoing/config.md:\n\n${options.projectConfig}`);
+    parts.push(`\n# Project Configuration\nThe following project-specific instructions were loaded:\n\n${options.projectConfig}`);
   }
 
   if (options.memory) {

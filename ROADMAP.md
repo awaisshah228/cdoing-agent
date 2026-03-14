@@ -78,101 +78,101 @@ Comparison with **Claude Code CLI**, **Continue.dev**, and **Cursor** — what w
 
 ---
 
-## Missing Features (Planned)
+## Missing Features (Planned) → ✅ Implemented
 
 ### High Priority
 
-#### Inline Autocomplete / Tab Completion
+#### Inline Autocomplete / Tab Completion ✅
 > **All competitors have this.** Continue.dev and Cursor both offer intelligent inline code suggestions as you type.
-- [ ] Ghost text suggestions as user types
-- [ ] Tab to accept, Esc to dismiss
-- [ ] Configurable model for autocomplete (can be smaller/faster)
-- [ ] Debounce and token limit settings
+- [x] Ghost text suggestions as user types
+- [x] Tab to accept, Esc to dismiss
+- [x] Configurable model for autocomplete (can be smaller/faster)
+- [x] Debounce and token limit settings
 
-#### Inline Edit Mode (Cmd+I / Ctrl+I)
+#### Inline Edit Mode (Cmd+I / Ctrl+I) ✅
 > **Continue.dev** has `Cmd+I` for inline edits. **Cursor** has Composer. Natural language → code changes in place.
-- [ ] Select code → press Cmd+I → type instruction → see diff inline
-- [ ] Accept/reject changes per-hunk
-- [ ] Works without opening the chat panel
+- [x] Select code → press Cmd+I → type instruction → see diff inline
+- [x] Accept/reject changes per-hunk
+- [x] Works without opening the chat panel
 
-#### Codebase Semantic Search (@codebase)
+#### Codebase Semantic Search (@codebase) ✅
 > **Cursor** and **Continue.dev** both offer `@codebase` for semantic search across the entire repo.
-- [ ] Workspace indexing (embeddings or AST-based)
-- [ ] `@codebase` context provider in chat
-- [ ] Automatic re-indexing on file changes
-- [ ] Smart context selection (most relevant files)
+- [x] Text-based search with smart ranking (ripgrep + fallback)
+- [x] `@codebase` context provider in chat
+- [ ] Automatic re-indexing on file changes (future: embedding-based)
+- [x] Smart context selection (most relevant files)
 
 ### Medium Priority
 
-#### Terminal Context (@terminal)
+#### Terminal Context (@terminal) ✅
 > **Continue.dev** has `@Terminal` to include last terminal command and output.
-- [ ] `@terminal` in chat input to include recent terminal output
+- [x] `@terminal` in chat input to include recent terminal output
 - [ ] Auto-suggest when user asks about errors
 
-#### Open Files Context (@open)
+#### Open Files Context (@open) ✅
 > **Continue.dev** has `@Open` to include all currently open editor tabs.
-- [ ] `@open` attaches all open files as context
-- [ ] Smart truncation for large files
+- [x] `@open` attaches all open files as context
+- [x] Smart truncation for large files
 
-#### URL Context (@url)
+#### URL Context (@url) ✅
 > **Continue.dev** has `@URL` to fetch and convert web pages to markdown.
-- [ ] `@url` in chat to fetch and attach web content
-- [ ] Convert HTML to clean markdown
-- [ ] Already have `web_fetch` tool — just need the `@` trigger
+- [x] `@url` in chat to fetch and attach web content
+- [x] Convert HTML to clean markdown
+- [x] Reuses `web_fetch` logic with `@` trigger
 
-#### Plan Mode
+#### Plan Mode ✅
 > **Claude Code** has plan mode. **Cursor** generates editable markdown plans before execution.
-- [ ] `/plan` command — agent analyzes but doesn't modify files
-- [ ] Generates step-by-step plan as markdown
-- [ ] User can approve/edit plan before execution
-- [ ] Read-only tool access during planning
+- [x] `/plan` command — agent analyzes but doesn't modify files
+- [x] Generates step-by-step plan as markdown
+- [x] User can approve/edit plan before execution
+- [x] Read-only tool access during planning
 
-#### MCP Server Support
+#### MCP Server Support ✅
 > **Claude Code** and **Continue.dev** both support Model Context Protocol for external tools.
-- [ ] MCP server configuration in settings
-- [ ] Dynamic tool discovery from MCP servers
-- [ ] Connect to external data sources (Jira, Slack, databases)
+- [x] MCP server configuration in `.cdoing/mcp.json`
+- [x] Dynamic tool discovery from MCP servers
+- [x] Connect to external data sources (Jira, Slack, databases)
 
-#### Project Rules
+#### Project Rules ✅
 > **Claude Code** has `CLAUDE.md` with 4-tier scoping. **Cursor** has `.cursor/rules/` with glob patterns.
-- [ ] `.cdoing/rules/` directory with markdown rule files
-- [ ] Glob-based path scoping (rules only for `*.ts` files, etc.)
-- [ ] Rules auto-loaded into system prompt
-- [ ] Hierarchy: global → project → path-specific
+- [x] `.cdoing/rules/` directory with markdown rule files
+- [x] Glob-based path scoping (rules only for `*.ts` files, etc.)
+- [x] Rules auto-loaded into system prompt
+- [x] Hierarchy: global → project → path-specific
 
 ### Lower Priority
 
-#### Image Support
+#### Image Support ✅
 > **Claude Code** supports `Ctrl+V` to paste images. Multimodal models can analyze them.
-- [ ] Paste images in chat input
-- [ ] Attach image files as context
-- [ ] Screenshot analysis
+- [x] Attach image files as context (via command)
+- [x] Image file picker in VS Code
+- [ ] Clipboard paste support (browser limitation in webview)
 
-#### Side Questions (/btw)
+#### Side Questions (/btw) ✅
 > **Claude Code** has `/btw` for questions that don't pollute conversation history.
-- [ ] `/btw` command for ephemeral questions
-- [ ] Results shown but not added to agent memory
+- [x] `/btw` command for ephemeral questions
+- [x] Results shown but not added to agent memory
 
-#### Effort Level Control
+#### Effort Level Control ✅
 > **Claude Code** has `--effort` (low/medium/high/max). **Cursor** has MAX mode.
-- [ ] `/effort` command or setting
-- [ ] Low = fast, minimal reasoning
-- [ ] High/Max = deep analysis, extended thinking
+- [x] `/effort` command or setting
+- [x] Low = fast, minimal reasoning
+- [x] High/Max = deep analysis, extended thinking
 
-#### Multi-Agent / Agent Teams
+#### Multi-Agent / Agent Teams ✅
 > **Claude Code** has sub-agents and coordinator pattern. **Cursor** has multi-agent Mission Control.
-- [ ] Already have `sub_agent` tool
-- [ ] Add coordinator pattern for complex tasks
-- [ ] Parallel agent execution view
+- [x] Already have `sub_agent` tool
+- [x] Add coordinator pattern for complex tasks
+- [x] Parallel agent execution view
 
-#### Workspace File Tree (@tree)
+#### Workspace File Tree (@tree) ✅
 > **Continue.dev** has `@Tree` to include workspace file structure.
-- [ ] `@tree` context provider
-- [ ] Configurable depth and filter
+- [x] `@tree` context provider
+- [x] Configurable depth and filter
 
-#### Problems/Diagnostics (@problems)
+#### Problems/Diagnostics (@problems) ✅
 > **Continue.dev** has `@Problems` to include current file diagnostics.
-- [ ] `@problems` attaches VS Code diagnostics (errors, warnings)
+- [x] `@problems` attaches VS Code diagnostics (errors, warnings)
 - [ ] Auto-suggest when file has errors
 
 ---
@@ -184,13 +184,13 @@ Comparison with **Claude Code CLI**, **Continue.dev**, and **Cursor** — what w
 | Chat interface | Yes | Yes (terminal) | Yes | Yes |
 | Multi-tab conversations | Yes | No | No | Yes |
 | @ file autocomplete | Yes | Yes | Yes | Yes |
-| @ codebase search | No | No | Yes | Yes |
-| @ terminal context | No | No | Yes | No |
-| @ URL context | No | No | Yes | No |
-| Inline autocomplete | No | No | Yes | Yes |
-| Inline edit (Cmd+I) | No | No | Yes | Yes |
-| Plan mode | No | Yes | Yes | Yes |
-| Agent/tool use | Yes (10 tools) | Yes | Yes | Yes |
+| @ codebase search | **Yes** | No | Yes | Yes |
+| @ terminal context | **Yes** | No | Yes | No |
+| @ URL context | **Yes** | No | Yes | No |
+| Inline autocomplete | **Yes** | No | Yes | Yes |
+| Inline edit (Cmd+I) | **Yes** | No | Yes | Yes |
+| Plan mode | **Yes** | Yes | Yes | Yes |
+| Agent/tool use | Yes (12 tools) | Yes | Yes | Yes |
 | Diff preview | Yes | Yes | Yes | Yes |
 | Multi-provider | Yes (4+) | No (Anthropic only) | Yes (any) | Yes |
 | In-panel settings | Yes | No | Via config file | Yes |
@@ -198,10 +198,12 @@ Comparison with **Claude Code CLI**, **Continue.dev**, and **Cursor** — what w
 | Hooks system | Yes | Yes (20+ events) | No | No |
 | Persistent memory | Yes | Yes | No | No |
 | Conversation history | Yes | Yes | No | Yes |
-| Project rules | Basic (CDOING.md) | Yes (4-tier) | Yes (config) | Yes (.cursor/rules/) |
-| MCP servers | No | Yes | Yes | No |
-| Image support | No | Yes | No | Yes |
+| Project rules | **Yes (glob-scoped)** | Yes (4-tier) | Yes (config) | Yes (.cursor/rules/) |
+| MCP servers | **Yes** | Yes | Yes | No |
+| Image support | **Yes** | Yes | No | Yes |
 | Sub-agents | Yes | Yes | No | Yes |
+| Effort control | **Yes** | Yes | No | Yes |
+| Side questions (/btw) | **Yes** | Yes | No | No |
 | Open source | Yes | No | Yes | No |
 | CLI | Yes | Yes | No | Yes |
 

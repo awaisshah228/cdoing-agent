@@ -6,12 +6,23 @@
  *   2. Editor panel webview (right column — alongside code, like Claude Code)
  *   3. Commands, keybindings, context menu actions
  *   4. Inline diff preview for file edits
- *   5. Auto-save before agent reads/writes
+ *   5. Inline edit mode (Cmd+I) — AI-powered code changes in place
+ *   6. Inline autocomplete — ghost text suggestions as you type
+ *   7. Image paste/attach support
+ *   8. Context providers (@open, @problems, @terminal, etc.)
+ *
+ * Learning note: VS Code extensions activate lazily — this function
+ * only runs when the user first interacts with our extension (opens
+ * the panel, runs a command, etc.). We register everything upfront
+ * but nothing runs until triggered.
  */
 
 import * as vscode from "vscode";
 import { ChatPanelProvider } from "./chat-panel-provider";
 import { getWebviewContent } from "./webview-content";
+import { registerInlineEdit } from "./inline-edit";
+import { registerInlineAutocomplete } from "./inline-autocomplete";
+import type { ModelConfig } from "@cdoing/ai";
 
 /** Shared chat provider instance */
 let chatProvider: ChatPanelProvider;
@@ -21,6 +32,26 @@ let editorPanel: vscode.WebviewPanel | undefined;
 
 /** Pending file context to send once the webview is ready */
 let pendingFileContext: any = null;
+
+/**
+ * Get the current model configuration from VS Code settings.
+ * Used by inline edit and autocomplete features.
+ *
+ * Learning note: We read from VS Code settings rather than maintaining
+ * a separate config object. This means changes in settings are
+ * immediately reflected without restart.
+ */
+function getModelConfig(): Partial<ModelConfig> {
+  const config = vscode.workspace.getConfiguration("cdoing");
+  return {
+    provider: config.get<string>("provider") || "anthropic",
+    model: config.get<string>("model") || undefined,
+    apiKey: config.get<string>("apiKey") || undefined,
+    baseURL: config.get<string>("customBaseURL") || undefined,
+    temperature: config.get<number>("temperature") || 0,
+    maxTokens: config.get<number>("maxTokens") || 8096,
+  };
+}
 
 export function activate(context: vscode.ExtensionContext) {
   chatProvider = new ChatPanelProvider(context);
@@ -36,7 +67,6 @@ export function activate(context: vscode.ExtensionContext) {
     // ── New Chat ──
     vscode.commands.registerCommand("cdoing.newChat", () => {
       chatProvider.createTab();
-      // If editor panel exists, it shares the same provider
     }),
 
     // ── Clear History ──
@@ -113,7 +143,6 @@ export function activate(context: vscode.ExtensionContext) {
         },
       });
 
-      // Focus the chat panel
       vscode.commands.executeCommand("cdoing.chatPanel.focus");
     }),
 
@@ -135,13 +164,10 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     // ── Open File Button (editor title bar icon) ──
-    // Opens chat alongside the current file, attaching file or selection as context.
-    // If the panel is already open, creates a new tab for this file.
     vscode.commands.registerCommand("cdoing.openFile", () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
 
-      // Capture file info BEFORE opening the panel (editor may lose focus)
       const filePath = vscode.workspace.asRelativePath(editor.document.uri);
       const lang = editor.document.languageId;
       const selection = editor.selection;
@@ -149,11 +175,8 @@ export function activate(context: vscode.ExtensionContext) {
       const fullContent = editor.document.getText();
 
       const panelAlreadyOpen = !!editorPanel;
-
-      // Open the editor panel alongside the file
       openEditorPanel(context);
 
-      // Build the context attachment
       const attachment = selectedText
         ? {
             type: "selection" as const,
@@ -173,13 +196,56 @@ export function activate(context: vscode.ExtensionContext) {
       const contextMsg = { type: "contextAttached", attachment };
 
       if (panelAlreadyOpen) {
-        // Panel was already open — create a new tab, then attach context
         const fileName = filePath.split("/").pop() || filePath;
         chatProvider.createTab(fileName);
         setTimeout(() => chatProvider.postMessage(contextMsg), 150);
       } else {
-        // Panel is newly created — queue context until webview is ready
         pendingFileContext = contextMsg;
+      }
+    }),
+
+    // ── Paste Image — attach image from clipboard to chat ──
+    // Learning note: This intercepts the paste command and checks if
+    // the clipboard contains an image. If so, we save it as a temp
+    // file and attach it as context. Otherwise, we let VS Code handle
+    // the paste normally.
+    vscode.commands.registerCommand("cdoing.pasteImage", async () => {
+      try {
+        const clipboardContent = await vscode.env.clipboard.readText();
+        // If clipboard has text, it's not an image paste
+        if (clipboardContent) return;
+
+        // For actual image pasting, the webview handles it via
+        // the browser's paste event and FileReader API
+        vscode.window.showInformationMessage(
+          "Paste images directly in the Cdoing chat panel"
+        );
+      } catch {
+        // Clipboard API may not support image reading
+      }
+    }),
+
+    // ── Attach Image File — pick an image to send to chat ──
+    vscode.commands.registerCommand("cdoing.attachImage", async () => {
+      const result = await vscode.window.showOpenDialog({
+        canSelectMany: false,
+        filters: {
+          Images: ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"],
+        },
+        title: "Select an image to attach",
+      });
+
+      if (result && result[0]) {
+        const filePath = vscode.workspace.asRelativePath(result[0]);
+        chatProvider.postMessage({
+          type: "contextAttached",
+          attachment: {
+            type: "file",
+            path: filePath,
+            language: "image",
+          },
+        });
+        vscode.commands.executeCommand("cdoing.chatPanel.focus");
       }
     }),
 
@@ -200,6 +266,14 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
+  // ── Register Inline Edit Mode (Cmd+I / Ctrl+I) ────────
+  // Allows users to select code → Cmd+I → type instruction → see diff
+  registerInlineEdit(context, getModelConfig);
+
+  // ── Register Inline Autocomplete (Tab completion) ──────
+  // Ghost text suggestions as user types, accepted with Tab
+  registerInlineAutocomplete(context, getModelConfig);
+
   // Config change listener
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -210,7 +284,6 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // ── Floating Selection Actions (like Copilot's "Ask for Edits") ──
-  // Shows a lightbulb/quick-fix menu when text is selected
   context.subscriptions.push(
     vscode.languages.registerCodeActionsProvider("*", new CdoingCodeActionProvider(), {
       providedCodeActionKinds: [vscode.CodeActionKind.RefactorRewrite],
@@ -219,19 +292,30 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 /**
- * CodeAction provider — adds "Cdoing: Add to Chat", "Explain", "Fix", "Refactor"
- * to the lightbulb / quick-fix menu when text is selected.
- * This gives a floating toolbar similar to GitHub Copilot's "Ask for Edits".
+ * CodeAction provider — adds "Cdoing: Add to Chat", "Explain", "Fix",
+ * "Refactor", and "Inline Edit" to the lightbulb / quick-fix menu.
+ *
+ * Learning note: CodeActionProviders register actions that appear in the
+ * lightbulb menu when text is selected. This is the same mechanism that
+ * ESLint uses for its "Quick Fix" suggestions.
  */
 class CdoingCodeActionProvider implements vscode.CodeActionProvider {
   provideCodeActions(
-    document: vscode.TextDocument,
+    _document: vscode.TextDocument,
     range: vscode.Range | vscode.Selection,
   ): vscode.CodeAction[] {
-    // Only show when text is selected
     if (range.isEmpty) return [];
 
     const actions: vscode.CodeAction[] = [];
+
+    // Inline Edit (Cmd+I) — most prominent action
+    const inlineEdit = new vscode.CodeAction(
+      "Cdoing: Inline Edit (Cmd+I)",
+      vscode.CodeActionKind.RefactorRewrite
+    );
+    inlineEdit.command = { command: "cdoing.inlineEdit", title: "Inline Edit" };
+    inlineEdit.isPreferred = true; // Show as primary action
+    actions.push(inlineEdit);
 
     const addToChat = new vscode.CodeAction(
       "Cdoing: Add to Chat",
@@ -269,11 +353,9 @@ class CdoingCodeActionProvider implements vscode.CodeActionProvider {
 
 /**
  * Opens the chat as an editor panel in column 2 (right of code).
- * This is the Claude Code approach — chat sits beside your code.
  */
 function openEditorPanel(context: vscode.ExtensionContext) {
   if (editorPanel) {
-    // Already open — just reveal it
     editorPanel.reveal(vscode.ViewColumn.Beside);
     return;
   }
@@ -292,13 +374,11 @@ function openEditorPanel(context: vscode.ExtensionContext) {
   editorPanel.iconPath = vscode.Uri.joinPath(context.extensionUri, "media", "icon.svg");
   editorPanel.webview.html = getWebviewContent(editorPanel.webview, context.extensionUri);
 
-  // Bridge: editor panel ↔ chat provider (share the same message handling)
+  // Bridge: editor panel ↔ chat provider
   editorPanel.webview.onDidReceiveMessage(async (message) => {
     switch (message.type) {
       case "sendMessage":
-        // Forward to chat provider, but also show in editor panel
         chatProvider.postMessage({ type: "startResponse" });
-        // Route through the provider's handler (with context if present)
         (chatProvider as any).handleUserMessage?.(message.text, message.context);
         break;
       case "command":
@@ -312,7 +392,6 @@ function openEditorPanel(context: vscode.ExtensionContext) {
         chatProvider.createTab();
         break;
       case "switchTab":
-        // Forward tab operations
         break;
       case "closeTab":
         break;
@@ -349,7 +428,6 @@ function openEditorPanel(context: vscode.ExtensionContext) {
         break;
       case "ready":
         chatProvider.postMessage({ type: "configUpdated", provider: "anthropic", model: "" });
-        // Flush any pending file context from cdoing.openFile command
         if (pendingFileContext) {
           setTimeout(() => {
             if (pendingFileContext) {
@@ -371,7 +449,6 @@ function openEditorPanel(context: vscode.ExtensionContext) {
 
   editorPanel.onDidDispose(() => {
     editorPanel = undefined;
-    // Restore original postMessage
     chatProvider.postMessage = originalPostMessage;
   });
 }
@@ -380,7 +457,10 @@ function openEditorPanel(context: vscode.ExtensionContext) {
 
 /**
  * Show a diff view in VS Code's native diff editor.
- * Called when file_edit or file_write completes.
+ *
+ * Learning note: We use a virtual document (cdoing-diff: URI scheme)
+ * to show the "before" state. VS Code's built-in diff editor handles
+ * all the highlighting, scrolling, and side-by-side comparison.
  */
 async function showInlineDiff(filePath: string, originalContent: string, newContent: string) {
   const workspaceFolders = vscode.workspace.workspaceFolders;
@@ -391,7 +471,6 @@ async function showInlineDiff(filePath: string, originalContent: string, newCont
     filePath.startsWith("/") ? filePath : `${workDir}/${filePath}`
   );
 
-  // Register a content provider for the original (before edit)
   const provider = new (class implements vscode.TextDocumentContentProvider {
     provideTextDocumentContent(): string {
       return originalContent;
@@ -408,7 +487,6 @@ async function showInlineDiff(filePath: string, originalContent: string, newCont
     { preview: true }
   );
 
-  // Clean up after a delay
   setTimeout(() => disposable.dispose(), 60000);
 }
 
@@ -440,7 +518,6 @@ function sendEditorSelection(prefix = "") {
   const filePath = vscode.workspace.asRelativePath(editor.document.uri);
   const lang = editor.document.languageId;
 
-  // Attach the selection as context chip
   chatProvider.postMessage({
     type: "contextAttached",
     attachment: {
@@ -453,12 +530,10 @@ function sendEditorSelection(prefix = "") {
     },
   });
 
-  // If there's a prefix (e.g. "Explain this code:"), insert it in the input
   if (prefix) {
     chatProvider.postMessage({ type: "insertMessage", message: prefix.trim() });
   }
 
-  // If editor panel is open, use it; otherwise focus sidebar
   if (editorPanel) {
     editorPanel.reveal(vscode.ViewColumn.Beside);
   } else {

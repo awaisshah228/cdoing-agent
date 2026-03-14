@@ -31,3 +31,29 @@ export { MemoryStore } from "./utils/memory";
 export type { MemoryEntry } from "./utils/memory";
 export { TodoStore } from "./utils/todo";
 export type { TodoItem, TodoStatus } from "./utils/todo";
+
+// Context Providers — pluggable @ mention system
+export { ContextProviderRegistry } from "./context-providers/registry";
+export type { ContextProvider, ContextResult, ContextResolveOptions } from "./context-providers/types";
+export { TerminalContextProvider } from "./context-providers/terminal";
+export { OpenFilesContextProvider } from "./context-providers/open-files";
+export { UrlContextProvider } from "./context-providers/url";
+export { TreeContextProvider } from "./context-providers/tree";
+export { ProblemsContextProvider } from "./context-providers/problems";
+export { CodebaseContextProvider } from "./context-providers/codebase";
+
+// Project Rules — hierarchical glob-scoped rules
+export { RulesManager } from "./rules/manager";
+export type { Rule, RuleSource } from "./rules/types";
+
+// Plan Mode — read-only planning before execution
+export { PlanManager } from "./plan/manager";
+export type { Plan, PlanStep, PlanStatus } from "./plan/manager";
+
+// MCP Server Support — Model Context Protocol
+export { McpManager } from "./mcp/manager";
+export type { McpServerConfig, McpTool } from "./mcp/manager";
+
+// Effort Level Control — adjusts analysis depth
+export { EffortManager } from "./effort";
+export type { EffortLevel, EffortConfig } from "./effort";

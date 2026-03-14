@@ -53,6 +53,12 @@ export function printHelp(): void {
     ["/permissions", "View/clear stored permissions"],
     ["/memory", "View/manage persistent memory"],
     ["/hooks", "View configured hooks"],
+    ["/plan [request]", "Plan before executing"],
+    ["/effort <level>", "Set effort (low/med/high/max)"],
+    ["/btw <question>", "Ask without saving to history"],
+    ["/rules", "View project rules"],
+    ["/mcp", "MCP server status"],
+    ["/context", "List @ context providers"],
     ["/usage", "Show token usage and cost"],
     ["/compact", "Compress conversation context"],
     ["/cost", "Show detailed cost breakdown"],
@@ -65,6 +71,22 @@ export function printHelp(): void {
   ];
   for (const [cmd, desc] of commands) {
     console.log(chalk.hex("#4FC3F7")(`    ${cmd.padEnd(20)}`) + chalk.hex("#B0BEC5")(desc));
+  }
+  console.log();
+
+  // Context providers section
+  console.log(chalk.hex("#E040FB").bold("  📎 Context Providers"));
+  console.log(chalk.hex("#78909C")("  ─────────────────────────────────────"));
+  const contextProviders = [
+    ["@terminal", "Last terminal command output"],
+    ["@tree [path] [depth]", "Workspace file tree"],
+    ["@url <url>", "Fetch web page content"],
+    ["@codebase <query>", "Search entire codebase"],
+    ["@open", "All open files (VS Code only)"],
+    ["@problems", "File diagnostics (VS Code only)"],
+  ];
+  for (const [trigger, desc] of contextProviders) {
+    console.log(chalk.hex("#CE93D8")(`    ${trigger.padEnd(24)}`) + chalk.hex("#B0BEC5")(desc));
   }
   console.log();
 

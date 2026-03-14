@@ -21,6 +21,22 @@
  *   /exit               — quit
  */
 
+/**
+ * Interactive Chat Interface
+ *
+ * The main REPL loop for the Cdoing CLI. Handles:
+ *   - User input parsing (messages, slash commands, shell commands)
+ *   - Message queuing for concurrent input during processing
+ *   - Slash command routing (/plan, /effort, /btw, /rules, etc.)
+ *   - Context providers (@terminal, @open, @url, @tree, @problems, @codebase)
+ *   - Real-time suggestion autocomplete
+ *   - Streaming input bar during agent processing
+ *
+ * Learning note: This file is the largest in the CLI package because
+ * it's the user-facing interface that ties everything together. Each
+ * command handler is kept small and delegates to the appropriate module.
+ */
+
 import * as readline from "readline";
 import * as path from "path";
 import * as fs from "fs";
@@ -29,7 +45,21 @@ import chalk from "chalk";
 import ora from "ora";
 import { AgentRunner } from "@cdoing/ai";
 import type { ToolRegistry, PermissionManager, PermissionMode, HookManager, MemoryStore, TodoStore } from "@cdoing/core";
-import { loadProjectConfig } from "@cdoing/core";
+import {
+  loadProjectConfig,
+  PlanManager,
+  RulesManager,
+  McpManager,
+  EffortManager,
+  ContextProviderRegistry,
+  TerminalContextProvider,
+  OpenFilesContextProvider,
+  UrlContextProvider,
+  TreeContextProvider,
+  ProblemsContextProvider,
+  CodebaseContextProvider,
+} from "@cdoing/core";
+import type { EffortLevel } from "@cdoing/core";
 import type { ModelConfig } from "@cdoing/ai";
 import { printWelcome, printHelp, printConfig } from "./help";
 import { createInteractiveCallbacks } from "./callbacks";
@@ -67,6 +97,30 @@ export class ChatInterface {
   private isProcessing = false;
   private currentAbortController: AbortController | null = null;
 
+  // ── New Feature Managers ──────────────────────────────
+  // Each manager handles a specific feature domain, keeping this class focused.
+
+  /** Plan mode: analyze-before-execute workflow */
+  private planManager: PlanManager;
+
+  /** Project rules: glob-scoped coding standards */
+  private rulesManager: RulesManager;
+
+  /** MCP servers: external tool integrations */
+  private mcpManager: McpManager;
+
+  /** Effort level: controls analysis depth (low/medium/high/max) */
+  private effortManager: EffortManager;
+
+  /** Context providers: @terminal, @url, @tree, @codebase, etc. */
+  private contextProviders: ContextProviderRegistry;
+
+  /** Stores the last shell command output for @terminal context */
+  private lastTerminalOutput = "";
+
+  /** Whether plan mode is active (read-only tools only) */
+  private planModeActive = false;
+
   constructor(
     modelConfig: Partial<ModelConfig>,
     toolRegistry: ToolRegistry,
@@ -82,6 +136,14 @@ export class ChatInterface {
     this.memoryStore = memoryStore;
     this.todoStore = todoStore || null;
     this.workingDir = process.cwd();
+
+    // Initialize new feature managers
+    this.planManager = new PlanManager();
+    this.rulesManager = new RulesManager(this.workingDir);
+    this.mcpManager = new McpManager(this.workingDir);
+    this.effortManager = new EffortManager();
+    this.contextProviders = this.createContextProviders();
+
     this.agent = this.buildAgent();
     this.conversation = createConversation(
       String(modelConfig.provider || "anthropic"),
@@ -90,15 +152,57 @@ export class ChatInterface {
     this.createReadline();
   }
 
+  /**
+   * Create and register all built-in context providers.
+   * Each provider handles a different @ trigger.
+   *
+   * Learning note: The registry pattern lets us add new @ providers
+   * without modifying the input parsing code.
+   */
+  private createContextProviders(): ContextProviderRegistry {
+    const registry = new ContextProviderRegistry();
+    registry.register(new TerminalContextProvider());
+    registry.register(new UrlContextProvider());
+    registry.register(new TreeContextProvider());
+    registry.register(new CodebaseContextProvider());
+    // Note: @open and @problems require VS Code APIs, so they're
+    // only available in the extension, not the CLI.
+    return registry;
+  }
+
+  /**
+   * Build a new AgentRunner with current configuration.
+   *
+   * Combines project config, memory, rules, and effort level
+   * into the system prompt for the agent.
+   *
+   * Learning note: We rebuild the agent whenever settings change
+   * (model, provider, effort, etc.) because the system prompt
+   * and model binding are set at construction time.
+   */
   private buildAgent(): AgentRunner {
     const projectConfig = loadProjectConfig(this.workingDir);
+
+    // Gather rules for the system prompt
+    const rulesText = this.rulesManager?.formatForPrompt() || "";
+
+    // Get effort level additions
+    const effortAddition = this.effortManager?.getSystemPromptAddition() || "";
+
+    // Combine all config sources into the project config
+    const combinedConfig = [
+      projectConfig || "",
+      rulesText,
+      effortAddition,
+    ].filter(Boolean).join("\n\n");
+
     return new AgentRunner(
       this.modelConfig,
       this.toolRegistry,
       this.permissionManager,
       this.hookManager,
       {
-        projectConfig: projectConfig || undefined,
+        projectConfig: combinedConfig || undefined,
         memory: this.memoryStore.formatForPrompt() || undefined,
       }
     );
@@ -129,6 +233,13 @@ export class ChatInterface {
     { cmd: "/login", desc: "Authentication setup" },
     { cmd: "/logout", desc: "Clear OAuth tokens" },
     { cmd: "/auth-status", desc: "Show auth status" },
+    // ── New commands ────────────────────────────────
+    { cmd: "/plan", desc: "Plan before executing" },
+    { cmd: "/effort", desc: "Set analysis depth" },
+    { cmd: "/btw", desc: "Ask without adding to history" },
+    { cmd: "/rules", desc: "View project rules" },
+    { cmd: "/mcp", desc: "View MCP server status" },
+    { cmd: "/context", desc: "List @ context providers" },
     { cmd: "/exit", desc: "Quit" },
   ];
 
@@ -142,10 +253,9 @@ export class ChatInterface {
       this.handleSigint();
     });
 
-    // Enable keypress events
+    // Enable keypress events (do NOT set rawMode — readline manages the terminal)
     if (process.stdin.isTTY) {
-      readline.emitKeypressEvents(process.stdin);
-      process.stdin.setRawMode(true);
+      readline.emitKeypressEvents(process.stdin, this.rl);
     }
 
     // Handle keypress events including ESC and arrow keys for suggestions
@@ -399,7 +509,16 @@ export class ChatInterface {
     });
   }
 
-  /** Process a message (either directly or from queue) */
+  /**
+   * Process a message — resolves @ context providers, then sends to agent.
+   *
+   * If the message contains @ triggers (e.g., @tree, @url https://...),
+   * they are resolved first and the content is appended to the message.
+   *
+   * Learning note: Context resolution happens BEFORE the message reaches
+   * the agent. This keeps the agent's tool-calling logic simple — it just
+   * sees extra context in the user message.
+   */
   private async processMessage(message: string): Promise<void> {
     // If already processing, add to queue
     if (this.isProcessing) {
@@ -409,7 +528,73 @@ export class ChatInterface {
       return;
     }
 
-    await this.sendMessage(message);
+    // Resolve @ context providers in the message
+    const enrichedMessage = await this.resolveContextProviders(message);
+
+    await this.sendMessage(enrichedMessage);
+  }
+
+  /**
+   * Scan a message for @ triggers and resolve them.
+   *
+   * Looks for patterns like @terminal, @tree src, @url https://...
+   * and replaces them with the resolved content.
+   *
+   * Learning note: We match against registered provider triggers
+   * rather than a fixed list. This means new providers added to
+   * the registry are automatically supported.
+   */
+  private async resolveContextProviders(message: string): Promise<string> {
+    const providers = this.contextProviders.getAll();
+    if (providers.length === 0) return message;
+
+    // Find @ triggers in the message
+    const contextParts: string[] = [];
+    let cleanMessage = message;
+
+    for (const provider of providers) {
+      const trigger = provider.trigger; // e.g., "@terminal"
+      const triggerIndex = message.indexOf(trigger);
+
+      if (triggerIndex < 0) continue;
+
+      // Extract the trigger and its argument (if any)
+      const afterTrigger = message.substring(triggerIndex + trigger.length);
+      let arg: string | undefined;
+      if (provider.requiresArg) {
+        // Take the rest of the line as the argument
+        const lineEnd = afterTrigger.indexOf("\n");
+        arg = (lineEnd >= 0 ? afterTrigger.substring(0, lineEnd) : afterTrigger).trim();
+      }
+
+      // Remove the trigger from the message
+      const fullTrigger = provider.requiresArg && arg
+        ? `${trigger} ${arg}`
+        : trigger;
+      cleanMessage = cleanMessage.replace(fullTrigger, "").trim();
+
+      // Resolve the context
+      try {
+        console.log(chalk.dim(`  Resolving ${trigger}...`));
+        const result = await provider.resolve(arg, {
+          workingDir: this.workingDir,
+          terminalOutput: this.lastTerminalOutput,
+        });
+        if (result.content) {
+          contextParts.push(result.content);
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.log(chalk.yellow(`  Warning: Failed to resolve ${trigger}: ${errMsg}`));
+      }
+    }
+
+    // Append resolved context to the message
+    if (contextParts.length > 0) {
+      return `${cleanMessage}\n\n---\n\n${contextParts.join("\n\n---\n\n")}`;
+    }
+
+    return cleanMessage;
   }
 
   private handleCommand(command: string): boolean {
@@ -603,6 +788,42 @@ export class ChatInterface {
         oauthStatus();
         return true;
 
+      // ── Plan Mode ──────────────────────────────────────
+      case "/plan":
+        this.handlePlanCommand(arg);
+        return true;
+
+      // ── Effort Level ──────────────────────────────────
+      case "/effort":
+        this.handleEffortCommand(arg);
+        return true;
+
+      // ── Side Question (/btw) ──────────────────────────
+      case "/btw":
+        if (!arg) {
+          console.log(chalk.dim("\n  Usage: /btw <question>"));
+          console.log(chalk.dim("  Ask a question without adding to conversation history.\n"));
+          return true;
+        }
+        // Process as ephemeral question — don't add to history
+        this.sendEphemeralMessage(arg);
+        return false; // Don't prompt yet, sendEphemeralMessage handles it
+
+      // ── Project Rules ─────────────────────────────────
+      case "/rules":
+        this.handleRulesCommand(arg);
+        return true;
+
+      // ── MCP Servers ──────────────────────────────────
+      case "/mcp":
+        this.handleMcpCommand(arg);
+        return true;
+
+      // ── Context Providers ─────────────────────────────
+      case "/context":
+        this.showContextProviders();
+        return true;
+
       case "/exit":
       case "/quit":
         console.log(chalk.dim("\n  Goodbye!\n"));
@@ -614,6 +835,256 @@ export class ChatInterface {
         console.log(chalk.dim("  Type ? or /help for available commands.\n"));
         return true;
     }
+  }
+
+  // ── New Command Handlers ──────────────────────────────
+
+  /**
+   * /plan — Toggle plan mode or show current plan.
+   *
+   * When plan mode is active, the agent analyzes the request
+   * and generates a step-by-step plan before making any changes.
+   *
+   * Learning note: Plan mode works by modifying the system prompt
+   * to restrict the agent to read-only tools and instruct it to
+   * output a structured plan instead of executing changes.
+   */
+  private handlePlanCommand(arg: string): void {
+    if (arg === "off" || arg === "cancel") {
+      this.planModeActive = false;
+      this.planManager.clearPlan();
+      console.log(chalk.yellow("\n  Plan mode disabled.\n"));
+      return;
+    }
+
+    if (arg === "show") {
+      const plan = this.planManager.getCurrentPlan();
+      if (!plan) {
+        console.log(chalk.dim("\n  No active plan. Use /plan <request> to create one.\n"));
+      } else {
+        console.log("\n" + this.planManager.formatPlan() + "\n");
+      }
+      return;
+    }
+
+    if (arg === "approve" || arg === "yes") {
+      if (this.planManager.approvePlan()) {
+        this.planModeActive = false;
+        console.log(chalk.green("\n  Plan approved! Executing...\n"));
+        const plan = this.planManager.getCurrentPlan();
+        if (plan) {
+          this.planManager.startExecution();
+          // Send the plan as context for execution
+          this.processMessage(
+            `Execute this plan step by step:\n\n${this.planManager.formatPlan()}\n\nOriginal request: ${plan.originalRequest}`
+          );
+        }
+      } else {
+        console.log(chalk.red("\n  No plan to approve.\n"));
+      }
+      return;
+    }
+
+    if (arg === "reject" || arg === "no") {
+      this.planManager.rejectPlan();
+      this.planModeActive = false;
+      console.log(chalk.yellow("\n  Plan rejected.\n"));
+      return;
+    }
+
+    if (!arg) {
+      // Toggle plan mode
+      this.planModeActive = !this.planModeActive;
+      if (this.planModeActive) {
+        console.log(chalk.cyan("\n  Plan mode enabled. Next message will generate a plan."));
+        console.log(chalk.dim("  The agent will analyze but NOT modify files."));
+        console.log(chalk.dim("  Use /plan approve to execute, /plan off to cancel.\n"));
+      } else {
+        console.log(chalk.yellow("\n  Plan mode disabled.\n"));
+      }
+      return;
+    }
+
+    // If arg is provided, create a plan for it
+    this.planModeActive = true;
+    console.log(chalk.cyan("\n  Generating plan...\n"));
+    this.processMessage(
+      `[PLAN MODE] Analyze this request and create a detailed step-by-step implementation plan. ` +
+      `Do NOT modify any files. Only read files and search code to understand the codebase. ` +
+      `Output a numbered plan with specific files and changes needed.\n\nRequest: ${arg}`
+    );
+  }
+
+  /**
+   * /effort — Set or show the current effort level.
+   *
+   * Learning note: Effort level is a UX abstraction that controls
+   * how thorough the agent is. Higher effort = more tokens used,
+   * more files read, deeper analysis.
+   */
+  private handleEffortCommand(arg: string): void {
+    if (!arg) {
+      const current = this.effortManager.getLevel();
+      console.log(chalk.dim(`\n  Current effort: ${current}`));
+      console.log(chalk.dim("  Available levels:"));
+      for (const { level, description } of EffortManager.getAllLevels()) {
+        const marker = level === current ? chalk.green(" ●") : "  ";
+        console.log(`  ${marker} ${chalk.cyan(level.padEnd(8))} ${chalk.dim(description)}`);
+      }
+      console.log(chalk.dim("\n  Usage: /effort <level>\n"));
+      return;
+    }
+
+    const parsed = EffortManager.parse(arg);
+    if (!parsed) {
+      console.log(chalk.red(`\n  Invalid effort level: ${arg}`));
+      console.log(chalk.dim("  Use: low, medium, high, max\n"));
+      return;
+    }
+
+    this.effortManager.setLevel(parsed);
+    this.rebuildAgent(); // Rebuild to apply new effort settings
+    console.log(chalk.green(`\n  Effort level: ${parsed} (${this.effortManager.getConfig().description})\n`));
+  }
+
+  /**
+   * Send an ephemeral message (/btw) — results shown but not persisted.
+   *
+   * Learning note: This creates a temporary agent that shares no
+   * history with the main conversation. The response is displayed
+   * but doesn't pollute the conversation context.
+   */
+  private async sendEphemeralMessage(message: string): Promise<void> {
+    console.log(chalk.dim("\n  [ephemeral — not added to conversation history]"));
+
+    // Create a separate agent for the ephemeral question
+    const projectConfig = loadProjectConfig(this.workingDir);
+    const tempAgent = new AgentRunner(
+      this.modelConfig,
+      this.toolRegistry,
+      this.permissionManager,
+      this.hookManager,
+      { projectConfig: projectConfig || undefined },
+    );
+
+    const callbacks = createInteractiveCallbacks(this.spinner);
+    this.spinner.start(chalk.hex("#B0BEC5")("  💭 Thinking (ephemeral)..."));
+
+    try {
+      await tempAgent.run(message, {
+        ...callbacks,
+        onToolResult: (name: string, result: string, isError?: boolean) => {
+          callbacks.onToolResult(name, result, isError ?? false);
+        },
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(chalk.red(`\n  Error: ${msg}\n`));
+    }
+
+    console.log(chalk.dim("  [end ephemeral]\n"));
+    this.promptUser();
+  }
+
+  /**
+   * /rules — Show loaded project rules.
+   */
+  private handleRulesCommand(arg: string): void {
+    if (arg === "reload") {
+      this.rulesManager.invalidateCache();
+      console.log(chalk.green("\n  Rules cache cleared. Will reload on next request.\n"));
+      return;
+    }
+
+    const rules = this.rulesManager.getRulesForFile();
+    if (rules.length === 0) {
+      console.log(chalk.dim("\n  No project rules found."));
+      console.log(chalk.dim("  Add rules in .cdoing/rules/ or ~/.cdoing/rules/ as .md files."));
+      console.log(chalk.dim("  Example: .cdoing/rules/typescript.md\n"));
+      console.log(chalk.dim("  ---"));
+      console.log(chalk.dim('  globs: ["*.ts", "*.tsx"]'));
+      console.log(chalk.dim("  description: TypeScript coding standards"));
+      console.log(chalk.dim("  ---"));
+      console.log(chalk.dim("  Always use strict TypeScript.\n"));
+      return;
+    }
+
+    console.log(chalk.bold("\n  Project Rules:\n"));
+    for (const rule of rules) {
+      const icon = rule.source === "global" ? "🌐" : "📁";
+      const globs = rule.globs.length > 0 ? chalk.dim(` (${rule.globs.join(", ")})`) : "";
+      console.log(`    ${icon} ${chalk.cyan(rule.description)}${globs}`);
+      console.log(chalk.dim(`       ${rule.content.substring(0, 80)}${rule.content.length > 80 ? "..." : ""}`));
+    }
+    console.log(chalk.dim(`\n    /rules reload — refresh from disk\n`));
+  }
+
+  /**
+   * /mcp — Show MCP server status or connect/disconnect.
+   */
+  private handleMcpCommand(arg: string): void {
+    if (arg === "connect") {
+      console.log(chalk.dim("\n  Connecting to MCP servers..."));
+      this.mcpManager.connectAll()
+        .then(() => {
+          const servers = this.mcpManager.getConnectedServers();
+          if (servers.length === 0) {
+            console.log(chalk.dim("  No MCP servers configured."));
+            console.log(chalk.dim("  Add servers in .cdoing/mcp.json\n"));
+          } else {
+            console.log(chalk.green(`  Connected to ${servers.length} server(s): ${servers.join(", ")}\n`));
+          }
+        })
+        .catch((e: Error) => {
+          console.log(chalk.red(`  Error: ${e.message}\n`));
+        });
+      return;
+    }
+
+    if (arg === "disconnect") {
+      this.mcpManager.disconnectAll();
+      console.log(chalk.yellow("\n  Disconnected from all MCP servers.\n"));
+      return;
+    }
+
+    const servers = this.mcpManager.getConnectedServers();
+    const allTools = this.mcpManager.getAllTools();
+
+    if (servers.length === 0) {
+      console.log(chalk.dim("\n  No MCP servers connected."));
+      console.log(chalk.dim("  Configure in .cdoing/mcp.json:"));
+      console.log(chalk.dim('  { "servers": [{ "name": "...", "command": "...", "args": [...] }] }'));
+      console.log(chalk.dim("\n  /mcp connect    — connect to configured servers"));
+      console.log(chalk.dim("  /mcp disconnect — disconnect all\n"));
+      return;
+    }
+
+    console.log(chalk.bold(`\n  MCP Servers (${servers.length} connected):\n`));
+    for (const name of servers) {
+      const tools = allTools.filter((t: { serverName: string }) => t.serverName === name);
+      console.log(`    ${chalk.green("●")} ${chalk.cyan(name)} — ${tools.length} tool(s)`);
+      for (const tool of tools.slice(0, 5)) {
+        console.log(chalk.dim(`      • ${tool.name}: ${tool.description.substring(0, 60)}`));
+      }
+      if (tools.length > 5) {
+        console.log(chalk.dim(`      ... and ${tools.length - 5} more`));
+      }
+    }
+    console.log();
+  }
+
+  /**
+   * /context — List all available @ context providers.
+   */
+  private showContextProviders(): void {
+    const providers = this.contextProviders.getAll();
+    console.log(chalk.bold("\n  @ Context Providers:\n"));
+    for (const p of providers) {
+      const argHint = p.requiresArg ? chalk.dim(" <arg>") : "";
+      console.log(`    ${chalk.cyan(p.trigger)}${argHint}  ${chalk.dim(p.description)}`);
+    }
+    console.log(chalk.dim("\n  Use @ followed by a trigger in your message to attach context."));
+    console.log(chalk.dim("  Example: @tree src  or  @url https://docs.example.com\n"));
   }
 
   /** Show or clear stored permission rules */
@@ -894,14 +1365,22 @@ export class ChatInterface {
     return new Promise((resolve) => {
       console.log(chalk.dim(`\n  $ ${command}`));
       console.log(chalk.dim("  (Ctrl+C to stop)\n"));
+      // Capture output for @terminal context provider
+      let capturedOutput = "";
       const child = exec(command, {
         cwd: this.workingDir,
         timeout: 600000,
         maxBuffer: 10 * 1024 * 1024,
         env: { ...process.env },
       });
-      child.stdout?.pipe(process.stdout);
-      child.stderr?.pipe(process.stderr);
+      child.stdout?.on("data", (data: Buffer) => {
+        capturedOutput += data.toString();
+        process.stdout.write(data);
+      });
+      child.stderr?.on("data", (data: Buffer) => {
+        capturedOutput += data.toString();
+        process.stderr.write(data);
+      });
 
       const onSigint = () => {
         child.kill("SIGTERM");
@@ -911,6 +1390,8 @@ export class ChatInterface {
 
       child.on("close", (code) => {
         process.removeListener("SIGINT", onSigint);
+        // Store output for @terminal context
+        this.lastTerminalOutput = `$ ${command}\n${capturedOutput}${code !== 0 && code !== null ? `\n[exit code: ${code}]` : ""}`;
         if (code !== 0 && code !== null) console.log(chalk.dim(`\n  Exit code: ${code}`));
         console.log();
         resolve();
