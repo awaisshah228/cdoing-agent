@@ -6,21 +6,21 @@ export class FileReadTool implements BaseTool {
   definition: ToolDefinition = {
     name: "file_read",
     description:
-      "Read the contents of a file. Returns the file content with line numbers. Use this to understand existing code before making changes.",
+      "Read the contents of a file. Returns content with line numbers. Always read before editing.",
     inputSchema: {
       type: "object",
       properties: {
         file_path: {
           type: "string",
-          description: "Absolute or relative path to the file to read",
+          description: "Path to the file to read",
         },
         offset: {
           type: "number",
-          description: "Line number to start reading from (1-based). Optional.",
+          description: "Line number to start from (1-based). Optional.",
         },
         limit: {
           type: "number",
-          description: "Maximum number of lines to read. Optional, defaults to 2000.",
+          description: "Max lines to read. Default: 2000.",
         },
       },
       required: ["file_path"],
@@ -29,41 +29,30 @@ export class FileReadTool implements BaseTool {
   };
 
   private workingDir: string;
-
   constructor(workingDir: string) {
     this.workingDir = workingDir;
   }
 
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
-    const filePath = this.resolvePath(input.file_path as string);
+    const filePath = this.resolve(input.file_path as string);
     const offset = (input.offset as number) || 1;
     const limit = (input.limit as number) || 2000;
 
-    if (!fs.existsSync(filePath)) {
+    if (!fs.existsSync(filePath))
       return { success: false, output: "", error: `File not found: ${filePath}` };
-    }
+    if (fs.statSync(filePath).isDirectory())
+      return { success: false, output: "", error: `Path is a directory: ${filePath}` };
 
-    const stat = fs.statSync(filePath);
-    if (stat.isDirectory()) {
-      return { success: false, output: "", error: `Path is a directory, not a file: ${filePath}` };
-    }
-
-    const content = fs.readFileSync(filePath, "utf-8");
-    const lines = content.split("\n");
-    const selectedLines = lines.slice(offset - 1, offset - 1 + limit);
-
-    const numbered = selectedLines
+    const lines = fs.readFileSync(filePath, "utf-8").split("\n");
+    const selected = lines.slice(offset - 1, offset - 1 + limit);
+    const numbered = selected
       .map((line, i) => `${String(offset + i).padStart(5)}  ${line}`)
       .join("\n");
 
-    return {
-      success: true,
-      output: numbered || "(empty file)",
-    };
+    return { success: true, output: numbered || "(empty file)" };
   }
 
-  private resolvePath(filePath: string): string {
-    if (path.isAbsolute(filePath)) return filePath;
-    return path.resolve(this.workingDir, filePath);
+  private resolve(p: string): string {
+    return path.isAbsolute(p) ? p : path.resolve(this.workingDir, p);
   }
 }

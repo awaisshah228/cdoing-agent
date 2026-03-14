@@ -1,9 +1,9 @@
 /**
- * Interactive Chat Interface
+ * Interactive Chat Interface — readline REPL with slash commands.
  *
- * Provides a readline-based REPL for conversing with the
- * AI agent. Handles slash commands and streams responses
- * with visual feedback (spinners, colors).
+ * Key detail: we close readline before agent.run() so that the
+ * permission manager's readline can use stdin without conflict.
+ * We recreate it after the agent finishes.
  */
 
 import * as readline from "readline";
@@ -16,7 +16,7 @@ import { printWelcome, printHelp } from "./help";
 import { createInteractiveCallbacks } from "./callbacks";
 
 export class ChatInterface {
-  private rl: readline.Interface;
+  private rl!: readline.Interface;
   private agent: AgentRunner;
   private spinner = ora();
 
@@ -25,93 +25,72 @@ export class ChatInterface {
     toolRegistry: ToolRegistry,
     permissionManager: PermissionManager
   ) {
+    this.agent = new AgentRunner(modelConfig, toolRegistry, permissionManager);
+    this.createReadline();
+  }
+
+  private createReadline(): void {
     this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
     });
-
-    this.agent = new AgentRunner(modelConfig, toolRegistry, permissionManager);
   }
 
-  /** Launch the interactive REPL */
   async start(): Promise<void> {
     printWelcome();
     this.promptUser();
   }
 
-  /**
-   * Show the prompt and wait for user input.
-   * Loops until the user exits.
-   */
   private promptUser(): void {
     this.rl.question(chalk.green("❯ "), async (input) => {
       const trimmed = input.trim();
+      if (!trimmed) { this.promptUser(); return; }
 
-      // Skip empty input
-      if (!trimmed) {
-        this.promptUser();
-        return;
-      }
-
-      // Route slash commands vs. agent messages
       if (trimmed.startsWith("/")) {
-        const shouldContinue = await this.handleCommand(trimmed);
-        if (shouldContinue) this.promptUser();
+        const cont = this.handleCommand(trimmed);
+        if (cont) this.promptUser();
         return;
       }
 
-      // Send user message to the agent
       await this.sendMessage(trimmed);
       this.promptUser();
     });
   }
 
-  /**
-   * Handle a slash command.
-   * Returns false if the REPL should stop (e.g. /exit).
-   */
-  private async handleCommand(command: string): Promise<boolean> {
+  private handleCommand(command: string): boolean {
     const [cmd] = command.split(" ");
-
     switch (cmd) {
       case "/help":
         printHelp();
         return true;
-
       case "/clear":
         this.agent.clearHistory();
         console.log(chalk.yellow("\n  Conversation cleared.\n"));
         return true;
-
       case "/model":
-        console.log(chalk.dim("\n  Current model configuration loaded from env.\n"));
+        console.log(chalk.dim("\n  Model config loaded from env/flags.\n"));
         return true;
-
       case "/mode":
-        console.log(chalk.dim("\n  Permission mode: ask (use --mode flag to change)\n"));
+        console.log(chalk.dim("\n  Permission mode set via --mode flag.\n"));
         return true;
-
       case "/exit":
       case "/quit":
         console.log(chalk.dim("\n  Goodbye!\n"));
         this.rl.close();
         process.exit(0);
-
       default:
         console.log(chalk.red(`\n  Unknown command: ${cmd}`));
-        console.log(chalk.dim("  Type /help to see available commands.\n"));
+        console.log(chalk.dim("  Type /help for commands.\n"));
         return true;
     }
   }
 
-  /** Send a message to the agent and display the response */
   private async sendMessage(message: string): Promise<void> {
     console.log();
     const callbacks = createInteractiveCallbacks(this.spinner);
     this.spinner.start(chalk.dim("  Thinking..."));
 
-    // Close the chat readline so stdin is free for permission prompts.
-    // We'll recreate it after the agent finishes.
+    // Close readline so permission prompts can use stdin
     this.rl.close();
 
     try {
@@ -122,15 +101,7 @@ export class ChatInterface {
       console.log(chalk.red(`\n  Error: ${msg}\n`));
     }
 
-    // Recreate readline for the next user prompt
-    this.rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-  }
-
-  /** Clean up readline resources */
-  destroy(): void {
-    this.rl.close();
+    // Recreate readline for next prompt
+    this.createReadline();
   }
 }

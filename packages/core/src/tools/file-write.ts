@@ -6,17 +6,17 @@ export class FileWriteTool implements BaseTool {
   definition: ToolDefinition = {
     name: "file_write",
     description:
-      "Create a new file or overwrite an existing file with the given content. Creates parent directories if they don't exist.",
+      "Create or overwrite a file with the given content. Creates parent directories if needed.",
     inputSchema: {
       type: "object",
       properties: {
         file_path: {
           type: "string",
-          description: "Absolute or relative path to the file to write",
+          description: "Path to the file to write",
         },
         content: {
           type: "string",
-          description: "The content to write to the file",
+          description: "Content to write to the file",
         },
       },
       required: ["file_path", "content"],
@@ -26,39 +26,32 @@ export class FileWriteTool implements BaseTool {
   };
 
   private workingDir: string;
-
   constructor(workingDir: string) {
     this.workingDir = workingDir;
   }
 
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
-    const filePath = this.resolvePath(input.file_path as string);
+    const filePath = this.resolve(input.file_path as string);
     const content = input.content as string;
 
     try {
       const dir = path.dirname(filePath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
       const existed = fs.existsSync(filePath);
       fs.writeFileSync(filePath, content, "utf-8");
-
-      const lineCount = content.split("\n").length;
-      const action = existed ? "Updated" : "Created";
+      const lines = content.split("\n").length;
 
       return {
         success: true,
-        output: `${action} file: ${filePath} (${lineCount} lines)`,
+        output: `${existed ? "Updated" : "Created"} file: ${filePath} (${lines} lines)`,
       };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { success: false, output: "", error: `Failed to write file: ${message}` };
+      return { success: false, output: "", error: `Failed to write: ${err}` };
     }
   }
 
-  private resolvePath(filePath: string): string {
-    if (path.isAbsolute(filePath)) return filePath;
-    return path.resolve(this.workingDir, filePath);
+  private resolve(p: string): string {
+    return path.isAbsolute(p) ? p : path.resolve(this.workingDir, p);
   }
 }

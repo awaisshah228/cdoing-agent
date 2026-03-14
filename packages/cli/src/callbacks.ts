@@ -1,18 +1,12 @@
 /**
- * Agent Callbacks
- *
- * Provides formatted console output callbacks for both
- * interactive and one-shot modes of the CLI.
+ * Agent Callbacks — formatted console output for interactive and one-shot modes.
  */
 
 import chalk from "chalk";
-import ora, { type Ora } from "ora";
+import type { Ora } from "ora";
 import type { AgentCallbacks } from "@cdoing/ai";
 
-/**
- * Create callbacks for interactive mode with spinner and colored output.
- * Used by ChatInterface during the REPL loop.
- */
+/** Interactive mode: spinner + colors */
 export function createInteractiveCallbacks(spinner: Ora): AgentCallbacks {
   let isFirstToken = true;
 
@@ -27,21 +21,19 @@ export function createInteractiveCallbacks(spinner: Ora): AgentCallbacks {
     },
 
     onToolCall: (name, input) => {
-      // Stop spinner so permission prompt can use stdin
+      // Stop spinner so permission prompt can read stdin
       spinner.stop();
-      const inputPreview = JSON.stringify(input).substring(0, 80);
-      console.log(chalk.yellow(`\n  ⚡ ${name}`) + chalk.dim(` ${inputPreview}`));
+      const preview = JSON.stringify(input).substring(0, 80);
+      console.log(chalk.yellow(`\n  ⚡ ${name}`) + chalk.dim(` ${preview}`));
     },
 
     onToolResult: (name, result, isError) => {
-      spinner.stop();
       if (isError) {
         console.log(chalk.red(`  ✗ ${name} failed`));
       } else {
         const preview = result.substring(0, 120).replace(/\n/g, " ");
         console.log(chalk.green(`  ✓ ${name}`) + chalk.dim(` ${preview}`));
       }
-      // Restart spinner — model will think about the next step
       spinner.start(chalk.dim("  Thinking..."));
     },
 
@@ -57,26 +49,13 @@ export function createInteractiveCallbacks(spinner: Ora): AgentCallbacks {
   };
 }
 
-/**
- * Create callbacks for one-shot mode with minimal output.
- * Used when a prompt is passed directly via CLI argument.
- */
+/** One-shot mode: minimal output */
 export function createOneShotCallbacks(): AgentCallbacks {
   return {
     onToken: (token) => process.stdout.write(token),
-
-    onToolCall: (name) => {
-      console.log(chalk.yellow(`\n⚡ ${name}`));
-    },
-
-    onToolResult: (name, _result, isError) => {
-      console.log(isError ? chalk.red(`✗ ${name}`) : chalk.green(`✓ ${name}`));
-    },
-
+    onToolCall: (name) => console.log(chalk.yellow(`\n⚡ ${name}`)),
+    onToolResult: (name, _r, isErr) => console.log(isErr ? chalk.red(`✗ ${name}`) : chalk.green(`✓ ${name}`)),
     onComplete: () => console.log(),
-
-    onError: (error) => {
-      console.error(chalk.red(`Error: ${error.message}`));
-    },
+    onError: (err) => console.error(chalk.red(`Error: ${err.message}`)),
   };
 }

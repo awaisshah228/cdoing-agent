@@ -1,5 +1,6 @@
 import type { BaseTool, ToolResult } from "./types";
 
+/** Central registry of all available tools */
 export class ToolRegistry {
   private tools: Map<string, BaseTool> = new Map();
 
@@ -24,7 +25,6 @@ export class ToolRegistry {
     if (!tool) {
       return { success: false, output: "", error: `Unknown tool: ${name}` };
     }
-
     try {
       return await tool.execute(input);
     } catch (err) {

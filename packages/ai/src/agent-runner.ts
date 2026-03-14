@@ -1,21 +1,24 @@
 /**
- * agent-runner.ts — The Agentic Loop
+ * Agent Runner — The Agentic Loop
  *
- * Uses invoke() for reliable tool call parsing.
- * Text is displayed all at once (not streamed token-by-token)
- * to guarantee tool call args are always complete.
+ * This is how Claude Code works:
+ *   1. User sends a message
+ *   2. LLM responds with text OR tool calls
+ *   3. If tool calls → check permissions → execute → feed results back
+ *   4. Repeat until LLM responds with just text
+ *
+ * Uses invoke() not stream() because streaming returns empty tool args.
  */
 
 import { createModel, type ModelConfig } from "./provider";
 import { DynamicStructuredTool } from "@langchain/core/tools";
-type AnyTool = any;
 import {
   HumanMessage,
   AIMessage,
   SystemMessage,
   ToolMessage,
 } from "@langchain/core/messages";
-import type { BaseMessage, AIMessageChunk } from "@langchain/core/messages";
+import type { BaseMessage } from "@langchain/core/messages";
 import type { ToolRegistry, PermissionManager } from "@cdoing/core";
 import { z } from "zod";
 
@@ -39,264 +42,168 @@ export class AgentRunner {
     systemPrompt?: string
   ) {
     this.model = createModel(modelConfig);
-    this.systemPrompt = systemPrompt || this.getDefaultSystemPrompt();
+    this.systemPrompt = systemPrompt || DEFAULT_SYSTEM_PROMPT;
   }
 
-  private getDefaultSystemPrompt(): string {
-    return `You are Cdoing Agent, an AI-powered coding assistant running in the user's terminal.
-
-You help developers write, debug, refactor, and understand code. You have access to tools that let you read files, write files, edit files, search the codebase, and run shell commands.
-
-Guidelines:
-- Read files before editing them to understand the existing code.
-- Make precise, targeted edits rather than rewriting entire files.
-- Explain what you're doing and why.
-- When running shell commands, prefer safe, non-destructive operations.
-- If you're unsure about something, ask the user.
-- Keep responses concise and focused on the task.
-- Use the search tools to find relevant code before making changes.
-
-The user's working directory is available to all tools. File paths can be relative to this directory.`;
-  }
-
-  private buildLangChainTools(): AnyTool[] {
-    const allTools = this.toolRegistry.getAll();
-    return allTools.map((t) => {
-      const schema = this.buildZodSchema(t.definition.inputSchema);
-      const toolConfig: any = {
+  /**
+   * Convert our JSON Schema tools into LangChain's DynamicStructuredTool.
+   * LangChain needs Zod schemas so we convert on the fly.
+   */
+  private buildLangChainTools() {
+    return this.toolRegistry.getAll().map((t) => {
+      const schema = this.jsonSchemaToZod(t.definition.inputSchema);
+      return new DynamicStructuredTool({
         name: t.definition.name,
         description: t.definition.description,
         schema,
         func: async (input: Record<string, unknown>) => {
           const result = await t.execute(input);
-          if (!result.success) {
-            return `ERROR: ${result.error || "Unknown error"}`;
-          }
-          return result.output;
+          return result.success ? result.output : `ERROR: ${result.error || "Unknown error"}`;
         },
-      };
-      return new DynamicStructuredTool(toolConfig);
+      } as any);
     });
   }
 
-  private buildZodSchema(inputSchema: Record<string, unknown>): z.ZodObject<any> {
-    const properties = (inputSchema.properties || {}) as Record<string, any>;
-    const required = (inputSchema.required || []) as string[];
+  /** Convert JSON Schema properties to a Zod object schema */
+  private jsonSchemaToZod(schema: Record<string, unknown>): z.ZodObject<any> {
+    const props = (schema.properties || {}) as Record<string, any>;
+    const required = (schema.required || []) as string[];
     const shape: Record<string, z.ZodTypeAny> = {};
 
-    for (const [key, prop] of Object.entries(properties)) {
+    for (const [key, prop] of Object.entries(props)) {
       let field: z.ZodTypeAny;
-
       switch (prop.type) {
-        case "string":
-          field = z.string().describe(prop.description || "");
-          break;
-        case "number":
-          field = z.number().describe(prop.description || "");
-          break;
-        case "boolean":
-          field = z.boolean().describe(prop.description || "");
-          break;
-        default:
-          field = z.string().describe(prop.description || "");
+        case "number": field = z.number().describe(prop.description || ""); break;
+        case "boolean": field = z.boolean().describe(prop.description || ""); break;
+        default: field = z.string().describe(prop.description || ""); break;
       }
-
-      if (!required.includes(key)) {
-        field = field.optional();
-      }
-
+      if (!required.includes(key)) field = field.optional();
       shape[key] = field;
     }
-
     return z.object(shape);
   }
 
-  /**
-   * Extract text from response content (string or array format).
-   */
+  /** Pull text out of the response content (handles string or array formats) */
   private extractText(content: unknown): string {
     if (typeof content === "string") return content;
     if (Array.isArray(content)) {
-      return content
-        .map((block) => {
-          if (typeof block === "string") return block;
-          if (block?.type === "text" && block?.text) return block.text;
-          return "";
-        })
-        .join("");
+      return content.map((b) => {
+        if (typeof b === "string") return b;
+        if (b?.type === "text" && b?.text) return b.text;
+        return "";
+      }).join("");
     }
     return "";
   }
 
   /**
-   * Extract tool calls from the response, checking multiple possible locations.
+   * Extract tool calls from invoke() response.
+   * Checks response.tool_calls first, then falls back to additional_kwargs
+   * for maximum provider compatibility.
    */
-  private extractToolCalls(
-    response: AIMessageChunk
-  ): Array<{ id: string; name: string; args: Record<string, unknown> }> {
-    const result: Array<{ id: string; name: string; args: Record<string, unknown> }> = [];
-    const responseAny = response as any;
-
-    // 1. Check response.tool_calls (standard LangChain)
-    if (response.tool_calls && response.tool_calls.length > 0) {
-      for (const tc of response.tool_calls) {
-        if (tc.name) {
-          result.push({
-            id: tc.id || `call_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-            name: tc.name,
-            args: (tc.args || {}) as Record<string, unknown>,
-          });
-        }
-      }
-      // Only use this if args are non-empty
-      if (result.length > 0 && result.some((tc) => Object.keys(tc.args).length > 0)) {
-        return result;
-      }
+  private extractToolCalls(response: any): Array<{ id: string; name: string; args: Record<string, unknown> }> {
+    // 1. Standard LangChain tool_calls (works for Anthropic + OpenAI)
+    if (response.tool_calls?.length > 0) {
+      const calls = response.tool_calls
+        .filter((tc: any) => tc.name)
+        .map((tc: any) => ({
+          id: tc.id || `call_${Date.now()}`,
+          name: tc.name,
+          args: (tc.args || {}) as Record<string, unknown>,
+        }));
+      // Only use if at least one call has non-empty args
+      if (calls.some((c: any) => Object.keys(c.args).length > 0)) return calls;
     }
 
-    // 2. Check additional_kwargs.tool_calls (raw API response)
-    const rawToolCalls = responseAny.additional_kwargs?.tool_calls;
-    if (rawToolCalls && Array.isArray(rawToolCalls) && rawToolCalls.length > 0) {
-      const fromRaw: Array<{ id: string; name: string; args: Record<string, unknown> }> = [];
-      for (const rtc of rawToolCalls) {
+    // 2. Fallback: raw API response in additional_kwargs (OpenAI format)
+    const raw = response.additional_kwargs?.tool_calls;
+    if (raw?.length > 0) {
+      return raw.map((rtc: any) => {
         let args: Record<string, unknown> = {};
-        if (rtc.function?.arguments) {
-          try {
-            args = JSON.parse(rtc.function.arguments);
-          } catch {
-            // ignore parse error
-          }
-        }
-        fromRaw.push({
-          id: rtc.id || `call_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-          name: rtc.function?.name || rtc.name || "",
+        try { args = JSON.parse(rtc.function?.arguments || "{}"); } catch {}
+        return {
+          id: rtc.id || `call_${Date.now()}`,
+          name: rtc.function?.name || "",
           args,
-        });
-      }
-      if (fromRaw.length > 0 && fromRaw.some((tc) => Object.keys(tc.args).length > 0)) {
-        return fromRaw;
-      }
+        };
+      }).filter((c: any) => c.name);
     }
 
-    // 3. Check tool_call_chunks and manually parse
-    if (responseAny.tool_call_chunks && responseAny.tool_call_chunks.length > 0) {
-      const accumulators = new Map<number, { id: string; name: string; argsJson: string }>();
-      for (const tcc of responseAny.tool_call_chunks) {
-        const idx = tcc.index ?? 0;
-        const existing = accumulators.get(idx);
-        if (existing) {
-          if (tcc.id) existing.id = tcc.id;
-          if (tcc.name) existing.name += tcc.name;
-          existing.argsJson += tcc.args || "";
-        } else {
-          accumulators.set(idx, {
-            id: tcc.id || "",
-            name: tcc.name || "",
-            argsJson: tcc.args || "",
-          });
-        }
-      }
-      for (const [, acc] of accumulators) {
-        let args: Record<string, unknown> = {};
-        try {
-          if (acc.argsJson.trim()) args = JSON.parse(acc.argsJson);
-        } catch { /* ignore */ }
-        result.push({
-          id: acc.id || `call_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-          name: acc.name,
-          args,
-        });
-      }
-    }
-
-    return result;
+    return [];
   }
 
   /**
-   * Main agentic loop using invoke() for reliable tool calls.
+   * Run the agentic loop.
+   * Send message → get response → if tools, execute them → loop
    */
   async run(userMessage: string, callbacks: AgentCallbacks): Promise<string> {
     this.messages.push(new HumanMessage(userMessage));
 
     const lcTools = this.buildLangChainTools();
     const modelWithTools = this.model.bindTools(lcTools);
-
     let fullResponse = "";
 
     try {
       while (true) {
+        // Send full conversation to the LLM
         const allMessages: BaseMessage[] = [
           new SystemMessage(this.systemPrompt),
           ...this.messages,
         ];
 
-        // invoke() returns the complete message with fully parsed tool calls
+        // invoke() gives us complete tool_calls with fully parsed args
         const response = await modelWithTools.invoke(allMessages);
 
+        // Show text to the user
         const text = this.extractText(response.content);
-        if (text) {
-          callbacks.onToken(text);
-        }
+        if (text) callbacks.onToken(text);
 
-        // Extract tool calls — tries multiple sources for compatibility
+        // Check for tool calls
         const toolCalls = this.extractToolCalls(response);
 
-        // No tool calls → done
+        // No tools → model is done, save response and exit loop
         if (toolCalls.length === 0) {
           this.messages.push(new AIMessage(text));
           fullResponse += text;
           break;
         }
 
-        // Save AI message with tool calls
-        const aiMsg = new AIMessage({
+        // Save AI message with tool calls to history
+        this.messages.push(new AIMessage({
           content: text,
           tool_calls: toolCalls.map((tc) => ({
-            id: tc.id,
-            name: tc.name,
-            args: tc.args,
-            type: "tool_call" as const,
+            id: tc.id, name: tc.name, args: tc.args, type: "tool_call" as const,
           })),
-        });
-        this.messages.push(aiMsg);
+        }));
         fullResponse += text;
 
         // Execute each tool
         for (const tc of toolCalls) {
           callbacks.onToolCall(tc.name, tc.args);
 
-          const toolInstance = this.toolRegistry.get(tc.name);
-          if (toolInstance) {
-            const allowed = await this.permissionManager.requestPermission(
-              toolInstance.definition,
-              tc.args
-            );
+          // Permission check
+          const tool = this.toolRegistry.get(tc.name);
+          if (tool) {
+            const allowed = await this.permissionManager.requestPermission(tool.definition, tc.args);
             if (!allowed) {
-              const deniedMsg = "Permission denied by user.";
-              this.messages.push(
-                new ToolMessage({ content: deniedMsg, tool_call_id: tc.id })
-              );
-              callbacks.onToolResult(tc.name, deniedMsg, true);
+              this.messages.push(new ToolMessage({ content: "Permission denied by user.", tool_call_id: tc.id }));
+              callbacks.onToolResult(tc.name, "Permission denied", true);
               continue;
             }
           }
 
+          // Execute
           const result = await this.toolRegistry.execute(tc.name, tc.args);
-          const resultText = result.success
-            ? result.output
-            : `ERROR: ${result.error}`;
-
-          this.messages.push(
-            new ToolMessage({ content: resultText, tool_call_id: tc.id })
-          );
+          const resultText = result.success ? result.output : `ERROR: ${result.error}`;
+          this.messages.push(new ToolMessage({ content: resultText, tool_call_id: tc.id }));
           callbacks.onToolResult(tc.name, resultText, !result.success);
         }
+        // Loop back — model sees tool results and decides what's next
       }
 
       callbacks.onComplete();
     } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      callbacks.onError(err);
+      callbacks.onError(error instanceof Error ? error : new Error(String(error)));
     }
 
     return fullResponse;
@@ -306,3 +213,17 @@ The user's working directory is available to all tools. File paths can be relati
     this.messages = [];
   }
 }
+
+const DEFAULT_SYSTEM_PROMPT = `You are Cdoing Agent, an AI coding assistant running in the user's terminal.
+
+You help developers write, debug, refactor, and understand code. You have tools to read files, write files, edit files, search code, run shell commands, and run programs.
+
+Rules:
+- Always read a file before editing it.
+- Make precise edits, don't rewrite entire files.
+- Explain what you're doing briefly.
+- After writing a program, use file_run to test it.
+- Use search tools to find code before making changes.
+- Keep responses concise.
+
+File paths can be relative to the working directory.`;
