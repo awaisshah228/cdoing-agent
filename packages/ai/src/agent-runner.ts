@@ -88,9 +88,51 @@ export class AgentRunner {
   }
 
   private getMaxContext(provider?: string): number {
-    if (provider === "anthropic") return 200000;
-    if (provider === "google") return 1000000;
-    return 128000;
+    switch (provider) {
+      case "anthropic": return 200000;
+      case "google": return 1000000;
+      case "ollama": return 32000; // most Ollama models default to 32k
+      default: return 128000;
+    }
+  }
+
+  /**
+   * Truncate tool output to fit within a character budget.
+   * ~4 chars per token, reserve 50% of context for conversation + system prompt.
+   * The budget is split across parallel tool calls.
+   */
+  private static truncateOutput(text: string, toolName: string, maxChars: number = 30000): string {
+    if (text.length <= maxChars) return text;
+
+    // For search results, truncate at a line boundary
+    if (toolName === "grep_search" || toolName === "glob_search") {
+      const lines = text.split("\n");
+      let result = "";
+      for (const line of lines) {
+        if (result.length + line.length + 1 > maxChars) break;
+        result += line + "\n";
+      }
+      const totalLines = lines.length;
+      const shownLines = result.split("\n").length - 1;
+      return result + `\n... [${totalLines - shownLines} more lines truncated — use more specific search or offset/limit params]`;
+    }
+
+    // For file reads, truncate with context
+    if (toolName === "file_read") {
+      return text.substring(0, maxChars) + `\n\n... [truncated at ${maxChars} chars — use offset/limit params to read specific sections]`;
+    }
+
+    // For shell output, keep head + tail
+    if (toolName === "shell_exec" || toolName === "file_run") {
+      const headSize = Math.floor(maxChars * 0.7);
+      const tailSize = Math.floor(maxChars * 0.25);
+      const head = text.substring(0, headSize);
+      const tail = text.substring(text.length - tailSize);
+      return head + `\n\n... [${text.length - headSize - tailSize} chars truncated] ...\n\n` + tail;
+    }
+
+    // Default: simple truncation
+    return text.substring(0, maxChars) + `\n\n... [truncated at ${maxChars} chars]`;
   }
 
   /**
@@ -323,6 +365,7 @@ export class AgentRunner {
   private async executeSingleTool(
     tc: { id: string; name: string; args: Record<string, unknown> },
     callbacks: AgentCallbacks,
+    maxOutputChars: number = 30000,
   ): Promise<void> {
     callbacks.onToolCall(tc.name, tc.args);
 
@@ -363,6 +406,9 @@ export class AgentRunner {
       resultText = parts.join("\n");
     }
 
+    // Truncate large outputs to protect context window
+    resultText = AgentRunner.truncateOutput(resultText, tc.name, maxOutputChars);
+
     this.messages.push(new ToolMessage({ content: resultText, tool_call_id: tc.id }));
     callbacks.onToolResult(tc.name, resultText, !result.success);
 
@@ -399,8 +445,16 @@ export class AgentRunner {
     toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }>,
     callbacks: AgentCallbacks,
   ): Promise<void> {
+    // Compute per-tool output budget from remaining context window
+    const systemPromptTokens = Math.ceil(this.systemPrompt.length / 4);
+    const totalBudgetChars = this.contextManager.getOutputBudgetChars(this.messages, systemPromptTokens);
+    const perToolBudget = Math.max(
+      5000, // minimum 5k chars per tool
+      Math.floor(totalBudgetChars / Math.max(toolCalls.length, 1))
+    );
+
     if (toolCalls.length === 1) {
-      await this.executeSingleTool(toolCalls[0], callbacks);
+      await this.executeSingleTool(toolCalls[0], callbacks, perToolBudget);
       return;
     }
 
@@ -433,7 +487,7 @@ export class AgentRunner {
 
     // 1. All always-parallel tools run concurrently
     for (const tc of alwaysParallel) {
-      parallelBatch.push(this.executeSingleTool(tc, callbacks));
+      parallelBatch.push(this.executeSingleTool(tc, callbacks, perToolBudget));
     }
 
     // 2. File ops: each file group runs its ops sequentially, but different files run in parallel
@@ -441,7 +495,7 @@ export class AgentRunner {
       parallelBatch.push(
         (async () => {
           for (const tc of group) {
-            await this.executeSingleTool(tc, callbacks);
+            await this.executeSingleTool(tc, callbacks, perToolBudget);
           }
         })()
       );
@@ -454,7 +508,7 @@ export class AgentRunner {
 
     // 3. Shell/run tools always sequential (after all file ops are done)
     for (const tc of alwaysSequential) {
-      await this.executeSingleTool(tc, callbacks);
+      await this.executeSingleTool(tc, callbacks, perToolBudget);
     }
   }
 

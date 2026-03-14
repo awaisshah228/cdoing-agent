@@ -66,6 +66,24 @@ export class ContextManager {
     this.model = model;
   }
 
+  /** Get remaining token capacity (based on current conversation) */
+  getRemainingTokens(messages: BaseMessage[], systemPromptTokens: number = 0): number {
+    const used = this.estimateMessages(messages) + systemPromptTokens;
+    return Math.max(0, this.maxContextTokens - used);
+  }
+
+  /** Get remaining chars budget for tool outputs (~4 chars per token, reserve 20% for LLM response) */
+  getOutputBudgetChars(messages: BaseMessage[], systemPromptTokens: number = 0): number {
+    const remainingTokens = this.getRemainingTokens(messages, systemPromptTokens);
+    // Reserve 20% for the LLM's response, convert rest to chars
+    const availableTokens = Math.floor(remainingTokens * 0.8);
+    return availableTokens * 4; // ~4 chars per token
+  }
+
+  getMaxContextTokens(): number {
+    return this.maxContextTokens;
+  }
+
   /** Estimate total tokens in a message array */
   estimateMessages(messages: BaseMessage[]): number {
     let total = 0;
