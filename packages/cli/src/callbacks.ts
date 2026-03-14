@@ -27,10 +27,10 @@ export function createInteractiveCallbacks(spinner: Ora): AgentCallbacks {
     },
 
     onToolCall: (name, input) => {
+      // Stop spinner so permission prompt can use stdin
       spinner.stop();
       const inputPreview = JSON.stringify(input).substring(0, 80);
       console.log(chalk.yellow(`\n  ⚡ ${name}`) + chalk.dim(` ${inputPreview}`));
-      spinner.start(chalk.dim("  Executing..."));
     },
 
     onToolResult: (name, result, isError) => {
@@ -41,6 +41,7 @@ export function createInteractiveCallbacks(spinner: Ora): AgentCallbacks {
         const preview = result.substring(0, 120).replace(/\n/g, " ");
         console.log(chalk.green(`  ✓ ${name}`) + chalk.dim(` ${preview}`));
       }
+      // Restart spinner — model will think about the next step
       spinner.start(chalk.dim("  Thinking..."));
     },
 

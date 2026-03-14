@@ -1,14 +1,9 @@
 /**
  * agent-runner.ts — The Agentic Loop
  *
- * Orchestrates the AI agent: sends messages to the LLM,
- * streams text tokens live, detects tool calls, parses their
- * complete args, executes tools, and loops until done.
- *
- * Streaming strategy:
- *   - Text tokens → streamed to UI in real-time
- *   - Tool call chunks → collected silently until complete
- *   - Once stream ends → parse accumulated tool call JSON → execute
+ * Streams text live to the UI. When tool calls appear in the stream,
+ * collects their arg chunks until the stream ends, parses the complete
+ * JSON, then executes the tools.
  */
 
 import { createModel, type ModelConfig } from "./provider";
@@ -24,9 +19,6 @@ import type { BaseMessage } from "@langchain/core/messages";
 import type { ToolRegistry, PermissionManager } from "@cdoing/core";
 import { z } from "zod";
 
-/**
- * Callback functions for real-time UI updates.
- */
 export interface AgentCallbacks {
   onToken: (token: string) => void;
   onToolCall: (name: string, input: Record<string, unknown>) => void;
@@ -35,14 +27,11 @@ export interface AgentCallbacks {
   onError: (error: Error) => void;
 }
 
-/**
- * Accumulator for a single tool call built from streaming chunks.
- * Args arrive as partial JSON strings that we concatenate.
- */
+/** Raw accumulator for a tool call built from streaming chunks */
 interface ToolCallAccumulator {
   id: string;
   name: string;
-  argsJson: string; // Raw JSON string, accumulated from chunks
+  argsJson: string;
 }
 
 export class AgentRunner {
@@ -77,9 +66,6 @@ Guidelines:
 The user's working directory is available to all tools. File paths can be relative to this directory.`;
   }
 
-  /**
-   * Convert our tools into LangChain DynamicStructuredTool format.
-   */
   private buildLangChainTools(): AnyTool[] {
     const allTools = this.toolRegistry.getAll();
     return allTools.map((t) => {
@@ -100,9 +86,6 @@ The user's working directory is available to all tools. File paths can be relati
     });
   }
 
-  /**
-   * Convert JSON Schema → Zod schema for LangChain.
-   */
   private buildZodSchema(inputSchema: Record<string, unknown>): z.ZodObject<any> {
     const properties = (inputSchema.properties || {}) as Record<string, any>;
     const required = (inputSchema.required || []) as string[];
@@ -136,11 +119,12 @@ The user's working directory is available to all tools. File paths can be relati
   }
 
   /**
-   * Main entry point — runs the agentic loop.
+   * Main agentic loop.
    *
-   * Streams text to the UI live. When tool_call_chunks appear,
-   * stops streaming text and silently accumulates tool call args.
-   * Once the stream ends, parses the complete args JSON and executes.
+   * Phase 1: Stream response — text goes to UI, tool call chunks accumulate
+   * Phase 2: Parse complete tool call args from accumulated JSON
+   * Phase 3: Execute tools with proper permission checks
+   * Repeat until model responds with text only (no tools)
    */
   async run(userMessage: string, callbacks: AgentCallbacks): Promise<string> {
     this.messages.push(new HumanMessage(userMessage));
@@ -151,7 +135,6 @@ The user's working directory is available to all tools. File paths can be relati
     let fullResponse = "";
 
     try {
-      // ═══ THE AGENTIC LOOP ═══
       while (true) {
         const allMessages: BaseMessage[] = [
           new SystemMessage(this.systemPrompt),
@@ -162,99 +145,92 @@ The user's working directory is available to all tools. File paths can be relati
 
         let currentResponse = "";
         let hasToolCalls = false;
-
-        // Accumulators for tool calls — keyed by index since IDs
-        // may not appear until later chunks
         const toolAccumulators = new Map<number, ToolCallAccumulator>();
 
-        // ── Stream and route chunks ──
+        // ── Phase 1: Stream and collect ──
         for await (const chunk of stream) {
-          // 1) Check for tool_call_chunks (raw streaming pieces)
-          //    These contain the actual streamed args as partial JSON
-          const rawChunks = (chunk as any).tool_call_chunks;
-          if (rawChunks && Array.isArray(rawChunks) && rawChunks.length > 0) {
+          const chunkAny = chunk as any;
+
+          // Check tool_call_chunks first (Anthropic, newer LangChain)
+          // These arrive as: { index, id?, name?, args? } where args is
+          // a JSON string fragment that we concatenate across chunks
+          if (chunkAny.tool_call_chunks?.length > 0) {
             hasToolCalls = true;
-
-            for (const tcc of rawChunks) {
-              const index: number = tcc.index ?? 0;
-
-              if (!toolAccumulators.has(index)) {
-                // First chunk for this tool call — capture name and id
-                toolAccumulators.set(index, {
+            for (const tcc of chunkAny.tool_call_chunks) {
+              const idx: number = tcc.index ?? 0;
+              const existing = toolAccumulators.get(idx);
+              if (existing) {
+                if (tcc.id) existing.id = tcc.id;
+                if (tcc.name) existing.name = tcc.name;
+                existing.argsJson += tcc.args || "";
+              } else {
+                toolAccumulators.set(idx, {
                   id: tcc.id || "",
                   name: tcc.name || "",
                   argsJson: tcc.args || "",
                 });
-              } else {
-                // Subsequent chunk — append args JSON fragment
-                const acc = toolAccumulators.get(index)!;
-                if (tcc.id) acc.id = tcc.id;
-                if (tcc.name) acc.name = tcc.name;
-                acc.argsJson += tcc.args || "";
               }
             }
-
-            // Don't stream text once tool calls start
             continue;
           }
 
-          // 2) Also check tool_calls (some providers send parsed tool_calls
-          //    directly instead of tool_call_chunks)
-          if (chunk.tool_calls && chunk.tool_calls.length > 0) {
+          // Check tool_calls (OpenAI style — may come with partial or full args)
+          const tcList = chunk.tool_calls;
+          if (tcList && tcList.length > 0) {
             hasToolCalls = true;
+            for (let i = 0; i < tcList.length; i++) {
+              const tc = tcList[i];
+              const idx = i;
+              const existing = toolAccumulators.get(idx);
+              const argsStr = typeof tc.args === "string"
+                ? tc.args
+                : JSON.stringify(tc.args || {});
 
-            for (let i = 0; i < chunk.tool_calls.length; i++) {
-              const tc = chunk.tool_calls[i];
-              if (tc.name && Object.keys(tc.args || {}).length > 0) {
-                // This is a complete tool call (not chunked)
-                toolAccumulators.set(i, {
-                  id: tc.id || `call_${Date.now()}_${i}`,
-                  name: tc.name,
-                  argsJson: JSON.stringify(tc.args || {}),
+              if (existing) {
+                if (tc.id) existing.id = tc.id;
+                if (tc.name) existing.name += tc.name;
+                existing.argsJson += argsStr;
+              } else {
+                toolAccumulators.set(idx, {
+                  id: tc.id || "",
+                  name: tc.name || "",
+                  argsJson: argsStr,
                 });
               }
             }
             continue;
           }
 
-          // 3) Stream text tokens to the UI (only if no tool calls yet)
-          if (!hasToolCalls) {
-            if (typeof chunk.content === "string" && chunk.content) {
+          // Stream text tokens only while no tool calls detected
+          if (!hasToolCalls && chunk.content) {
+            if (typeof chunk.content === "string") {
               currentResponse += chunk.content;
               callbacks.onToken(chunk.content);
             } else if (Array.isArray(chunk.content)) {
               for (const block of chunk.content) {
-                if (typeof block === "string" && block) {
-                  currentResponse += block;
-                  callbacks.onToken(block);
-                } else if (
-                  typeof block === "object" &&
-                  block !== null &&
-                  "type" in block &&
-                  block.type === "text" &&
-                  "text" in block
-                ) {
-                  const text = (block as { type: string; text: string }).text;
-                  if (text) {
-                    currentResponse += text;
-                    callbacks.onToken(text);
-                  }
+                let text = "";
+                if (typeof block === "string") {
+                  text = block;
+                } else if (block?.type === "text" && block?.text) {
+                  text = block.text;
+                }
+                if (text) {
+                  currentResponse += text;
+                  callbacks.onToken(text);
                 }
               }
             }
           }
         }
 
-        // ── Stream finished — process results ──
-
+        // ── No tool calls → done ──
         if (!hasToolCalls || toolAccumulators.size === 0) {
-          // Pure text response — we're done
           this.messages.push(new AIMessage(currentResponse));
           fullResponse += currentResponse;
           break;
         }
 
-        // Parse accumulated tool calls from their JSON fragments
+        // ── Phase 2: Parse accumulated tool call args ──
         const toolCalls: Array<{
           id: string;
           name: string;
@@ -263,11 +239,20 @@ The user's working directory is available to all tools. File paths can be relati
 
         for (const [, acc] of toolAccumulators) {
           let args: Record<string, unknown> = {};
-          try {
-            args = acc.argsJson ? JSON.parse(acc.argsJson) : {};
-          } catch {
-            // If JSON parsing fails, try to salvage what we can
-            console.error(`  Warning: Failed to parse tool args for ${acc.name}`);
+
+          // Parse the concatenated JSON string
+          const trimmed = acc.argsJson.trim();
+          if (trimmed) {
+            try {
+              args = JSON.parse(trimmed);
+            } catch {
+              // Try to handle double-encoded JSON like '"{\"key\":\"val\"}"'
+              try {
+                args = JSON.parse(JSON.parse(trimmed));
+              } catch {
+                console.error(`  Warning: Could not parse args for ${acc.name}: ${trimmed.substring(0, 100)}`);
+              }
+            }
           }
 
           toolCalls.push({
@@ -290,11 +275,11 @@ The user's working directory is available to all tools. File paths can be relati
         this.messages.push(aiMsg);
         fullResponse += currentResponse;
 
-        // Execute each tool call
+        // ── Phase 3: Execute tool calls ──
         for (const tc of toolCalls) {
           callbacks.onToolCall(tc.name, tc.args);
 
-          // Check permissions before executing
+          // Permission check
           const toolInstance = this.toolRegistry.get(tc.name);
           if (toolInstance) {
             const allowed = await this.permissionManager.requestPermission(
@@ -332,7 +317,6 @@ The user's working directory is available to all tools. File paths can be relati
     return fullResponse;
   }
 
-  /** Clears conversation history */
   clearHistory(): void {
     this.messages = [];
   }
