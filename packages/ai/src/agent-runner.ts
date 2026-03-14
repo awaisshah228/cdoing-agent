@@ -1,18 +1,15 @@
 /**
  * agent-runner.ts — The Agentic Loop
  *
- * Orchestrates the AI agent: sends messages to the LLM, streams the response,
+ * Orchestrates the AI agent: sends messages to the LLM,
  * detects tool calls, executes tools, feeds results back, and repeats.
  *
  * The loop:
  *   1. Send user message + history to the LLM
- *   2. Stream the response (tokens arrive one at a time)
+ *   2. Get the response (complete message with tool calls)
  *   3. If the LLM wants to call a tool → execute it, add result to history
  *   4. Go back to step 1 (the LLM sees the tool result and continues)
  *   5. When the LLM responds with just text (no tools) → done
- *
- * This is the core "agent" behavior: the LLM can read files, search code,
- * edit files, and run commands by calling tools in a loop until it's done.
  */
 
 import { createModel, type ModelConfig } from "./provider";
@@ -21,7 +18,6 @@ type AnyTool = any;
 import {
   HumanMessage,
   AIMessage,
-  AIMessageChunk,
   SystemMessage,
   ToolMessage,
 } from "@langchain/core/messages";
@@ -31,7 +27,6 @@ import { z } from "zod";
 
 /**
  * Callback functions that the caller provides to receive real-time updates.
- * The CLI and extension use these to relay events to their UIs.
  */
 export interface AgentCallbacks {
   onToken: (token: string) => void;
@@ -56,7 +51,6 @@ export class AgentRunner {
     this.systemPrompt = systemPrompt || this.getDefaultSystemPrompt();
   }
 
-  /** Default instructions that tell the AI how to behave */
   private getDefaultSystemPrompt(): string {
     return `You are Cdoing Agent, an AI-powered coding assistant running in the user's terminal.
 
@@ -75,8 +69,7 @@ The user's working directory is available to all tools. File paths can be relati
   }
 
   /**
-   * Converts our tools (from @cdoing/core) into LangChain's DynamicStructuredTool format.
-   * LangChain needs Zod schemas, but our tools use JSON Schema — so we convert them.
+   * Converts our tools into LangChain's DynamicStructuredTool format.
    */
   private buildLangChainTools(): AnyTool[] {
     const allTools = this.toolRegistry.getAll();
@@ -100,7 +93,6 @@ The user's working directory is available to all tools. File paths can be relati
 
   /**
    * Converts a JSON Schema object to a Zod schema.
-   * LangChain uses Zod for tool parameter validation.
    */
   private buildZodSchema(inputSchema: Record<string, unknown>): z.ZodObject<any> {
     const properties = (inputSchema.properties || {}) as Record<string, any>;
@@ -135,17 +127,15 @@ The user's working directory is available to all tools. File paths can be relati
   }
 
   /**
-   * Extract text content from a streaming chunk.
-   * Handles both string and array content formats from different providers.
+   * Extract text content from the AI response.
+   * Handles both string and array content formats.
    */
-  private extractTextFromChunk(chunk: AIMessageChunk): string {
-    if (typeof chunk.content === "string") {
-      return chunk.content;
-    }
+  private extractText(content: unknown): string {
+    if (typeof content === "string") return content;
 
-    if (Array.isArray(chunk.content)) {
+    if (Array.isArray(content)) {
       let text = "";
-      for (const block of chunk.content) {
+      for (const block of content) {
         if (typeof block === "string") {
           text += block;
         } else if (
@@ -167,8 +157,9 @@ The user's working directory is available to all tools. File paths can be relati
   /**
    * Main entry point — runs the agentic loop.
    *
-   * Streams the response for text tokens, then uses the aggregated final message
-   * to reliably extract tool calls with their complete arguments.
+   * Uses .invoke() for reliable tool call extraction.
+   * Tool args from streaming were arriving empty — invoke gives us
+   * the complete message with fully parsed arguments every time.
    */
   async run(userMessage: string, callbacks: AgentCallbacks): Promise<string> {
     this.messages.push(new HumanMessage(userMessage));
@@ -186,40 +177,28 @@ The user's working directory is available to all tools. File paths can be relati
           ...this.messages,
         ];
 
-        // Stream the response and accumulate chunks.
-        // We stream for live text display, but aggregate the full message
-        // to get reliable tool_calls with complete args.
-        const stream = await modelWithTools.stream(allMessages);
-        let currentResponse = "";
-        let aggregated: AIMessageChunk | null = null;
+        // Use invoke() to get the complete response with proper tool_calls.
+        // Streaming had a bug where tool args arrived as empty objects {}.
+        const response = await modelWithTools.invoke(allMessages);
 
-        for await (const chunk of stream) {
-          // Aggregate all chunks — this gives us the final message with
-          // properly merged tool_calls and their complete arguments
-          aggregated = aggregated ? aggregated.concat(chunk) : chunk;
-
-          // Stream text tokens to the UI in real-time
-          const text = this.extractTextFromChunk(chunk);
-          if (text) {
-            currentResponse += text;
-            callbacks.onToken(text);
-          }
+        // Extract text content from the response
+        const currentResponse = this.extractText(response.content);
+        if (currentResponse) {
+          callbacks.onToken(currentResponse);
         }
 
-        // Extract tool calls from the fully aggregated message.
-        // This is the key fix: streaming chunks have partial/empty args,
-        // but the aggregated message has the complete, parsed arguments.
+        // Extract tool calls from the complete response
         const toolCalls: Array<{
           id: string;
           name: string;
           args: Record<string, unknown>;
         }> = [];
 
-        if (aggregated?.tool_calls && aggregated.tool_calls.length > 0) {
-          for (const tc of aggregated.tool_calls) {
-            if (tc.name && tc.id) {
+        if (response.tool_calls && response.tool_calls.length > 0) {
+          for (const tc of response.tool_calls) {
+            if (tc.name) {
               toolCalls.push({
-                id: tc.id,
+                id: tc.id || `call_${Date.now()}_${Math.random().toString(36).slice(2)}`,
                 name: tc.name,
                 args: (tc.args || {}) as Record<string, unknown>,
               });
@@ -247,11 +226,10 @@ The user's working directory is available to all tools. File paths can be relati
         this.messages.push(aiMsg);
         fullResponse += currentResponse;
 
-        // Execute each tool call
         for (const tc of toolCalls) {
           callbacks.onToolCall(tc.name, tc.args);
 
-          // Check permissions before executing
+          // Check permissions
           const toolInstance = this.toolRegistry.get(tc.name);
           if (toolInstance) {
             const allowed = await this.permissionManager.requestPermission(
@@ -268,7 +246,7 @@ The user's working directory is available to all tools. File paths can be relati
             }
           }
 
-          // Run the tool
+          // Execute the tool
           const result = await this.toolRegistry.execute(tc.name, tc.args);
           const resultText = result.success
             ? result.output

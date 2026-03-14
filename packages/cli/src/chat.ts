@@ -104,11 +104,15 @@ export class ChatInterface {
     }
   }
 
-  /** Send a message to the agent and stream the response */
+  /** Send a message to the agent and display the response */
   private async sendMessage(message: string): Promise<void> {
     console.log();
     const callbacks = createInteractiveCallbacks(this.spinner);
     this.spinner.start(chalk.dim("  Thinking..."));
+
+    // Close the chat readline so stdin is free for permission prompts.
+    // We'll recreate it after the agent finishes.
+    this.rl.close();
 
     try {
       await this.agent.run(message, callbacks);
@@ -117,6 +121,12 @@ export class ChatInterface {
       const msg = error instanceof Error ? error.message : String(error);
       console.log(chalk.red(`\n  Error: ${msg}\n`));
     }
+
+    // Recreate readline for the next user prompt
+    this.rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
   }
 
   /** Clean up readline resources */
