@@ -46,7 +46,8 @@ export function buildModelConfig(options: CLIOptions): Partial<ModelConfig> {
 }
 
 export function createPermissionManager(options: CLIOptions): PermissionManager {
-  return new PermissionManager(parsePermissionMode(options.mode));
+  const dir = path.resolve(options.dir || process.cwd());
+  return new PermissionManager(parsePermissionMode(options.mode), dir);
 }
 
 // ── Config file ─────────────────────────────────────────────

@@ -9,6 +9,7 @@
  *   /provider <name>    — switch provider
  *   /mode <mode>        — change permission mode
  *   /dir <path>         — change working directory
+ *   /permissions        — view/clear stored permissions
  *   /new                — start a new conversation
  *   /history            — list saved conversations
  *   /resume <id>        — resume a saved conversation
@@ -224,8 +225,13 @@ export class ChatInterface {
         }
         this.workingDir = newDir;
         this.toolRegistry = createToolRegistry(newDir);
+        this.permissionManager.setProjectDir(newDir);
         this.rebuildAgent();
         console.log(chalk.green(`\n  Working directory: ${newDir}\n`));
+        return true;
+
+      case "/permissions":
+        this.showPermissions(arg);
         return true;
 
       case "/exit":
@@ -239,6 +245,61 @@ export class ChatInterface {
         console.log(chalk.dim("  Type ? or /help for available commands.\n"));
         return true;
     }
+  }
+
+  /** Show or clear stored permission rules */
+  private showPermissions(arg: string): void {
+    if (arg === "clear") {
+      this.permissionManager.removeRule();
+      console.log(chalk.green("\n  All stored permissions cleared.\n"));
+      return;
+    }
+    if (arg === "clear-global") {
+      this.permissionManager.removeRule(undefined, "global");
+      console.log(chalk.green("\n  Global permissions cleared.\n"));
+      return;
+    }
+    if (arg === "clear-project") {
+      this.permissionManager.removeRule(undefined, "project");
+      console.log(chalk.green("\n  Project permissions cleared.\n"));
+      return;
+    }
+    if (arg && !arg.startsWith("clear")) {
+      this.permissionManager.removeRule(arg);
+      console.log(chalk.green(`\n  Permissions cleared for: ${arg}\n`));
+      return;
+    }
+
+    const { global: globalRules, project: projectRules } = this.permissionManager.getStoredRules();
+
+    if (globalRules.length === 0 && projectRules.length === 0) {
+      console.log(chalk.dim("\n  No stored permissions."));
+      console.log(chalk.dim("  When prompted, press (a) to always allow or (p) for project only.\n"));
+      return;
+    }
+
+    if (globalRules.length > 0) {
+      console.log(chalk.bold("\n  Global permissions") + chalk.dim(" (~/.cdoing/permissions.json):\n"));
+      for (const rule of globalRules) {
+        const label = rule.tool.replace(/_/g, " ");
+        const match = rule.inputMatch ? chalk.dim(` (${rule.inputMatch})`) : chalk.dim(" (all)");
+        console.log(`    ${chalk.green("✓")} ${label}${match}`);
+      }
+    }
+
+    if (projectRules.length > 0) {
+      console.log(chalk.bold("\n  Project permissions") + chalk.dim(" (.cdoing/permissions.json):\n"));
+      for (const rule of projectRules) {
+        const label = rule.tool.replace(/_/g, " ");
+        const match = rule.inputMatch ? chalk.dim(` (${rule.inputMatch})`) : chalk.dim(" (all)");
+        console.log(`    ${chalk.green("✓")} ${label}${match}`);
+      }
+    }
+
+    console.log(chalk.dim(`\n  /permissions clear          — remove all`));
+    console.log(chalk.dim(`  /permissions clear-global   — remove global only`));
+    console.log(chalk.dim(`  /permissions clear-project  — remove project only`));
+    console.log(chalk.dim(`  /permissions <tool_name>    — remove specific tool\n`));
   }
 
   /** Resume a saved conversation by replaying its messages into the agent */
