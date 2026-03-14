@@ -42,6 +42,8 @@ export interface AgentRunnerOptions {
   retryDelayMs?: number;
   projectConfig?: string;
   memory?: string;
+  systemPrompt?: string;
+  maxTurns?: number;
 }
 
 export class AgentRunner {
@@ -52,6 +54,8 @@ export class AgentRunner {
   private hookManager: HookManager | null;
   private maxRetries: number;
   private retryDelayMs: number;
+  private maxTurns: number;
+  private currentTurns: number = 0;
 
   constructor(
     modelConfig: Partial<ModelConfig>,
@@ -64,13 +68,20 @@ export class AgentRunner {
     this.hookManager = hookManager || null;
     this.maxRetries = options?.maxRetries ?? 3;
     this.retryDelayMs = options?.retryDelayMs ?? 1000;
+    this.maxTurns = options?.maxTurns ?? Infinity;
 
     const workingDir = process.cwd();
-    this.systemPrompt = buildSystemPrompt({
-      workingDir,
-      projectConfig: options?.projectConfig || undefined,
-      memory: options?.memory || undefined,
-    });
+
+    // Use custom system prompt if provided, otherwise build default
+    if (options?.systemPrompt) {
+      this.systemPrompt = options.systemPrompt;
+    } else {
+      this.systemPrompt = buildSystemPrompt({
+        workingDir,
+        projectConfig: options?.projectConfig || undefined,
+        memory: options?.memory || undefined,
+      });
+    }
 
     const maxContext = this.getMaxContext(modelConfig.provider);
     this.contextManager = new ContextManager(maxContext, modelConfig.model || "");
@@ -210,6 +221,7 @@ export class AgentRunner {
    */
   async run(userMessage: string, callbacks: AgentCallbacks): Promise<string> {
     this.messages.push(new HumanMessage(userMessage));
+    this.currentTurns = 0;
 
     const toolDefs = this.buildToolDefinitions();
     const modelWithTools = this.model.bindTools(toolDefs);
@@ -217,6 +229,12 @@ export class AgentRunner {
 
     try {
       while (true) {
+        // Check max turns limit
+        this.currentTurns++;
+        if (this.currentTurns > this.maxTurns) {
+          callbacks.onToken(`\n[Max turns (${this.maxTurns}) reached]`);
+          break;
+        }
         // Compress context if needed
         this.messages = this.contextManager.compressIfNeeded(
           this.messages,
@@ -355,5 +373,13 @@ export class AgentRunner {
     } else {
       this.messages.push(new AIMessage(content));
     }
+  }
+
+  getHistory(): BaseMessage[] {
+    return this.messages;
+  }
+
+  setHistory(messages: BaseMessage[]): void {
+    this.messages = messages;
   }
 }

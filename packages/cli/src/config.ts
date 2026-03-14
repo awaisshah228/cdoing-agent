@@ -32,6 +32,16 @@ export interface CLIOptions {
   dir: string;
   login?: boolean;
   logout?: boolean;
+  // New flags
+  print?: boolean;
+  resume?: string;
+  continue?: boolean;
+  maxTurns?: string;
+  outputFormat?: string;
+  verbose?: boolean;
+  systemPrompt?: string;
+  allowedTools?: string;
+  disallowedTools?: string;
 }
 
 export function parsePermissionMode(mode: string): PermissionMode {

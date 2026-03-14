@@ -44,6 +44,7 @@ import {
   type Conversation,
 } from "./history";
 import { oauthLogout, oauthStatus } from "./oauth";
+import { handleInit, handleDoctor } from "./commands";
 
 export class ChatInterface {
   private rl!: readline.Interface;
@@ -110,6 +111,10 @@ export class ChatInterface {
     { cmd: "/memory", desc: "View/manage memory" },
     { cmd: "/hooks", desc: "View configured hooks" },
     { cmd: "/usage", desc: "Show token usage" },
+    { cmd: "/compact", desc: "Compress context" },
+    { cmd: "/cost", desc: "Show cost breakdown" },
+    { cmd: "/doctor", desc: "Check system health" },
+    { cmd: "/init", desc: "Initialize project" },
     { cmd: "/login", desc: "Authentication setup" },
     { cmd: "/logout", desc: "Clear OAuth tokens" },
     { cmd: "/auth-status", desc: "Show auth status" },
@@ -402,6 +407,22 @@ export class ChatInterface {
         this.showUsage();
         return true;
 
+      case "/compact":
+        this.compactContext();
+        return true;
+
+      case "/cost":
+        this.showDetailedCost();
+        return true;
+
+      case "/doctor":
+        handleDoctor();
+        return true;
+
+      case "/init":
+        handleInit();
+        return true;
+
       case "/login":
         this.showLoginHelp();
         return true;
@@ -536,6 +557,39 @@ export class ChatInterface {
     const cm = this.agent.getContextManager();
     const formatted = cm.formatTotalUsage();
     console.log(chalk.dim(`\n  ${formatted}\n`));
+  }
+
+  /** Compress conversation context manually */
+  private compactContext(): void {
+    const cm = this.agent.getContextManager();
+    const history = this.agent.getHistory();
+    const before = cm.estimateMessages(history);
+    const compressed = cm.compressIfNeeded(history, "");
+    const after = cm.estimateMessages(compressed);
+
+    if (before === after) {
+      console.log(chalk.dim("\n  Context is already compact.\n"));
+    } else {
+      // Update agent history with compressed version
+      this.agent.setHistory(compressed);
+      console.log(chalk.green(`\n  Compressed: ${before.toLocaleString()} -> ${after.toLocaleString()} tokens\n`));
+    }
+  }
+
+  /** Show detailed cost breakdown */
+  private showDetailedCost(): void {
+    const cm = this.agent.getContextManager();
+    const { tokens, cost, turns } = cm.getTotalUsage();
+
+    console.log(chalk.bold("\n  Session Cost Breakdown:\n"));
+    console.log(`    Turns:         ${turns}`);
+    console.log(`    Input tokens:  ${tokens.inputTokens.toLocaleString()}`);
+    console.log(`    Output tokens: ${tokens.outputTokens.toLocaleString()}`);
+    console.log(`    Total tokens:  ${tokens.totalTokens.toLocaleString()}`);
+    if (cost !== undefined) {
+      console.log(`    Estimated cost: $${cost.toFixed(4)}`);
+    }
+    console.log();
   }
 
   /** Show login/auth help */

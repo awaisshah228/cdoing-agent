@@ -147,3 +147,40 @@ export function createOneShotCallbacks(): AgentCallbacks {
     },
   };
 }
+
+/** Print mode: simple text output (for --print flag) */
+export function createPrintCallbacks(): AgentCallbacks {
+  return {
+    onToken: (token) => process.stdout.write(token),
+    onToolCall: () => {},
+    onToolResult: () => {},
+    onComplete: () => console.log(),
+    onError: (e) => console.error(e.message),
+  };
+}
+
+/** JSON mode: structured JSON output (for --output-format json) */
+export function createJsonCallbacks(): AgentCallbacks {
+  const result: { response: string; tools: Array<{ name: string; input: Record<string, unknown> }> } = {
+    response: "",
+    tools: [],
+  };
+  return {
+    onToken: (token) => { result.response += token; },
+    onToolCall: (name, input) => { result.tools.push({ name, input }); },
+    onToolResult: () => {},
+    onComplete: () => console.log(JSON.stringify(result, null, 2)),
+    onError: (e) => console.error(JSON.stringify({ error: e.message })),
+  };
+}
+
+/** Stream JSON mode: line-delimited JSON events (for --output-format stream-json) */
+export function createStreamJsonCallbacks(): AgentCallbacks {
+  return {
+    onToken: (token) => console.log(JSON.stringify({ type: "token", data: token })),
+    onToolCall: (name, input) => console.log(JSON.stringify({ type: "tool_call", name, input })),
+    onToolResult: (name, result) => console.log(JSON.stringify({ type: "tool_result", name, result })),
+    onComplete: () => console.log(JSON.stringify({ type: "complete" })),
+    onError: (e) => console.log(JSON.stringify({ type: "error", message: e.message })),
+  };
+}

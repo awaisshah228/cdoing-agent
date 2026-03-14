@@ -11,9 +11,11 @@ import { HookManager, loadProjectConfig, MemoryStore } from "@cdoing/core";
 import { ChatInterface } from "./chat";
 import { buildModelConfig, createPermissionManager, resolveApiKey, type CLIOptions } from "./config";
 import { createToolRegistry } from "./tools";
-import { createOneShotCallbacks } from "./callbacks";
+import { createOneShotCallbacks, createPrintCallbacks, createJsonCallbacks, createStreamJsonCallbacks } from "./callbacks";
 import chalk from "chalk";
 import { oauthLogout } from "./oauth";
+import { handleConfigCommand, handleInit, handleDoctor } from "./commands";
+import { loadConversation, loadLastConversation } from "./history";
 
 const program = new Command();
 
@@ -29,8 +31,37 @@ program
   .option("-d, --dir <directory>", "Working directory", process.cwd())
   .option("--login", "Login with Claude via OAuth (opens browser)")
   .option("--logout", "Clear stored OAuth tokens")
+  // New flags
+  .option("--print", "Print output only (non-interactive)")
+  .option("-r, --resume <id>", "Resume conversation by ID")
+  .option("-c, --continue", "Continue most recent conversation")
+  .option("--max-turns <n>", "Maximum agent turns")
+  .option("--output-format <format>", "Output format: text, json, stream-json", "text")
+  .option("--verbose", "Enable verbose logging")
+  .option("--system-prompt <prompt>", "Custom system prompt")
+  .option("--allowed-tools <tools>", "Comma-separated list of allowed tools")
+  .option("--disallowed-tools <tools>", "Comma-separated list of disallowed tools")
   .argument("[prompt]", "One-shot prompt (skips interactive mode)")
   .action(run);
+
+// Subcommands
+program
+  .command("config")
+  .description("Manage configuration")
+  .argument("<action>", "Action: get, set, or list")
+  .argument("[key]", "Config key")
+  .argument("[value]", "Config value (for set)")
+  .action(handleConfigCommand);
+
+program
+  .command("init")
+  .description("Initialize project with .cdoing/config.md")
+  .action(handleInit);
+
+program
+  .command("doctor")
+  .description("Diagnose setup and configuration issues")
+  .action(handleDoctor);
 
 /** Create a sub-agent factory: spawns a child agent without sub_agent tool */
 function createSubAgentFactory(
@@ -80,6 +111,12 @@ async function run(prompt: string | undefined, options: CLIOptions) {
     // Continue to resolveApiKey which will prompt for the key
   }
 
+  // Enable verbose logging if requested
+  if (options.verbose) {
+    process.env.DEBUG = "cdoing:*";
+    console.log(chalk.dim("[verbose] Verbose logging enabled"));
+  }
+
   await resolveApiKey(options);
 
   const modelConfig = buildModelConfig(options);
@@ -88,24 +125,115 @@ async function run(prompt: string | undefined, options: CLIOptions) {
   const memoryStore = new MemoryStore();
   const projectConfig = loadProjectConfig(options.dir);
 
-  const agentOptions = {
+  const agentOptions: import("@cdoing/ai").AgentRunnerOptions = {
     projectConfig: projectConfig || undefined,
     memory: memoryStore.formatForPrompt() || undefined,
   };
+
+  // Handle custom system prompt
+  if (options.systemPrompt) {
+    agentOptions.systemPrompt = options.systemPrompt;
+  }
+
+  // Handle max turns
+  if (options.maxTurns) {
+    agentOptions.maxTurns = parseInt(options.maxTurns, 10);
+  }
 
   const subAgentFactory = createSubAgentFactory(
     modelConfig, options.dir, permissionManager, hookManager, agentOptions,
   );
 
-  const toolRegistry = createToolRegistry(options.dir, subAgentFactory);
+  let toolRegistry = createToolRegistry(options.dir, subAgentFactory);
+
+  // Handle tool filtering
+  if (options.allowedTools) {
+    const allowed = options.allowedTools.split(",").map(t => t.trim());
+    toolRegistry = filterTools(toolRegistry, allowed, "allow");
+    if (options.verbose) {
+      console.log(chalk.dim(`[verbose] Allowed tools: ${allowed.join(", ")}`));
+    }
+  }
+  if (options.disallowedTools) {
+    const disallowed = options.disallowedTools.split(",").map(t => t.trim());
+    toolRegistry = filterTools(toolRegistry, disallowed, "disallow");
+    if (options.verbose) {
+      console.log(chalk.dim(`[verbose] Disallowed tools: ${disallowed.join(", ")}`));
+    }
+  }
+
+  // Handle --resume or --continue
+  let resumedConversation: import("./history").Conversation | null = null;
+  if (options.resume) {
+    resumedConversation = loadConversation(options.resume);
+    if (!resumedConversation) {
+      console.log(chalk.red(`\n  Conversation not found: ${options.resume}\n`));
+      process.exit(1);
+    }
+    if (options.verbose) {
+      console.log(chalk.dim(`[verbose] Resuming conversation: ${options.resume}`));
+    }
+  } else if (options.continue) {
+    resumedConversation = loadLastConversation();
+    if (!resumedConversation) {
+      console.log(chalk.yellow("\n  No previous conversation to continue.\n"));
+    } else if (options.verbose) {
+      console.log(chalk.dim(`[verbose] Continuing conversation: ${resumedConversation.id}`));
+    }
+  }
 
   if (prompt) {
     const agent = new AgentRunner(modelConfig, toolRegistry, permissionManager, hookManager, agentOptions);
-    await agent.run(prompt, createOneShotCallbacks());
+
+    // Restore history from resumed conversation
+    if (resumedConversation) {
+      for (const msg of resumedConversation.messages) {
+        if (msg.role === "user") {
+          agent.addToHistory("user", msg.content);
+        } else if (msg.role === "assistant") {
+          agent.addToHistory("assistant", msg.content);
+        }
+      }
+    }
+
+    // Select callbacks based on output format and print mode
+    let callbacks;
+    if (options.print) {
+      callbacks = createPrintCallbacks();
+    } else if (options.outputFormat === "json") {
+      callbacks = createJsonCallbacks();
+    } else if (options.outputFormat === "stream-json") {
+      callbacks = createStreamJsonCallbacks();
+    } else {
+      callbacks = createOneShotCallbacks();
+    }
+
+    await agent.run(prompt, callbacks);
   } else {
     const chat = new ChatInterface(modelConfig, toolRegistry, permissionManager, hookManager, memoryStore);
     await chat.start();
   }
+}
+
+/** Filter tools based on allow/disallow list */
+function filterTools(
+  registry: import("@cdoing/core").ToolRegistry,
+  toolNames: string[],
+  mode: "allow" | "disallow"
+): import("@cdoing/core").ToolRegistry {
+  const allTools = registry.getAll();
+  const filtered = allTools.filter(tool => {
+    const isInList = toolNames.includes(tool.definition.name);
+    return mode === "allow" ? isInList : !isInList;
+  });
+
+  // Create a new registry with filtered tools
+  const { ToolRegistry } = require("@cdoing/core");
+  const newRegistry = new ToolRegistry();
+  for (const tool of filtered) {
+    newRegistry.register(tool);
+  }
+  return newRegistry;
 }
 
 program.parse();

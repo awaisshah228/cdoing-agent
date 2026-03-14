@@ -118,6 +118,12 @@ export function listConversations(): Conversation[] {
   return convs.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+/** Load the most recent conversation (for --continue flag) */
+export function loadLastConversation(): Conversation | null {
+  const all = listConversations();
+  return all.length > 0 ? all[0] : null;
+}
+
 /** Delete a conversation by ID */
 export function deleteConversation(id: string): boolean {
   const filePath = path.join(CONV_DIR, `${id}.json`);
