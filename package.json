@@ -8,7 +8,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
-    "start": "npm run build -w packages/core -w packages/ai && npm run dev -w packages/cli",
+    "start": "yarn workspace @cdoing/core build && yarn workspace @cdoing/ai build && yarn workspace @cdoing/cli dev",
     "clean": "turbo run clean"
   },
   "devDependencies": {
@@ -16,6 +16,7 @@
     "turbo": "^2.4.4",
     "typescript": "^5.8.2"
   },
+  "packageManager": "yarn@1.22.22",
   "engines": {
     "node": ">=18.0.0"
   }
