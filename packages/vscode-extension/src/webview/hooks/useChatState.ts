@@ -198,7 +198,19 @@ export function useChatState() {
           clearAll();
           break;
         case "usageInfo":
-          addSystemMessage(`📊 ${msg.text}`);
+          // Append usage as a subtle footer on the last assistant message (not a separate message)
+          setEntries((prev) => {
+            // Find the last assistant message and append usage to it
+            for (let i = prev.length - 1; i >= 0; i--) {
+              const entry = prev[i];
+              if ("role" in entry && entry.role === "assistant") {
+                const updated = { ...entry, content: entry.content + `\n\n---\n*${msg.text}*` };
+                return [...prev.slice(0, i), updated, ...prev.slice(i + 1)];
+              }
+            }
+            // No assistant message found — skip (don't create a separate message)
+            return prev;
+          });
           break;
         case "configUpdated":
           setProviderLabel(msg.provider);
