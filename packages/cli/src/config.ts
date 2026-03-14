@@ -158,12 +158,85 @@ function ask(question: string): Promise<string> {
   });
 }
 
+interface SelectOption {
+  label: string;
+  hint?: string;
+  value: string;
+}
+
+function selectMenu(title: string, options: SelectOption[], defaultIndex = 0): Promise<string> {
+  return new Promise((resolve) => {
+    let idx = defaultIndex;
+
+    const render = () => {
+      // Move cursor up to redraw (skip on first render)
+      if ((render as any).drawn) {
+        process.stdout.write(`\x1b[${options.length + 1}A`);
+      }
+      (render as any).drawn = true;
+
+      process.stdout.write(`\n`);
+      options.forEach((opt, i) => {
+        const selected = i === idx;
+        const pointer = selected ? chalk.cyan("  ❯ ") : "    ";
+        const label = selected ? chalk.bold.white(opt.label) : chalk.white(opt.label);
+        const hint = opt.hint ? chalk.dim(`  ${opt.hint}`) : "";
+        process.stdout.write(`${pointer}${label}${hint}\n`);
+      });
+    };
+
+    console.log(chalk.bold.cyan(`\n  ${title}`));
+    render();
+
+    readline.emitKeypressEvents(process.stdin);
+    if (process.stdin.isTTY) process.stdin.setRawMode(true);
+
+    const onKey = (_: string, key: readline.Key) => {
+      if (key.name === "up") {
+        idx = (idx - 1 + options.length) % options.length;
+        render();
+      } else if (key.name === "down") {
+        idx = (idx + 1) % options.length;
+        render();
+      } else if (key.name === "return") {
+        if (process.stdin.isTTY) process.stdin.setRawMode(false);
+        process.stdin.removeListener("keypress", onKey);
+        process.stdout.write("\n");
+        resolve(options[idx].value);
+      } else if (key.name === "c" && key.ctrl) {
+        process.stdout.write("\n");
+        process.exit(0);
+      }
+    };
+
+    process.stdin.on("keypress", onKey);
+  });
+}
+
 // ── API key resolution ──────────────────────────────────────
 
 const PROVIDER_INFO: Record<string, { name: string; url: string }> = {
   anthropic: { name: "Anthropic (Claude)", url: "https://console.anthropic.com/settings/keys" },
   openai: { name: "OpenAI (GPT)", url: "https://platform.openai.com/api-keys" },
   google: { name: "Google (Gemini)", url: "https://aistudio.google.com/apikey" },
+};
+
+const PROVIDER_MODELS: Record<string, SelectOption[]> = {
+  anthropic: [
+    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", hint: "recommended · fast & smart" },
+    { value: "claude-opus-4-6",   label: "Claude Opus 4.6",   hint: "most capable" },
+    { value: "claude-haiku-4-5",  label: "Claude Haiku 4.5",  hint: "fastest" },
+  ],
+  openai: [
+    { value: "gpt-4o",      label: "GPT-4o",      hint: "recommended" },
+    { value: "gpt-4o-mini", label: "GPT-4o mini",  hint: "fastest" },
+    { value: "o3-mini",     label: "o3-mini",      hint: "reasoning" },
+  ],
+  google: [
+    { value: "gemini-2.0-flash",  label: "Gemini 2.0 Flash",  hint: "recommended · fast" },
+    { value: "gemini-1.5-pro",    label: "Gemini 1.5 Pro",    hint: "most capable" },
+    { value: "gemini-1.5-flash",  label: "Gemini 1.5 Flash",  hint: "fastest" },
+  ],
 };
 
 /**
@@ -195,24 +268,53 @@ export async function resolveApiKey(options: CLIOptions): Promise<void> {
   }
 
   // Interactive setup
-  const info = PROVIDER_INFO[provider];
+  const stored2 = loadConfig();
   console.log();
   console.log(chalk.bold.cyan("  Welcome to Cdoing Agent!"));
-  console.log(chalk.dim("  Let's set up authentication.\n"));
-  console.log(chalk.white(`  Provider: ${chalk.bold(info?.name || provider)}`));
+  console.log(chalk.dim("  Let's set up authentication."));
 
-  if (provider === "anthropic") {
-    console.log();
-    console.log(chalk.white("  Choose authentication method:\n"));
-    console.log(chalk.white("    1) API key from Anthropic Console") + chalk.dim(" (recommended)"));
-    console.log(chalk.dim("       Get one at: https://console.anthropic.com/settings/keys\n"));
-    console.log(chalk.white("    2) Claude Code OAuth token") + chalk.dim(" (if you have Claude Pro/Max)"));
-    console.log(chalk.dim("       Run: claude config get oauth_token"));
-    console.log();
+  // Always show provider selection — pre-select stored or current value
+  const providerOptions = [
+    { value: "anthropic", label: "Anthropic (Claude)", hint: "claude-sonnet-4-6, claude-opus-4-6" },
+    { value: "openai",    label: "OpenAI (GPT)",       hint: "gpt-4o, gpt-4o-mini" },
+    { value: "google",    label: "Google (Gemini)",    hint: "gemini-2.0-flash, gemini-1.5-pro" },
+  ];
+  const currentProvider = stored2.provider || options.provider || "anthropic";
+  const defaultProviderIdx = Math.max(0, providerOptions.findIndex(p => p.value === currentProvider));
+  const chosenProvider = await selectMenu("Choose a provider  (↑↓ navigate · Enter select)", providerOptions, defaultProviderIdx);
+  options.provider = chosenProvider;
 
-    const choice = await ask(chalk.green("  Choose (1/2): "));
+  const provider2 = options.provider.toLowerCase();
 
-    if (choice === "2") {
+  // Re-check env/stored now that provider is confirmed
+  const envVar2 = getApiKeyEnvVar(provider2);
+  if (process.env[envVar2]) return;
+  if (stored2.apiKeys?.[provider2]) {
+    options.apiKey = stored2.apiKeys[provider2];
+    return;
+  }
+  if (provider2 === "anthropic") {
+    const oauthToken = await resolveOAuthToken();
+    if (oauthToken) { options.apiKey = oauthToken; return; }
+  }
+
+  // Model selection
+  const modelOptions = PROVIDER_MODELS[provider2];
+  if (modelOptions && !options.model && !stored2.model) {
+    const chosenModel = await selectMenu("Choose a model  (↑↓ navigate · Enter select)", modelOptions);
+    options.model = chosenModel;
+  }
+
+  const info = PROVIDER_INFO[provider2];
+
+  // Anthropic: offer API key or OAuth
+  if (provider2 === "anthropic") {
+    const authMethod = await selectMenu("Choose authentication method", [
+      { value: "apikey", label: "API key",        hint: "from console.anthropic.com" },
+      { value: "oauth",  label: "OAuth token",    hint: "Claude Pro/Max · run: claude config get oauth_token" },
+    ]);
+
+    if (authMethod === "oauth") {
       console.log();
       console.log(chalk.dim("  To get your OAuth token:"));
       console.log(chalk.dim("    1. Install Claude Code: npm install -g @anthropic-ai/claude-code"));
@@ -223,16 +325,15 @@ export async function resolveApiKey(options: CLIOptions): Promise<void> {
       if (token && token.startsWith("sk-ant-")) {
         const config = loadConfig();
         config.apiKeys = config.apiKeys || {};
-        config.apiKeys[provider] = token;
-        config.provider = provider;
+        config.apiKeys[provider2] = token;
+        config.provider = provider2;
+        if (options.model) config.model = options.model;
         saveConfig(config);
         options.apiKey = token;
         console.log(chalk.green("\n  Token saved!\n"));
         return;
-      } else if (token) {
-        console.log(chalk.yellow("\n  That doesn't look like a Claude token."));
-        console.log(chalk.dim("  Tokens should start with sk-ant-\n"));
       }
+      console.log(chalk.yellow("\n  That doesn't look like a Claude token. Falling back to API key.\n"));
     }
   }
 
@@ -249,8 +350,9 @@ export async function resolveApiKey(options: CLIOptions): Promise<void> {
   if (save.toLowerCase() !== "n") {
     const config = loadConfig();
     config.apiKeys = config.apiKeys || {};
-    config.apiKeys[provider] = apiKey;
-    config.provider = provider;
+    config.apiKeys[provider2] = apiKey;
+    config.provider = provider2;
+    if (options.model) config.model = options.model;
     saveConfig(config);
     console.log(chalk.green("  Saved!\n"));
   }
