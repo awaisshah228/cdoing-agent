@@ -7,4 +7,5 @@ export { GrepSearchTool } from "./tools/grep-search";
 export { ShellExecTool } from "./tools/shell-exec";
 export { FileRunTool } from "./tools/file-run";
 export { PermissionManager, PermissionMode } from "./permissions";
+export type { PermissionRule, PermissionScope } from "./permissions";
 export type { ToolDefinition, ToolResult, BaseTool } from "./tools/types";
