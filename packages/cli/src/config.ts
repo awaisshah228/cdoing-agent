@@ -10,6 +10,7 @@ import * as readline from "readline";
 import chalk from "chalk";
 import { PermissionManager, PermissionMode } from "@cdoing/core";
 import { getApiKeyEnvVar, type ModelConfig } from "@cdoing/ai";
+import { resolveOAuthToken } from "./oauth";
 
 const CONFIG_DIR = path.join(os.homedir(), ".cdoing");
 const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
@@ -29,6 +30,8 @@ export interface CLIOptions {
   apiKey?: string;
   mode: string;
   dir: string;
+  login?: boolean;
+  logout?: boolean;
 }
 
 export function parsePermissionMode(mode: string): PermissionMode {
@@ -172,6 +175,15 @@ export async function resolveApiKey(options: CLIOptions): Promise<void> {
     return;
   }
 
+  // Check OAuth tokens (Anthropic only)
+  if (provider === "anthropic") {
+    const oauthToken = await resolveOAuthToken();
+    if (oauthToken) {
+      options.apiKey = oauthToken;
+      return;
+    }
+  }
+
   // Interactive setup
   const info = PROVIDER_INFO[provider];
   console.log();
@@ -179,7 +191,43 @@ export async function resolveApiKey(options: CLIOptions): Promise<void> {
   console.log(chalk.dim("  Let's set up authentication.\n"));
   console.log(chalk.white(`  Provider: ${chalk.bold(info?.name || provider)}`));
 
-  if (info?.url) console.log(chalk.dim(`  Get a key: ${info.url}\n`));
+  if (provider === "anthropic") {
+    console.log();
+    console.log(chalk.white("  Choose authentication method:\n"));
+    console.log(chalk.white("    1) API key from Anthropic Console") + chalk.dim(" (recommended)"));
+    console.log(chalk.dim("       Get one at: https://console.anthropic.com/settings/keys\n"));
+    console.log(chalk.white("    2) Claude Code OAuth token") + chalk.dim(" (if you have Claude Pro/Max)"));
+    console.log(chalk.dim("       Run: claude config get oauth_token"));
+    console.log();
+
+    const choice = await ask(chalk.green("  Choose (1/2): "));
+
+    if (choice === "2") {
+      console.log();
+      console.log(chalk.dim("  To get your OAuth token:"));
+      console.log(chalk.dim("    1. Install Claude Code: npm install -g @anthropic-ai/claude-code"));
+      console.log(chalk.dim("    2. Login: claude login"));
+      console.log(chalk.dim("    3. Get token: claude config get oauth_token"));
+      console.log();
+      const token = await ask(chalk.green("  Paste your OAuth token (sk-ant-oat01-...): "));
+      if (token && token.startsWith("sk-ant-")) {
+        const config = loadConfig();
+        config.apiKeys = config.apiKeys || {};
+        config.apiKeys[provider] = token;
+        config.provider = provider;
+        saveConfig(config);
+        options.apiKey = token;
+        console.log(chalk.green("\n  Token saved!\n"));
+        return;
+      } else if (token) {
+        console.log(chalk.yellow("\n  That doesn't look like a Claude token."));
+        console.log(chalk.dim("  Tokens should start with sk-ant-\n"));
+      }
+    }
+  }
+
+  // API key entry
+  if (info?.url) console.log(chalk.dim(`\n  Get a key: ${info.url}\n`));
 
   const apiKey = await ask(chalk.green("  Enter your API key: "));
   if (!apiKey) {

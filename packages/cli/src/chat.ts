@@ -43,6 +43,7 @@ import {
   deleteConversation,
   type Conversation,
 } from "./history";
+import { oauthLogout, oauthStatus } from "./oauth";
 
 export class ChatInterface {
   private rl!: readline.Interface;
@@ -56,6 +57,7 @@ export class ChatInterface {
   private workingDir: string;
   private conversation: Conversation;
   private lastSigint = 0;
+  private suggestionsVisible = 0;
 
   constructor(
     modelConfig: Partial<ModelConfig>,
@@ -92,14 +94,104 @@ export class ChatInterface {
     );
   }
 
+  private static SLASH_COMMANDS = [
+    { cmd: "/help", desc: "Show help" },
+    { cmd: "/clear", desc: "Clear conversation" },
+    { cmd: "/new", desc: "Start new conversation" },
+    { cmd: "/history", desc: "List saved conversations" },
+    { cmd: "/resume", desc: "Resume a conversation" },
+    { cmd: "/delete", desc: "Delete a conversation" },
+    { cmd: "/config", desc: "View/update config" },
+    { cmd: "/model", desc: "Switch model" },
+    { cmd: "/provider", desc: "Switch provider" },
+    { cmd: "/mode", desc: "Change permission mode" },
+    { cmd: "/dir", desc: "Change working directory" },
+    { cmd: "/permissions", desc: "View/clear permissions" },
+    { cmd: "/memory", desc: "View/manage memory" },
+    { cmd: "/hooks", desc: "View configured hooks" },
+    { cmd: "/usage", desc: "Show token usage" },
+    { cmd: "/login", desc: "Authentication setup" },
+    { cmd: "/logout", desc: "Clear OAuth tokens" },
+    { cmd: "/auth-status", desc: "Show auth status" },
+    { cmd: "/exit", desc: "Quit" },
+  ];
+
   private createReadline(): void {
     this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
+      completer: (line: string) => this.completer(line),
     });
     this.rl.on("SIGINT", () => {
       this.handleSigint();
     });
+
+    // Real-time suggestions as user types
+    process.stdin.on("keypress", () => {
+      // Use setImmediate so readline has updated .line first
+      setImmediate(() => {
+        const line = (this.rl as unknown as { line: string }).line || "";
+        this.renderSuggestions(line);
+      });
+    });
+  }
+
+  private completer(line: string): [string[], string] {
+    if (line.startsWith("/")) {
+      const matches = ChatInterface.SLASH_COMMANDS
+        .map((c) => c.cmd)
+        .filter((cmd) => cmd.startsWith(line));
+      return [matches.length ? matches : ChatInterface.SLASH_COMMANDS.map((c) => c.cmd), line];
+    }
+    return [[], line];
+  }
+
+  private clearSuggestions(): void {
+    if (this.suggestionsVisible > 0) {
+      // Save cursor, move below, clear suggestion lines, restore cursor
+      const cols = process.stdout.columns || 80;
+      process.stdout.write("\x1b[s"); // save cursor
+      for (let i = 0; i < this.suggestionsVisible; i++) {
+        process.stdout.write("\x1b[1B"); // move down
+        process.stdout.write(`\r${" ".repeat(cols)}`); // clear line
+      }
+      process.stdout.write("\x1b[u"); // restore cursor
+      this.suggestionsVisible = 0;
+    }
+  }
+
+  private renderSuggestions(line: string): void {
+    this.clearSuggestions();
+
+    if (!process.stdout.isTTY) return;
+
+    let matches: { cmd: string; desc: string }[] = [];
+
+    if (line.startsWith("/") && line.length >= 1) {
+      matches = ChatInterface.SLASH_COMMANDS.filter((c) =>
+        c.cmd.startsWith(line),
+      );
+      // Don't show if exact match
+      if (matches.length === 1 && matches[0].cmd === line) matches = [];
+    } else if (line === "!") {
+      matches = [
+        { cmd: "!<cmd>", desc: "Run shell command (e.g. !git status)" },
+      ];
+    }
+
+    if (matches.length === 0) return;
+
+    // Show max 6 suggestions
+    const shown = matches.slice(0, 6);
+    process.stdout.write("\x1b[s"); // save cursor
+    for (const { cmd, desc } of shown) {
+      process.stdout.write("\n");
+      process.stdout.write(
+        `  \x1b[36m${cmd.padEnd(18)}\x1b[0m\x1b[2m${desc}\x1b[0m`,
+      );
+    }
+    this.suggestionsVisible = shown.length;
+    process.stdout.write("\x1b[u"); // restore cursor
   }
 
   private handleSigint(): void {
@@ -122,6 +214,8 @@ export class ChatInterface {
     this.rl.question(chalk.green("❯ "), async (input) => {
       const trimmed = input.trim();
       if (!trimmed) { this.promptUser(); return; }
+
+      this.clearSuggestions();
 
       if (trimmed === "?") { printHelp(); this.promptUser(); return; }
 
@@ -308,6 +402,18 @@ export class ChatInterface {
         this.showUsage();
         return true;
 
+      case "/login":
+        this.showLoginHelp();
+        return true;
+
+      case "/logout":
+        oauthLogout();
+        return true;
+
+      case "/auth-status":
+        oauthStatus();
+        return true;
+
       case "/exit":
       case "/quit":
         console.log(chalk.dim("\n  Goodbye!\n"));
@@ -430,6 +536,22 @@ export class ChatInterface {
     const cm = this.agent.getContextManager();
     const formatted = cm.formatTotalUsage();
     console.log(chalk.dim(`\n  ${formatted}\n`));
+  }
+
+  /** Show login/auth help */
+  private showLoginHelp(): void {
+    console.log();
+    console.log(chalk.bold.cyan("  Authentication Options\n"));
+    console.log(chalk.white("  Option 1: API Key") + chalk.dim(" (recommended)"));
+    console.log(chalk.dim("    Get a key from: https://console.anthropic.com/settings/keys"));
+    console.log(chalk.dim("    Then run: /config set api-key <your-key>\n"));
+    console.log(chalk.white("  Option 2: Claude Code OAuth Token") + chalk.dim(" (requires Pro/Max)"));
+    console.log(chalk.dim("    1. Install Claude Code: npm install -g @anthropic-ai/claude-code"));
+    console.log(chalk.dim("    2. Login: claude login"));
+    console.log(chalk.dim("    3. Get token: claude config get oauth_token"));
+    console.log(chalk.dim("    4. Use here: /config set api-key <token>\n"));
+    console.log(chalk.dim("  Check status: /auth-status"));
+    console.log();
   }
 
   /** Resume a saved conversation by replaying its messages into the agent */

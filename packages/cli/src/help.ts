@@ -38,12 +38,20 @@ export function printHelp(): void {
   console.log(chalk.cyan("    /dir <path>          ") + "Change working directory");
   console.log(chalk.cyan("    /exit, /quit         ") + "Exit");
   console.log();
+  console.log(chalk.bold("  Authentication:"));
+  console.log(chalk.cyan("    /login               ") + "Show authentication options");
+  console.log(chalk.cyan("    /logout              ") + "Clear stored tokens");
+  console.log(chalk.cyan("    /auth-status         ") + "Show current authentication status");
+  console.log();
   console.log(chalk.bold("  CLI Usage:"));
   console.log(chalk.dim("    cdoing                          ") + "Interactive mode");
+  console.log(chalk.dim("    cdoing --login                  ") + "Show auth setup instructions");
+  console.log(chalk.dim("    cdoing --logout                 ") + "Clear stored tokens");
   console.log(chalk.dim("    cdoing \"fix the bug\"             ") + "One-shot prompt");
+  console.log(chalk.dim("    cdoing --api-key sk-...         ") + "Use API key directly");
   console.log(chalk.dim("    cdoing -p openai -m gpt-4o      ") + "Use OpenAI");
-  console.log(chalk.dim("    cdoing --mode auto               ") + "Skip all permission prompts");
-  console.log(chalk.dim("    cdoing -d ./my-project           ") + "Set working directory");
+  console.log(chalk.dim("    cdoing --mode auto              ") + "Skip all permission prompts");
+  console.log(chalk.dim("    cdoing -d ./my-project          ") + "Set working directory");
   console.log();
 }
 

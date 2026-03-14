@@ -12,6 +12,8 @@ import { ChatInterface } from "./chat";
 import { buildModelConfig, createPermissionManager, resolveApiKey, type CLIOptions } from "./config";
 import { createToolRegistry } from "./tools";
 import { createOneShotCallbacks } from "./callbacks";
+import chalk from "chalk";
+import { oauthLogout } from "./oauth";
 
 const program = new Command();
 
@@ -25,6 +27,8 @@ program
   .option("--api-key <key>", "API key (overrides env var)")
   .option("--mode <mode>", "Permission mode: ask, auto-edit, auto", "ask")
   .option("-d, --dir <directory>", "Working directory", process.cwd())
+  .option("--login", "Login with Claude via OAuth (opens browser)")
+  .option("--logout", "Clear stored OAuth tokens")
   .argument("[prompt]", "One-shot prompt (skips interactive mode)")
   .action(run);
 
@@ -54,6 +58,28 @@ function createSubAgentFactory(
 }
 
 async function run(prompt: string | undefined, options: CLIOptions) {
+  // Handle --logout first
+  if (options.logout) {
+    oauthLogout();
+    return;
+  }
+
+  // Handle --login: prompt for token setup
+  if (options.login) {
+    console.log();
+    console.log(chalk.bold.cyan("  Claude Authentication Setup"));
+    console.log();
+    console.log(chalk.white("  To use with Claude Pro/Max subscription:"));
+    console.log(chalk.dim("    1. Install Claude Code: npm install -g @anthropic-ai/claude-code"));
+    console.log(chalk.dim("    2. Login: claude login"));
+    console.log(chalk.dim("    3. Get token: claude config get oauth_token"));
+    console.log();
+    console.log(chalk.white("  To use with API key:"));
+    console.log(chalk.dim("    Get a key from: https://console.anthropic.com/settings/keys"));
+    console.log();
+    // Continue to resolveApiKey which will prompt for the key
+  }
+
   await resolveApiKey(options);
 
   const modelConfig = buildModelConfig(options);
