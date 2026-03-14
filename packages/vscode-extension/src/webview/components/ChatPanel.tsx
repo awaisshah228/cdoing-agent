@@ -11,7 +11,7 @@
  *   ├─────────────────────┤
  *   │  InputArea           │  ← Textarea + Send/Queue button
  *   └─────────────────────┘
- *   │  ConversationHistory │  ← Overlay when history is open
+ *   Overlays: ConversationHistory, SettingsPanel
  */
 
 import React from "react";
@@ -20,6 +20,7 @@ import { TabBar } from "./TabBar";
 import { MessageList } from "./MessageList";
 import { InputArea } from "./InputArea";
 import { ConversationHistory } from "./ConversationHistory";
+import { SettingsPanel } from "./SettingsPanel";
 import { useChatState } from "../hooks/useChatState";
 
 export const ChatPanel: React.FC = () => {
@@ -34,22 +35,27 @@ export const ChatPanel: React.FC = () => {
     queueCount,
     modelLabel,
     sendMessage,
-    sendCommand,
     conversations,
     showHistory,
     openHistory,
     closeHistory,
     resumeConversation,
     deleteConversation,
+    showSettings,
+    extensionConfig,
+    openSettings,
+    closeSettings,
+    saveSettings,
+    openVscodeSettings,
   } = useChatState();
 
   return (
     <div className="chat-container">
       <Header
         modelLabel={modelLabel}
-        onSelectModel={() => sendCommand("/model")}
+        onSelectModel={openSettings}
         onNewChat={createNewTab}
-        onOpenSettings={() => sendCommand("/settings")}
+        onOpenSettings={openSettings}
         onOpenHistory={openHistory}
       />
 
@@ -79,6 +85,15 @@ export const ChatPanel: React.FC = () => {
           onResume={resumeConversation}
           onDelete={deleteConversation}
           onClose={closeHistory}
+        />
+      )}
+
+      {showSettings && (
+        <SettingsPanel
+          config={extensionConfig}
+          onSave={saveSettings}
+          onOpenVscodeSettings={openVscodeSettings}
+          onClose={closeSettings}
         />
       )}
     </div>

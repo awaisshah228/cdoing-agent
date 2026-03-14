@@ -1058,6 +1058,217 @@ body {
   background: var(--vscode-toolbar-hoverBackground);
 }
 
+/* ─── Settings Panel Overlay ─── */
+.settings-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg);
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  min-height: 36px;
+}
+
+.settings-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.settings-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.settings-hint {
+  font-size: 10px;
+  color: var(--desc-fg);
+  opacity: 0.7;
+}
+
+.settings-input {
+  background: var(--input-bg);
+  color: var(--input-fg);
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-family: var(--vscode-font-family);
+  font-size: 12px;
+  outline: none;
+}
+.settings-input:focus {
+  border-color: var(--accent);
+}
+.settings-input-small {
+  width: 100%;
+}
+
+.settings-row {
+  flex-direction: row !important;
+  gap: 12px !important;
+}
+.settings-row-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Provider selector grid */
+.settings-provider-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.settings-provider-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  text-align: center;
+  transition: all 0.1s;
+}
+.settings-provider-btn:hover {
+  background: var(--list-hover);
+}
+.settings-provider-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+/* Permission mode selector */
+.settings-mode-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-mode-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  transition: all 0.1s;
+}
+.settings-mode-btn:hover {
+  background: var(--list-hover);
+}
+.settings-mode-btn.active {
+  border-color: var(--accent);
+  background: rgba(0, 120, 212, 0.08);
+}
+.settings-mode-label {
+  font-size: 12px;
+  font-weight: 500;
+}
+.settings-mode-desc {
+  font-size: 10px;
+  color: var(--desc-fg);
+}
+
+/* Settings footer */
+.settings-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  gap: 8px;
+}
+
+.settings-footer-right {
+  display: flex;
+  gap: 6px;
+}
+
+.settings-vscode-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--vscode-textLink-foreground);
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  transition: background 0.1s;
+}
+.settings-vscode-btn:hover {
+  background: var(--list-hover);
+}
+
+.settings-cancel-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  padding: 5px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.settings-cancel-btn:hover {
+  background: var(--list-hover);
+}
+
+.settings-save-btn {
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  border: none;
+  padding: 5px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+}
+.settings-save-btn:hover {
+  background: var(--btn-hover);
+}
+
 /* ─── Scrollbar ─── */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }

@@ -338,6 +338,15 @@ function openEditorPanel(context: vscode.ExtensionContext) {
         (chatProvider as any).deleteConversation?.(message.id);
         (chatProvider as any).sendConversationList?.();
         break;
+      case "getConfig":
+        (chatProvider as any).sendFullConfig?.();
+        break;
+      case "updateConfig":
+        (chatProvider as any).updateConfigFromWebview?.(message.config);
+        break;
+      case "openVscodeSettings":
+        vscode.commands.executeCommand("workbench.action.openSettings", "cdoing");
+        break;
       case "ready":
         chatProvider.postMessage({ type: "configUpdated", provider: "anthropic", model: "" });
         // Flush any pending file context from cdoing.openFile command

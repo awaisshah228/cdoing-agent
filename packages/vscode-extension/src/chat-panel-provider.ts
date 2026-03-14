@@ -120,6 +120,15 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         case "getActiveFile":
           this.sendActiveFileAsContext();
           break;
+        case "getConfig":
+          this.sendFullConfig();
+          break;
+        case "updateConfig":
+          this.updateConfigFromWebview(message.config);
+          break;
+        case "openVscodeSettings":
+          vscode.commands.executeCommand("workbench.action.openSettings", "cdoing");
+          break;
         case "listHistory":
           this.sendConversationList();
           break;
@@ -638,6 +647,41 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     const { provider, model } = this.getConfig();
     const displayModel = model || getDefaultModel(provider) || provider;
     this.postMessage({ type: "configUpdated", provider, model: displayModel });
+  }
+
+  /** Send full config to the webview for the settings panel */
+  private sendFullConfig() {
+    const vsConfig = vscode.workspace.getConfiguration("cdoing");
+    this.postMessage({
+      type: "configData" as any,
+      config: {
+        provider: vsConfig.get<string>("provider") || "anthropic",
+        model: vsConfig.get<string>("model") || "",
+        customProviderName: vsConfig.get<string>("customProviderName") || "",
+        customBaseURL: vsConfig.get<string>("customBaseURL") || "",
+        apiKey: vsConfig.get<string>("apiKey") || "",
+        temperature: vsConfig.get<number>("temperature") ?? 0,
+        maxTokens: vsConfig.get<number>("maxTokens") ?? 8096,
+        permissionMode: vsConfig.get<string>("permissionMode") || "ask",
+      },
+    });
+  }
+
+  /** Update config from the webview settings panel */
+  private async updateConfigFromWebview(config: any) {
+    const vsConfig = vscode.workspace.getConfiguration("cdoing");
+    const target = vscode.ConfigurationTarget.Global;
+
+    if (config.provider !== undefined) await vsConfig.update("provider", config.provider, target);
+    if (config.model !== undefined) await vsConfig.update("model", config.model, target);
+    if (config.customProviderName !== undefined) await vsConfig.update("customProviderName", config.customProviderName, target);
+    if (config.customBaseURL !== undefined) await vsConfig.update("customBaseURL", config.customBaseURL, target);
+    if (config.apiKey !== undefined) await vsConfig.update("apiKey", config.apiKey, target);
+    if (config.temperature !== undefined) await vsConfig.update("temperature", config.temperature, target);
+    if (config.maxTokens !== undefined) await vsConfig.update("maxTokens", config.maxTokens, target);
+    if (config.permissionMode !== undefined) await vsConfig.update("permissionMode", config.permissionMode, target);
+
+    this.refreshConfig();
   }
 
   // ── Message Handling ───────────────────────────────────

@@ -30,6 +30,7 @@ export type IncomingMessage =
   | { type: "insertMessage"; message: string }                         // Insert text into the input box
   | { type: "contextAttached"; attachment: ContextAttachment }          // File/folder picked and attached
   | { type: "fileSearchResults"; results: Array<{ path: string; isDir: boolean; language?: string }> } // File search results for @ autocomplete
+  | { type: "configData"; config: ExtensionConfig }                      // Full config for settings panel
   | { type: "conversationList"; conversations: ConversationSummary[] }   // Past conversations list
   | { type: "conversationMessages"; id: string; messages: Array<{ role: string; content: string }> } // Messages for a resumed conversation
   | { type: "tabCreated"; tabId: string; title: string }               // New tab created
@@ -53,10 +54,25 @@ export type OutgoingMessage =
   | { type: "pickFolder" }                                   // Request folder picker
   | { type: "searchFiles"; query: string }                   // Search workspace files for @ autocomplete
   | { type: "getActiveFile" }                                // Request active file as context
+  | { type: "getConfig" }                                    // Request current config for settings panel
+  | { type: "updateConfig"; config: Partial<ExtensionConfig> } // Update config from settings panel
+  | { type: "openVscodeSettings" }                           // Open VS Code extension settings
   | { type: "listHistory" }                                  // Request conversation history list
   | { type: "resumeConversation"; id: string }               // Resume a past conversation
   | { type: "deleteConversation"; id: string }               // Delete a past conversation
   | { type: "ready" };                                       // Webview loaded, ready for data
+
+/** Extension configuration (for in-panel settings) */
+export interface ExtensionConfig {
+  provider: string;
+  model: string;
+  customProviderName: string;
+  customBaseURL: string;
+  apiKey: string;
+  temperature: number;
+  maxTokens: number;
+  permissionMode: string;
+}
 
 /** A saved conversation summary (for history view) */
 export interface ConversationSummary {

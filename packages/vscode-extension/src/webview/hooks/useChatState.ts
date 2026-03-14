@@ -8,7 +8,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import type { ChatEntry, ChatMessage, ConversationSummary, ContextAttachment, IncomingMessage } from "../types";
+import type { ChatEntry, ChatMessage, ConversationSummary, ContextAttachment, ExtensionConfig, IncomingMessage } from "../types";
 import { useVsCode } from "./useVsCode";
 
 let idCounter = 0;
@@ -40,6 +40,8 @@ export function useChatState() {
   const [providerLabel, setProviderLabel] = useState("anthropic");
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [extensionConfig, setExtensionConfig] = useState<ExtensionConfig | null>(null);
 
   const streamingRef = useRef<string | null>(null);
 
@@ -204,6 +206,24 @@ export function useChatState() {
     vscode.postMessage({ type: "deleteConversation", id });
   }, [vscode]);
 
+  const openSettings = useCallback(() => {
+    vscode.postMessage({ type: "getConfig" });
+    setShowSettings(true);
+  }, [vscode]);
+
+  const closeSettings = useCallback(() => {
+    setShowSettings(false);
+  }, []);
+
+  const saveSettings = useCallback((config: Partial<ExtensionConfig>) => {
+    vscode.postMessage({ type: "updateConfig", config });
+    setShowSettings(false);
+  }, [vscode]);
+
+  const openVscodeSettings = useCallback(() => {
+    vscode.postMessage({ type: "openVscodeSettings" });
+  }, [vscode]);
+
   // ── Message Handler ──────────────────────────────────
 
   useEffect(() => {
@@ -294,6 +314,11 @@ export function useChatState() {
           setTabs((prev) => prev.map((t) => t.id === msg.tabId ? { ...t, title: msg.title } : t));
           break;
 
+        // Settings
+        case "configData":
+          setExtensionConfig((msg as any).config || null);
+          break;
+
         // Conversation history
         case "conversationList":
           setConversations((msg as any).conversations || []);
@@ -332,5 +357,7 @@ export function useChatState() {
     sendMessage, sendCommand, clearAll,
     conversations, showHistory, openHistory, closeHistory,
     resumeConversation, deleteConversation,
+    showSettings, extensionConfig, openSettings, closeSettings,
+    saveSettings, openVscodeSettings,
   };
 }
