@@ -56,7 +56,7 @@ function generateCodeChallenge(verifier: string): string {
 
 function ask(question: string): Promise<string> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) => rl.question(question, (a) => { rl.close(); resolve(a.trim()); }));
+  return new Promise((resolve) => rl.question(question, (a) => { rl.close(); process.stdin.resume(); resolve(a.trim()); }));
 }
 
 // ── Secure credential storage ───────────────────────────────
@@ -442,7 +442,18 @@ function openBrowser(urlToOpen: string): void {
 
 export function oauthLogout(): void {
   clearOAuthTokens();
-  console.log(chalk.green("\n  Logged out. OAuth tokens cleared.\n"));
+
+  // Also clear stored API keys from config
+  const configPath = path.join(os.homedir(), ".cdoing", "config.json");
+  try {
+    if (fs.existsSync(configPath)) {
+      const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      delete config.apiKeys;
+      fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+    }
+  } catch {}
+
+  console.log(chalk.green("\n  Logged out. OAuth tokens and stored API keys cleared.\n"));
 }
 
 // ── Status ──────────────────────────────────────────────────

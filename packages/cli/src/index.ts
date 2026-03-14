@@ -102,8 +102,9 @@ async function run(prompt: string | undefined, options: CLIOptions) {
       console.log(chalk.green("\n  ✓ Login successful!\n"));
     } catch (err) {
       console.log(chalk.red(`\n  ✗ Login failed: ${(err as Error).message}\n`));
+      return;
     }
-    return;
+    // Fall through to start the chat with the new token
   }
 
   // Enable verbose logging if requested

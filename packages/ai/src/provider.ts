@@ -79,9 +79,12 @@ export function createModel(config: Partial<ModelConfig> = {}) {
 
   switch (provider) {
     case ModelProvider.ANTHROPIC: {
-      // OAuth token: use Anthropic SDK's native authToken + defaultHeaders (same as Claude Code CLI)
+      // OAuth token: use Anthropic SDK's native authToken + beta headers
       if (config.oauthToken) {
         const oauthToken = config.oauthToken;
+        const arch = process.arch === "arm64" ? "arm64" : "x64";
+        const osPlatform = process.platform === "darwin" ? "Darwin"
+          : process.platform === "win32" ? "Windows" : "Linux";
         return new ChatAnthropic({
           model: modelName,
           anthropicApiKey: "unused",
@@ -92,9 +95,30 @@ export function createModel(config: Partial<ModelConfig> = {}) {
             authToken: oauthToken,
             dangerouslyAllowBrowser: true,
             defaultHeaders: {
-              "anthropic-beta": "oauth-2025-04-20",
+              "anthropic-beta": "oauth-2025-04-20,interleaved-thinking-2025-05-14",
+              "user-agent": "claude-cli/2.1.7 (external, cli)",
+              "x-app": "cli",
+              "anthropic-dangerous-direct-browser-access": "true",
+              "x-stainless-arch": arch,
+              "x-stainless-lang": "js",
+              "x-stainless-os": osPlatform,
+              "x-stainless-package-version": "0.70.0",
+              "x-stainless-runtime": "node",
+              "x-stainless-runtime-version": process.version,
             },
             maxRetries: 0,
+            // Strip top_p: -1 and temperature — OAuth API rejects these LangChain defaults
+            fetch: async (url: string | URL | Request, init?: RequestInit) => {
+              if (init?.body && typeof init.body === "string") {
+                try {
+                  const body = JSON.parse(init.body);
+                  if (body.top_p === -1) delete body.top_p;
+                  if ("temperature" in body) delete body.temperature;
+                  init = { ...init, body: JSON.stringify(body) };
+                } catch {}
+              }
+              return fetch(url as string, init);
+            },
           }),
         });
       }

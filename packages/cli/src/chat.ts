@@ -73,7 +73,7 @@ import {
   deleteConversation,
   type Conversation,
 } from "./history";
-import { oauthLogout, oauthStatus } from "./oauth";
+import { oauthLogin, oauthLogout, oauthStatus, resolveOAuthToken } from "./oauth";
 import { handleInit, handleDoctor } from "./commands";
 
 export class ChatInterface {
@@ -296,7 +296,8 @@ export class ChatInterface {
             this.renderSuggestionList();
             return;
           }
-          // Tab or Enter on a selected suggestion → accept it
+          // Enter on selected suggestion → run it immediately
+          // Tab → just insert into input line
           if (
             (key.name === "tab" || key.name === "return") &&
             this.selectedSuggestion >= 0
@@ -306,13 +307,23 @@ export class ChatInterface {
               this.clearSuggestions();
               this.inSuggestionMode = false;
               this.selectedSuggestion = -1;
-              // Replace the current line with the selected command
-              const rlAny = this.rl as unknown as { line: string; cursor: number };
-              rlAny.line = selected.cmd + " ";
-              rlAny.cursor = selected.cmd.length + 1;
-              // Rewrite the prompt line
-              const prompt = chalk.green("❯ ");
-              process.stdout.write(`\r${prompt}${selected.cmd} \x1b[K`);
+
+              if (key.name === "return") {
+                // Execute the command immediately
+                const cmd = selected.cmd;
+                const rlAny = this.rl as unknown as { line: string; cursor: number };
+                rlAny.line = "";
+                rlAny.cursor = 0;
+                process.stdout.write(`\r\x1b[2K`);
+                this.rl.emit("line", cmd);
+              } else {
+                // Tab: just fill in the input
+                const rlAny = this.rl as unknown as { line: string; cursor: number };
+                rlAny.line = selected.cmd + " ";
+                rlAny.cursor = selected.cmd.length + 1;
+                const prompt = chalk.green("❯ ");
+                process.stdout.write(`\r${prompt}${selected.cmd} \x1b[K`);
+              }
               return;
             }
           }
@@ -503,7 +514,7 @@ export class ChatInterface {
       }
 
       if (trimmed.startsWith("/")) {
-        const cont = this.handleCommand(trimmed);
+        const cont = await this.handleCommand(trimmed);
         if (cont) this.promptUser();
         return;
       }
@@ -601,7 +612,7 @@ export class ChatInterface {
     return cleanMessage;
   }
 
-  private handleCommand(command: string): boolean {
+  private async handleCommand(command: string): Promise<boolean> {
     const parts = command.split(/\s+/);
     const cmd = parts[0];
     const arg = parts.slice(1).join(" ");
@@ -695,8 +706,7 @@ export class ChatInterface {
 
       case "/model":
         if (!arg) {
-          console.log(chalk.dim(`\n  Current model: ${this.modelConfig.model || "(default)"}`));
-          console.log(chalk.dim("  Usage: /model <name>  (e.g. /model gpt-4o)\n"));
+          await this.handleModelPicker();
           return true;
         }
         this.modelConfig.model = arg;
@@ -706,8 +716,7 @@ export class ChatInterface {
 
       case "/provider":
         if (!arg) {
-          console.log(chalk.dim(`\n  Current provider: ${this.modelConfig.provider || "anthropic"}`));
-          console.log(chalk.dim("  Usage: /provider <name>  (anthropic, openai, google)\n"));
+          await this.handleModelPicker();
           return true;
         }
         this.modelConfig.provider = arg.toLowerCase();
@@ -781,11 +790,32 @@ export class ChatInterface {
         return true;
 
       case "/login":
-        this.showLoginHelp();
+        oauthLogin()
+          .then(() => {
+            console.log(chalk.green("\n  ✓ Login successful!\n"));
+            return resolveOAuthToken();
+          })
+          .then((token: string | null) => {
+            if (token) {
+              this.modelConfig.oauthToken = token;
+              this.modelConfig.apiKey = undefined;
+              this.rebuildAgent();
+            }
+            this.promptUser();
+          })
+          .catch((err: Error) => {
+            console.log(chalk.red(`\n  ✗ Login failed: ${err.message}\n`));
+            this.promptUser();
+          });
         return true;
 
       case "/logout":
         oauthLogout();
+        // Clear token from in-memory config so agent can't keep using it
+        delete this.modelConfig.oauthToken;
+        delete this.modelConfig.apiKey;
+        try { this.agent = this.buildAgent(); } catch {}
+        console.log(chalk.dim("  Session credentials cleared. Use /login to re-authenticate.\n"));
         return true;
 
       case "/auth-status":
@@ -1418,6 +1448,84 @@ export class ChatInterface {
 
   private rebuildAgent(): void {
     this.agent = this.buildAgent();
+  }
+
+  /** Interactive model/provider picker shown when /model or /provider is run without args */
+  private async handleModelPicker(): Promise<void> {
+    const PRESETS: { label: string; provider: string; model: string }[] = [
+      { label: "Claude Sonnet 4.6  (Anthropic)", provider: "anthropic", model: "claude-sonnet-4-6" },
+      { label: "Claude Haiku 4.5   (Anthropic)", provider: "anthropic", model: "claude-haiku-4-5-20251001" },
+      { label: "Claude Opus 4.6    (Anthropic)", provider: "anthropic", model: "claude-opus-4-6" },
+      { label: "GPT-4o             (OpenAI)",    provider: "openai",    model: "gpt-4o" },
+      { label: "GPT-4o-mini        (OpenAI)",    provider: "openai",    model: "gpt-4o-mini" },
+      { label: "o1                 (OpenAI)",    provider: "openai",    model: "o1" },
+      { label: "o3-mini            (OpenAI)",    provider: "openai",    model: "o3-mini" },
+      { label: "Gemini 2.0 Flash   (Google)",   provider: "google",    model: "gemini-2.0-flash" },
+      { label: "Gemini 1.5 Pro     (Google)",   provider: "google",    model: "gemini-1.5-pro" },
+      { label: "Custom (enter manually)",        provider: "",          model: "" },
+    ];
+
+    const current = `${this.modelConfig.provider || "anthropic"} / ${this.modelConfig.model || "default"}`;
+    console.log(chalk.bold.cyan("\n  Select a model\n"));
+    console.log(chalk.dim(`  Current: ${current}\n`));
+
+    PRESETS.forEach((p, i) => {
+      const idx = chalk.dim(`  ${String(i + 1).padStart(2)}.`);
+      console.log(`${idx} ${p.label}`);
+    });
+    console.log();
+
+    const { createInterface } = await import("readline");
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const answer = await new Promise<string>((resolve) => {
+      rl.question(chalk.green("  Enter number (or press Enter to cancel): "), (a) => {
+        rl.close(); process.stdin.resume();
+        resolve(a.trim());
+      });
+    });
+
+    if (!answer) {
+      console.log(chalk.dim("  Cancelled.\n"));
+      return;
+    }
+
+    const num = parseInt(answer, 10);
+    if (isNaN(num) || num < 1 || num > PRESETS.length) {
+      console.log(chalk.red("  Invalid choice.\n"));
+      return;
+    }
+
+    const chosen = PRESETS[num - 1];
+
+    if (!chosen.provider) {
+      // Custom entry
+      const rl2 = createInterface({ input: process.stdin, output: process.stdout });
+      const providerAnswer = await new Promise<string>((resolve) => {
+        rl2.question(chalk.green("  Provider (anthropic/openai/google/ollama/custom): "), (a) => {
+          rl2.close(); process.stdin.resume();
+          resolve(a.trim());
+        });
+      });
+      const rl3 = createInterface({ input: process.stdin, output: process.stdout });
+      const modelAnswer = await new Promise<string>((resolve) => {
+        rl3.question(chalk.green("  Model name: "), (a) => {
+          rl3.close(); process.stdin.resume();
+          resolve(a.trim());
+        });
+      });
+      if (!providerAnswer || !modelAnswer) {
+        console.log(chalk.dim("  Cancelled.\n"));
+        return;
+      }
+      this.modelConfig.provider = providerAnswer.toLowerCase();
+      this.modelConfig.model = modelAnswer;
+    } else {
+      this.modelConfig.provider = chosen.provider;
+      this.modelConfig.model = chosen.model;
+    }
+
+    this.rebuildAgent();
+    console.log(chalk.green(`\n  Switched to: ${this.modelConfig.provider} / ${this.modelConfig.model}\n`));
   }
 
   private async sendMessage(message: string): Promise<void> {

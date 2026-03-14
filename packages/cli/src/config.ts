@@ -10,7 +10,7 @@ import * as readline from "readline";
 import chalk from "chalk";
 import { PermissionManager, PermissionMode } from "@cdoing/core";
 import { getApiKeyEnvVar, type ModelConfig } from "@cdoing/ai";
-import { resolveOAuthToken } from "./oauth";
+import { resolveOAuthToken, oauthLogin, saveOAuthTokens } from "./oauth";
 
 const CONFIG_DIR = path.join(os.homedir(), ".cdoing");
 const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
@@ -156,21 +156,23 @@ export function getStoredConfigDisplay(): string[] {
 function ask(question: string): Promise<string> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => {
-    rl.question(question, (a) => { rl.close(); resolve(a.trim()); });
+    rl.question(question, (a) => { rl.close(); process.stdin.resume(); resolve(a.trim()); });
   });
 }
 
 // ── API key resolution ──────────────────────────────────────
 
-const PROVIDER_INFO: Record<string, { name: string; url: string }> = {
-  anthropic: { name: "Anthropic (Claude)", url: "https://console.anthropic.com/settings/keys" },
-  openai: { name: "OpenAI (GPT)", url: "https://platform.openai.com/api-keys" },
-  google: { name: "Google (Gemini)", url: "https://aistudio.google.com/apikey" },
-};
+const PROVIDER_MENU = [
+  { label: "Anthropic (Claude)",  provider: "anthropic", keyUrl: "https://console.anthropic.com/settings/keys",  defaultModel: "claude-sonnet-4-6" },
+  { label: "OpenAI (GPT / o-series)", provider: "openai",    keyUrl: "https://platform.openai.com/api-keys",    defaultModel: "gpt-4o" },
+  { label: "Google (Gemini)",     provider: "google",    keyUrl: "https://aistudio.google.com/apikey",          defaultModel: "gemini-2.0-flash" },
+  { label: "Ollama (local)",      provider: "ollama",    keyUrl: "",                                            defaultModel: "llama3.1" },
+  { label: "Custom / other",      provider: "custom",    keyUrl: "",                                            defaultModel: "" },
+] as const;
 
 /**
  * Resolve API key from: flag → env → stored config → OAuth token → interactive setup.
- * Mutates options.apiKey so downstream code can use it.
+ * Mutates options.apiKey / options.oauthToken / options.provider / options.model.
  */
 export async function resolveApiKey(options: CLIOptions): Promise<void> {
   if (options.apiKey) return;
@@ -180,7 +182,7 @@ export async function resolveApiKey(options: CLIOptions): Promise<void> {
 
   if (process.env[envVar]) return;
 
-  // Check OAuth tokens (Anthropic only — uses Bearer auth with beta headers)
+  // Check OAuth tokens (Anthropic only)
   if (provider === "anthropic") {
     const oauthToken = await resolveOAuthToken();
     if (oauthToken) {
@@ -196,66 +198,101 @@ export async function resolveApiKey(options: CLIOptions): Promise<void> {
     return;
   }
 
-  // Interactive setup
-  const info = PROVIDER_INFO[provider];
+  // ── No auth found — run interactive setup wizard ─────────
   console.log();
-  console.log(chalk.bold.cyan("  Welcome to Cdoing Agent!"));
-  console.log(chalk.dim("  Let's set up authentication.\n"));
-  console.log(chalk.white(`  Provider: ${chalk.bold(info?.name || provider)}`));
+  console.log(chalk.bold.cyan("  No authentication set up yet.\n"));
+  console.log(chalk.bold("  Choose a provider:\n"));
 
-  if (provider === "anthropic") {
+  PROVIDER_MENU.forEach((p, i) => {
+    console.log(`    ${chalk.dim(`${i + 1}.`)} ${p.label}`);
+  });
+  console.log();
+
+  const providerChoice = await ask(chalk.green("  Enter number (or press Enter to cancel): "));
+  if (!providerChoice) {
+    console.log(chalk.red("\n  No provider selected. Exiting.\n"));
+    process.exit(1);
+  }
+
+  const idx = parseInt(providerChoice, 10) - 1;
+  if (isNaN(idx) || idx < 0 || idx >= PROVIDER_MENU.length) {
+    console.log(chalk.red("\n  Invalid choice. Exiting.\n"));
+    process.exit(1);
+  }
+
+  const selected = PROVIDER_MENU[idx];
+
+  // Handle custom provider — ask for name and base URL
+  if (selected.provider === "custom") {
+    const customName = await ask(chalk.green("  Provider name (e.g. groq): "));
+    const baseUrl    = await ask(chalk.green("  Base URL (OpenAI-compatible endpoint): "));
+    const modelName  = await ask(chalk.green("  Model name: "));
+    if (!customName || !baseUrl || !modelName) {
+      console.log(chalk.red("\n  Incomplete setup. Exiting.\n"));
+      process.exit(1);
+    }
+    options.provider = customName.toLowerCase();
+    options.baseUrl  = baseUrl;
+    options.model    = modelName;
+    const apiKey = await ask(chalk.green("  Paste your API key (or leave blank if not required): "));
+    if (apiKey) {
+      options.apiKey = apiKey;
+      await saveProviderKey(options.provider, apiKey, options.provider, options.model);
+    }
+    return;
+  }
+
+  // Update provider (and default model) in options
+  options.provider = selected.provider;
+  if (!options.model) options.model = selected.defaultModel;
+
+  // Anthropic: offer API key OR OAuth
+  if (selected.provider === "anthropic") {
     console.log();
-    console.log(chalk.white("  Choose authentication method:\n"));
-    console.log(chalk.white("    1) API key from Anthropic Console") + chalk.dim(" (recommended)"));
-    console.log(chalk.dim("       Get one at: https://console.anthropic.com/settings/keys\n"));
-    console.log(chalk.white("    2) Claude Code OAuth token") + chalk.dim(" (if you have Claude Pro/Max)"));
-    console.log(chalk.dim("       Run: claude config get oauth_token"));
+    console.log(`    ${chalk.dim("1.")} Paste an API key       ${chalk.dim("(console.anthropic.com/settings/keys)")}`);
+    console.log(`    ${chalk.dim("2.")} Login with Claude OAuth ${chalk.dim("(Claude Pro/Max subscription)")}`);
     console.log();
+    const authChoice = await ask(chalk.green("  Choose (1/2): "));
 
-    const choice = await ask(chalk.green("  Choose (1/2): "));
-
-    if (choice === "2") {
-      console.log();
-      console.log(chalk.dim("  To get your OAuth token:"));
-      console.log(chalk.dim("    1. Install Claude Code: npm install -g @anthropic-ai/claude-code"));
-      console.log(chalk.dim("    2. Login: claude login"));
-      console.log(chalk.dim("    3. Get token: claude config get oauth_token"));
-      console.log();
-      const token = await ask(chalk.green("  Paste your OAuth token (sk-ant-oat01-...): "));
-      if (token && token.startsWith("sk-ant-")) {
-        const config = loadConfig();
-        config.apiKeys = config.apiKeys || {};
-        config.apiKeys[provider] = token;
-        config.provider = provider;
-        saveConfig(config);
-        options.apiKey = token;
-        console.log(chalk.green("\n  Token saved!\n"));
-        return;
-      } else if (token) {
-        console.log(chalk.yellow("\n  That doesn't look like a Claude token."));
-        console.log(chalk.dim("  Tokens should start with sk-ant-\n"));
-      }
+    if (authChoice === "2") {
+      const tokens = await oauthLogin();
+      saveOAuthTokens(tokens);
+      options.oauthToken = tokens.access_token;
+      console.log(chalk.green("\n  ✓ Logged in with Claude OAuth!\n"));
+      return;
     }
   }
 
-  // API key entry
-  if (info?.url) console.log(chalk.dim(`\n  Get a key: ${info.url}\n`));
+  // Ollama: no key required
+  if (selected.provider === "ollama") {
+    const customModel = await ask(chalk.green(`  Model name (press Enter for ${selected.defaultModel}): `));
+    if (customModel) options.model = customModel;
+    console.log(chalk.green("\n  ✓ Ollama configured (no API key needed).\n"));
+    await saveProviderKey("ollama", "ollama", "ollama", options.model!);
+    return;
+  }
 
-  const apiKey = await ask(chalk.green("  Enter your API key: "));
+  // All other providers: ask for API key
+  if (selected.keyUrl) console.log(chalk.dim(`\n  Get a key: ${selected.keyUrl}\n`));
+  const apiKey = await ask(chalk.green("  Paste your API key: "));
   if (!apiKey) {
     console.log(chalk.red("\n  No key provided. Exiting.\n"));
     process.exit(1);
   }
 
-  const save = await ask(chalk.green("  Save to ~/.cdoing/config.json? (Y/n): "));
+  options.apiKey = apiKey;
+  await saveProviderKey(selected.provider, apiKey, selected.provider, options.model!);
+}
+
+async function saveProviderKey(provider: string, apiKey: string, configProvider: string, model: string): Promise<void> {
+  const save = await ask(chalk.green("  Save for next time? (Y/n): "));
   if (save.toLowerCase() !== "n") {
     const config = loadConfig();
     config.apiKeys = config.apiKeys || {};
     config.apiKeys[provider] = apiKey;
-    config.provider = provider;
+    config.provider = configProvider;
+    if (model) config.model = model;
     saveConfig(config);
-    console.log(chalk.green("  Saved!\n"));
+    console.log(chalk.green("  ✓ Saved!\n"));
   }
-
-  options.apiKey = apiKey;
 }
