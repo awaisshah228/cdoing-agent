@@ -74,6 +74,12 @@ export class ChatInterface {
   }
 
   async start(): Promise<void> {
+    // Ctrl+C during idle prompt → show hint instead of killing CLI
+    process.on("SIGINT", () => {
+      console.log(chalk.dim("\n  Type /exit to quit, or Ctrl+C twice to force exit.\n"));
+      this.promptUser();
+    });
+
     printWelcome();
     this.promptUser();
   }
@@ -285,17 +291,27 @@ export class ChatInterface {
     }
 
     return new Promise((resolve) => {
-      console.log(chalk.dim(`\n  $ ${command}\n`));
+      console.log(chalk.dim(`\n  $ ${command}`));
+      console.log(chalk.dim("  (Ctrl+C to stop)\n"));
       const child = exec(command, {
         cwd: this.workingDir,
-        timeout: 120000,
+        timeout: 600000, // 10 min for long-running commands
         maxBuffer: 10 * 1024 * 1024,
         env: { ...process.env },
       });
       child.stdout?.pipe(process.stdout);
       child.stderr?.pipe(process.stderr);
+
+      // Ctrl+C kills the child process, not the CLI
+      const onSigint = () => {
+        child.kill("SIGTERM");
+        console.log(chalk.dim("\n  Command stopped.\n"));
+      };
+      process.on("SIGINT", onSigint);
+
       child.on("close", (code) => {
-        if (code !== 0) console.log(chalk.dim(`\n  Exit code: ${code}`));
+        process.removeListener("SIGINT", onSigint);
+        if (code !== 0 && code !== null) console.log(chalk.dim(`\n  Exit code: ${code}`));
         console.log();
         resolve();
       });
