@@ -8,6 +8,7 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
+    "start": "npm run build -w packages/core -w packages/ai && npm run dev -w packages/cli",
     "lint": "turbo run lint",
     "clean": "turbo run clean"
   },
