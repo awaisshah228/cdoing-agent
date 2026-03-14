@@ -60,6 +60,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
   // ── Helpers ─────────────────────────────────────────────
 
+  private webviewReady = false;
+  private pendingMessages: any[] = [];
+
   private getTab(id?: string): TabState | undefined {
     return this.tabs.get(id || this.activeTabId || "");
   }
@@ -118,6 +121,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           this.sendActiveFileAsContext();
           break;
         case "ready":
+          this.webviewReady = true;
           this.sendCurrentConfig();
           // Create first tab on ready
           if (this.tabs.size === 0) {
@@ -126,6 +130,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
             // Restore tab list
             this.sendAllTabs();
           }
+          // Flush any messages queued before webview was ready
+          // (e.g., contextAttached from clicking 💬 on a file)
+          this.flushPendingMessages();
           // Auto-attach the active/visible file as context
           setTimeout(() => this.sendActiveFileAsContext(), 200);
           break;
@@ -601,7 +608,20 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   }
 
   postMessage(message: any) {
+    if (!this.webviewReady) {
+      // Queue messages until webview sends "ready"
+      this.pendingMessages.push(message);
+      return;
+    }
     this.view?.webview.postMessage(message);
+  }
+
+  /** Flush any messages that were queued before the webview was ready */
+  private flushPendingMessages() {
+    for (const msg of this.pendingMessages) {
+      this.view?.webview.postMessage(msg);
+    }
+    this.pendingMessages = [];
   }
 
   private sendCurrentConfig() {
