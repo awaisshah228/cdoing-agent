@@ -300,19 +300,80 @@ body {
 }
 
 .tool-step-detail {
-  display: none;
   padding: 0 16px 10px 52px;
   font-size: 11px;
   color: var(--desc-fg);
   font-family: var(--vscode-editor-font-family);
   line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 200px;
+  max-height: 250px;
   overflow-y: auto;
 }
-.tool-step.expanded .tool-step-detail {
-  display: block;
+
+/* Clickable file paths in tool summaries */
+.tool-file-link {
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+  text-decoration: none;
+}
+.tool-file-link:hover {
+  text-decoration: underline;
+}
+
+/* Shell command in summary */
+.tool-command {
+  font-family: var(--vscode-editor-font-family);
+  opacity: 0.85;
+}
+
+/* Tool input key-value grid */
+.tool-input-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tool-input-row {
+  display: flex;
+  gap: 6px;
+}
+.tool-input-key {
+  color: var(--vscode-symbolIcon-fieldForeground, #9cdcfe);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.tool-input-value {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Tool output block */
+.tool-output {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.tool-output-error {
+  color: var(--error-fg);
+}
+.tool-empty {
+  font-style: italic;
+  opacity: 0.5;
+}
+
+/* Code block with language label */
+.code-block {
+  position: relative;
+  margin: 8px 0;
+}
+.code-block .code-lang {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  font-size: 10px;
+  color: var(--desc-fg);
+  opacity: 0.6;
+  text-transform: uppercase;
 }
 
 /* ─── Typing Indicator ─── */

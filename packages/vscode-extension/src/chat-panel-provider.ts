@@ -90,7 +90,11 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           await this.handleUserMessage(message.text);
           break;
         case "command":
-          await this.handleCommand(message.command, message.args);
+          if (message.command === "openFile" && message.args?.[0]) {
+            this.openFileInEditor(message.args[0]);
+          } else {
+            await this.handleCommand(message.command, message.args);
+          }
           break;
         case "newTab":
           this.createTab();
@@ -318,6 +322,17 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private getWorkingDir(): string {
     const folders = vscode.workspace.workspaceFolders;
     return folders?.[0]?.uri.fsPath || process.cwd();
+  }
+
+  /** Open a file in the editor (called when user clicks a file path in tool results) */
+  private openFileInEditor(filePath: string) {
+    const workingDir = this.getWorkingDir();
+    const absPath = path.isAbsolute(filePath) ? filePath : path.join(workingDir, filePath);
+    const uri = vscode.Uri.file(absPath);
+    vscode.window.showTextDocument(uri, { preview: true }).then(
+      () => {},
+      () => vscode.window.showWarningMessage(`Could not open: ${filePath}`)
+    );
   }
 
   /** Load API key from ~/.cdoing/config.json */
