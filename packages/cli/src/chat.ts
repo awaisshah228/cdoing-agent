@@ -946,32 +946,48 @@ export class ChatInterface {
       ...callbacks,
       onToken: (token: string) => {
         assistantResponse += token;
+        // Clear the input bar before writing token output
+        this.clearStreamingInputBar();
         callbacks.onToken(token);
+        // Redraw input bar after token
+        this.drawStreamingInputBar();
       },
       onToolCall: (name: string, input: Record<string, unknown>) => {
         addMessage(this.conversation, "tool", JSON.stringify(input), name);
+        this.clearStreamingInputBar();
         callbacks.onToolCall(name, input);
+        this.drawStreamingInputBar();
+      },
+      onToolResult: (name: string, result: string, isError?: boolean) => {
+        this.clearStreamingInputBar();
+        callbacks.onToolResult(name, result, isError ?? false);
+        this.drawStreamingInputBar();
       },
       onComplete: () => {
         if (assistantResponse) {
           addMessage(this.conversation, "assistant", assistantResponse);
         }
+        this.clearStreamingInputBar();
         callbacks.onComplete();
       },
     };
 
     this.spinner.start(chalk.hex("#B0BEC5")("  🧠 Thinking..."));
-    this.rl.close();
 
     // Set up abort controller
     this.isProcessing = true;
     this.currentAbortController = new AbortController();
+
+    // Start streaming input bar — allow user to type while streaming
+    this.streamingInputBuffer = "";
+    this.startStreamingInput();
 
     let cancelled = false;
     const onSigint = () => {
       cancelled = true;
       this.currentAbortController?.abort();
       this.spinner.stop();
+      this.clearStreamingInputBar();
       console.log(chalk.hex("#FFB74D")("\n  ⏹️  Cancelled.\n"));
     };
     process.once("SIGINT", onSigint);
@@ -982,6 +998,7 @@ export class ChatInterface {
       }
     } catch (error) {
       this.spinner.stop();
+      this.clearStreamingInputBar();
       if (!cancelled && !this.currentAbortController?.signal.aborted) {
         const msg = error instanceof Error ? error.message : String(error);
         console.log(chalk.hex("#EF5350")(`\n  ❌ Error: ${msg}\n`));
@@ -991,11 +1008,123 @@ export class ChatInterface {
     this.isProcessing = false;
     this.currentAbortController = null;
     process.removeListener("SIGINT", onSigint);
+    this.stopStreamingInput();
+
+    // If user typed something during streaming, queue it
+    if (this.streamingInputBuffer.trim()) {
+      this.messageQueue.push(this.streamingInputBuffer.trim());
+      console.log(
+        chalk.hex("#4FC3F7")(`\n  📬 Queued: `) +
+        chalk.dim(this.streamingInputBuffer.trim().substring(0, 60)) +
+        (this.streamingInputBuffer.trim().length > 60 ? "..." : ""),
+      );
+    }
+    this.streamingInputBuffer = "";
+
     this.createReadline();
 
-    // Process next queued message if any
+    // Process queued messages
     if (this.messageQueue.length > 0) {
-      console.log(chalk.hex("#4FC3F7")(`\n  📬 ${this.messageQueue.length} message(s) remaining in queue`));
+      const next = this.messageQueue.shift()!;
+      console.log(chalk.hex("#4FC3F7")(`\n  📬 Processing queued message...\n`));
+      await this.sendMessage(next);
     }
+  }
+
+  // ── Streaming input bar ─────────────────────────────────────
+
+  private streamingInputBuffer = "";
+  private streamingInputActive = false;
+  private streamingKeypressHandler: ((chunk: Buffer) => void) | null = null;
+
+  private startStreamingInput(): void {
+    this.streamingInputActive = true;
+    this.streamingInputBuffer = "";
+
+    // Use raw data handler to capture keystrokes during streaming
+    this.streamingKeypressHandler = (chunk: Buffer) => {
+      if (!this.streamingInputActive) return;
+
+      for (const byte of chunk) {
+        // Enter key — queue the message
+        if (byte === 13 || byte === 10) {
+          if (this.streamingInputBuffer.trim()) {
+            this.messageQueue.push(this.streamingInputBuffer.trim());
+            this.clearStreamingInputBar();
+            console.log(
+              chalk.hex("#4FC3F7")(`  📬 Queued: `) +
+              chalk.dim(this.streamingInputBuffer.trim().substring(0, 60)),
+            );
+            this.streamingInputBuffer = "";
+            this.drawStreamingInputBar();
+          }
+          continue;
+        }
+        // Backspace
+        if (byte === 127 || byte === 8) {
+          if (this.streamingInputBuffer.length > 0) {
+            this.streamingInputBuffer = this.streamingInputBuffer.slice(0, -1);
+            this.drawStreamingInputBar();
+          }
+          continue;
+        }
+        // Ctrl+C
+        if (byte === 3) {
+          return; // Let the SIGINT handler deal with it
+        }
+        // Escape — clear the input
+        if (byte === 27) {
+          this.streamingInputBuffer = "";
+          this.drawStreamingInputBar();
+          continue;
+        }
+        // Regular printable character
+        if (byte >= 32 && byte < 127) {
+          this.streamingInputBuffer += String.fromCharCode(byte);
+          this.drawStreamingInputBar();
+        }
+      }
+    };
+
+    process.stdin.on("data", this.streamingKeypressHandler);
+  }
+
+  private stopStreamingInput(): void {
+    this.streamingInputActive = false;
+    if (this.streamingKeypressHandler) {
+      process.stdin.removeListener("data", this.streamingKeypressHandler);
+      this.streamingKeypressHandler = null;
+    }
+    this.clearStreamingInputBar();
+  }
+
+  private drawStreamingInputBar(): void {
+    if (!this.streamingInputActive || !process.stdout.isTTY) return;
+    const cols = process.stdout.columns || 80;
+    const prompt = chalk.dim("  ❯ ");
+    const text = this.streamingInputBuffer;
+    const hint = text
+      ? ""
+      : chalk.dim("Type here while waiting... (Enter to queue)");
+    // Save cursor, go to bottom, draw bar, restore
+    process.stdout.write("\x1b[s"); // save cursor
+    process.stdout.write(`\x1b[${process.stdout.rows};1H`); // go to last row
+    process.stdout.write(`\x1b[2K`); // clear line
+    process.stdout.write(
+      chalk.bgHex("#1a1a2e")(
+        `${prompt}${chalk.white(text)}${hint}`.padEnd(cols),
+      ),
+    );
+    process.stdout.write("\x1b[u"); // restore cursor
+  }
+
+  private clearStreamingInputBar(): void {
+    if (!process.stdout.isTTY) return;
+    const cols = process.stdout.columns || 80;
+    process.stdout.write("\x1b[s");
+    process.stdout.write(`\x1b[${process.stdout.rows};1H`);
+    process.stdout.write(`\x1b[2K`);
+    process.stdout.write(" ".repeat(cols));
+    process.stdout.write("\x1b[u");
   }
 }
