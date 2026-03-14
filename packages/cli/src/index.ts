@@ -13,7 +13,7 @@ import { ChatInterface } from "./chat";
 import {
   buildModelConfig,
   createPermissionManager,
-  validateApiKey,
+  resolveApiKey,
   type CLIOptions,
 } from "./config";
 import { createToolRegistry } from "./tools";
@@ -46,8 +46,8 @@ program
 // ── Main action ─────────────────────────────────────────────
 
 async function run(prompt: string | undefined, options: CLIOptions) {
-  // Validate that an API key is available before doing anything
-  validateApiKey(options);
+  // Resolve API key — prompts interactively if not found
+  await resolveApiKey(options);
 
   // Build core dependencies from CLI options
   const modelConfig = buildModelConfig(options);
