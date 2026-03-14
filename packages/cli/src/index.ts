@@ -12,7 +12,12 @@ import {
   PermissionManager,
   PermissionMode,
 } from "@cdoing/core";
-import { ModelProvider, type ModelConfig } from "@cdoing/ai";
+import {
+  ModelProvider,
+  getApiKeyEnvVar,
+  getRegisteredProviders,
+  type ModelConfig,
+} from "@cdoing/ai";
 import { ChatInterface } from "./chat";
 
 const program = new Command();
@@ -27,8 +32,16 @@ program
   )
   .option(
     "-p, --provider <provider>",
-    "AI provider: anthropic, openai, google",
+    "AI provider: anthropic, openai, google, or any custom provider",
     "anthropic"
+  )
+  .option(
+    "--base-url <url>",
+    "Base URL for custom/self-hosted providers"
+  )
+  .option(
+    "--api-key <key>",
+    "API key (overrides environment variable)"
   )
   .option(
     "--mode <mode>",
@@ -58,17 +71,23 @@ program
     toolRegistry.register(new ShellExecTool(workingDir));
 
     // Set up model config
+    const provider = options.provider.toLowerCase();
     const modelConfig: Partial<ModelConfig> = {
-      provider: parseProvider(options.provider),
+      provider,
       model: options.model,
+      baseURL: options.baseUrl,
+      apiKey: options.apiKey,
     };
 
     // Validate API key
-    const apiKeyEnv = getApiKeyEnvVar(modelConfig.provider!);
-    if (!process.env[apiKeyEnv]) {
-      console.error(`\n  Error: ${apiKeyEnv} environment variable is not set.`);
-      console.error(`  Set it with: export ${apiKeyEnv}=your-api-key\n`);
-      process.exit(1);
+    if (!options.apiKey) {
+      const apiKeyEnv = getApiKeyEnvVar(provider);
+      if (!process.env[apiKeyEnv]) {
+        console.error(`\n  Error: ${apiKeyEnv} environment variable is not set.`);
+        console.error(`  Set it with: export ${apiKeyEnv}=your-api-key`);
+        console.error(`  Or pass --api-key directly.\n`);
+        process.exit(1);
+      }
     }
 
     // Start chat
@@ -100,28 +119,6 @@ function parsePermissionMode(mode: string): PermissionMode {
       return PermissionMode.AUTO_EDIT;
     default:
       return PermissionMode.ASK;
-  }
-}
-
-function parseProvider(provider: string): ModelProvider {
-  switch (provider.toLowerCase()) {
-    case "openai":
-      return ModelProvider.OPENAI;
-    case "google":
-      return ModelProvider.GOOGLE;
-    default:
-      return ModelProvider.ANTHROPIC;
-  }
-}
-
-function getApiKeyEnvVar(provider: ModelProvider): string {
-  switch (provider) {
-    case ModelProvider.OPENAI:
-      return "OPENAI_API_KEY";
-    case ModelProvider.GOOGLE:
-      return "GOOGLE_API_KEY";
-    default:
-      return "ANTHROPIC_API_KEY";
   }
 }
 

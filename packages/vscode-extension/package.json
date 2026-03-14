@@ -1,0 +1,197 @@
+{
+  "name": "cdoing-vscode",
+  "displayName": "Cdoing Agent",
+  "description": "AI-powered coding assistant with multi-model support — chat, instruct, and run commands right from VS Code",
+  "version": "0.1.0",
+  "publisher": "cdoing",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "AI",
+    "Chat",
+    "Programming Languages"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "cdoing",
+          "title": "Cdoing Agent",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "cdoing": [
+        {
+          "type": "webview",
+          "id": "cdoing.chatPanel",
+          "name": "Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "cdoing.newChat",
+        "title": "Cdoing: New Chat"
+      },
+      {
+        "command": "cdoing.clearHistory",
+        "title": "Cdoing: Clear Chat History"
+      },
+      {
+        "command": "cdoing.selectModel",
+        "title": "Cdoing: Select Model"
+      },
+      {
+        "command": "cdoing.openSettings",
+        "title": "Cdoing: Open Settings"
+      },
+      {
+        "command": "cdoing.sendSelection",
+        "title": "Cdoing: Send Selection to Chat"
+      },
+      {
+        "command": "cdoing.explainSelection",
+        "title": "Cdoing: Explain Selection"
+      },
+      {
+        "command": "cdoing.refactorSelection",
+        "title": "Cdoing: Refactor Selection"
+      },
+      {
+        "command": "cdoing.fixSelection",
+        "title": "Cdoing: Fix Selection"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "cdoing.sendSelection",
+          "group": "cdoing@1",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "cdoing.explainSelection",
+          "group": "cdoing@2",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "cdoing.refactorSelection",
+          "group": "cdoing@3",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "cdoing.fixSelection",
+          "group": "cdoing@4",
+          "when": "editorHasSelection"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Cdoing Agent",
+      "properties": {
+        "cdoing.provider": {
+          "type": "string",
+          "default": "anthropic",
+          "enum": [
+            "anthropic",
+            "openai",
+            "google",
+            "custom"
+          ],
+          "enumDescriptions": [
+            "Anthropic (Claude)",
+            "OpenAI (GPT)",
+            "Google (Gemini)",
+            "Custom OpenAI-compatible provider"
+          ],
+          "description": "AI model provider"
+        },
+        "cdoing.model": {
+          "type": "string",
+          "default": "",
+          "description": "Model name (leave empty for provider default). Examples: claude-sonnet-4-20250514, gpt-4o, gemini-2.0-flash"
+        },
+        "cdoing.customProviderName": {
+          "type": "string",
+          "default": "",
+          "description": "Name for custom provider (e.g., ollama, together, groq)"
+        },
+        "cdoing.customBaseURL": {
+          "type": "string",
+          "default": "",
+          "description": "Base URL for custom provider (e.g., http://localhost:11434/v1)"
+        },
+        "cdoing.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key (overrides environment variable). Leave empty to use env var."
+        },
+        "cdoing.temperature": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Model temperature (0 = deterministic, higher = more creative)"
+        },
+        "cdoing.maxTokens": {
+          "type": "number",
+          "default": 8096,
+          "description": "Maximum tokens in model response"
+        },
+        "cdoing.permissionMode": {
+          "type": "string",
+          "default": "ask",
+          "enum": [
+            "ask",
+            "auto-edit",
+            "auto"
+          ],
+          "enumDescriptions": [
+            "Ask before any tool requiring permission",
+            "Auto-approve file edits, ask for shell commands",
+            "Auto-approve all operations"
+          ],
+          "description": "Permission mode for tool execution"
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "command": "cdoing.newChat",
+        "key": "ctrl+shift+l",
+        "mac": "cmd+shift+l"
+      },
+      {
+        "command": "cdoing.sendSelection",
+        "key": "ctrl+shift+enter",
+        "mac": "cmd+shift+enter",
+        "when": "editorHasSelection"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.config.js",
+    "dev": "node esbuild.config.js --watch",
+    "clean": "rm -rf dist",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "@cdoing/ai": "*",
+    "@cdoing/core": "*",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/vscode": "^1.95.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.8.2"
+  }
+}

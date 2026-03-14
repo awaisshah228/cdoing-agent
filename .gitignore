@@ -1,5 +1,31 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+out/
+*.tsbuildinfo
+
+# Environment
 .env
+.env.*
+
+# Logs
 *.log
+
+# OS files
 .DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Turbo
+.turbo/
+
+# Claude
+.claude/
+
+# Yarn
+yarn.lock
