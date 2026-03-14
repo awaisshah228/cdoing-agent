@@ -59,16 +59,31 @@ export class FileRunTool implements BaseTool {
     const command = `${runner} "${filePath}"${args ? ` ${args}` : ""}`;
 
     return new Promise((resolve) => {
-      exec(command, { cwd: this.workingDir, timeout, maxBuffer: 10 * 1024 * 1024, env: { ...process.env } },
+      const child = exec(command, { cwd: this.workingDir, timeout, maxBuffer: 10 * 1024 * 1024, env: { ...process.env } },
         (error, stdout, stderr) => {
-          // Always capture full output so LLM can debug errors
           const outputParts: string[] = [];
           if (stdout) outputParts.push(stdout.trimEnd());
-          if (stderr) outputParts.push(`STDERR:\n${stderr.trimEnd()}`);
+          if (stderr) {
+            // Filter out common non-error warnings
+            const filteredStderr = stderr.split("\n")
+              .filter((l) => !l.includes("DeprecationWarning") && !l.includes("ExperimentalWarning"))
+              .join("\n").trim();
+            if (filteredStderr) outputParts.push(`STDERR:\n${filteredStderr}`);
+          }
           const output = outputParts.join("\n\n") || "(no output)";
 
           if (error?.killed) {
-            return resolve({ success: false, output, error: `Timed out after ${timeout}ms` });
+            // Timed out — but if we got output, it's likely a server/long-running process
+            // Treat as success with note, not as an error
+            if (output && output !== "(no output)") {
+              resolve({
+                success: true,
+                output: output + `\n\n[Process timed out after ${timeout / 1000}s — this is normal for servers and long-running processes. The output above was captured before timeout. Use shell_exec instead if you need to start a server in the background.]`,
+              });
+            } else {
+              resolve({ success: false, output, error: `Timed out after ${timeout}ms with no output` });
+            }
+            return;
           }
 
           if (error) {
@@ -77,6 +92,21 @@ export class FileRunTool implements BaseTool {
             resolve({ success: true, output });
           }
         });
+
+      // For server-like processes: if we get output early, don't wait for timeout
+      // Kill after 5s if stdout has content (server started successfully)
+      let earlyOutput = "";
+      child.stdout?.on("data", (chunk: string) => {
+        earlyOutput += chunk;
+        // If output contains typical server-started messages, kill early
+        if (/listening|started|running|ready|server/i.test(earlyOutput)) {
+          setTimeout(() => {
+            if (!child.killed) {
+              child.kill("SIGTERM");
+            }
+          }, 2000); // Give 2s for any additional startup output
+        }
+      });
     });
   }
 }

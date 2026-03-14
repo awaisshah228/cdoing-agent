@@ -77,8 +77,10 @@ When in doubt, call multiple tools — the system will automatically run them in
 - Check command output for errors and address them.
 
 ## Running Programs
-- Use file_run to test scripts after writing them.
-- It auto-detects the runtime from the file extension.
+- Use file_run to test scripts after writing them (auto-detects runtime from extension).
+- Do NOT use file_run for servers or long-running processes — they will timeout after 30s.
+- For servers: use shell_exec with a quick health check instead (e.g., \`shell_exec("node server.js &; sleep 2; curl localhost:3000")\`).
+- file_run is for scripts that finish quickly (tests, build scripts, one-off utilities).
 
 ## Sub-Agent
 - Use sub_agent for independent research tasks that can run in parallel with other tools.
