@@ -14,7 +14,7 @@ function gradient(text: string): string {
 
 export function printWelcome(): void {
   const banner = figlet.textSync("Cdoing", {
-    font: "Big",
+    font: "ANSI Shadow",
     horizontalLayout: "default",
   });
 

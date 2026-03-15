@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import { Box, Text, useInput } from "ink";
 import * as fs from "fs";
 import * as path from "path";
@@ -7,8 +7,10 @@ const SLASH_COMMANDS = [
   { cmd: "/help",        desc: "Show help" },
   { cmd: "/clear",       desc: "Clear conversation" },
   { cmd: "/new",         desc: "New conversation" },
-  { cmd: "/history",     desc: "List saved conversations" },
+  { cmd: "/ls",          desc: "Browse sessions (interactive TUI)" },
+  { cmd: "/history",     desc: "List saved conversations (text)" },
   { cmd: "/resume",      desc: "Resume a conversation" },
+  { cmd: "/fork",        desc: "Fork current or given conversation" },
   { cmd: "/delete",      desc: "Delete a conversation" },
   { cmd: "/config",      desc: "View/update config" },
   { cmd: "/model",       desc: "Switch model" },
@@ -24,8 +26,10 @@ const SLASH_COMMANDS = [
   { cmd: "/plan",        desc: "Toggle plan mode" },
   { cmd: "/effort",      desc: "Set analysis depth" },
   { cmd: "/btw",         desc: "Ask without adding to history" },
+  { cmd: "/bg",          desc: "Run prompt as background job" },
+  { cmd: "/jobs",        desc: "Show background jobs" },
   { cmd: "/rules",       desc: "View project rules" },
-  { cmd: "/mcp",         desc: "MCP server status" },
+  { cmd: "/mcp",         desc: "MCP server status / interactive picker" },
   { cmd: "/context",     desc: "List context providers" },
   { cmd: "/queue",       desc: "Show message queue" },
   { cmd: "/doctor",      desc: "Check system health" },
@@ -36,12 +40,12 @@ const SLASH_COMMANDS = [
 ];
 
 const AT_PROVIDERS = [
-  { cmd: "@file",     desc: "Include a file's contents  (@file src/foo.ts)" },
-  { cmd: "@clip",     desc: "Paste clipboard content" },
-  { cmd: "@url",      desc: "Fetch a URL  (@url https://...)" },
   { cmd: "@terminal", desc: "Recent terminal output" },
+  { cmd: "@url",      desc: "Fetch a URL  (@url https://...)" },
   { cmd: "@tree",     desc: "Project file tree" },
   { cmd: "@codebase", desc: "Full codebase context" },
+  { cmd: "@clip",     desc: "Paste clipboard content" },
+  { cmd: "@file",     desc: "Include a file's contents  (@file src/foo.ts)" },
 ];
 
 // Shell commands that take a path argument
@@ -87,28 +91,35 @@ function readPathEntries(partial: string, workingDir: string, cmdPrefix: string)
   }
 }
 
-function getAtFileSuggestions(partial: string, workingDir: string): { cmd: string; desc: string }[] {
-  try {
-    const resolved = path.resolve(workingDir, partial);
-    const isDir    = partial.endsWith("/") || partial === "";
-    const dir      = isDir ? resolved : path.dirname(resolved);
-    const prefix   = isDir ? "" : path.basename(resolved).toLowerCase();
-    if (!fs.existsSync(dir)) return [];
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    return entries
-      .filter((e) => !e.name.startsWith(".") || prefix.startsWith("."))
-      .filter((e) => prefix === "" || e.name.toLowerCase().startsWith(prefix))
-      .slice(0, 10)
-      .map((e) => {
-        const rel = path.join(path.relative(workingDir, dir), e.name);
-        return {
-          cmd: "@file " + rel + (e.isDirectory() ? "/" : ""),
-          desc: e.isDirectory() ? "directory" : "file",
-        };
-      });
-  } catch {
-    return [];
+
+function getProjectFiles(workingDir: string, partial: string): { cmd: string; desc: string }[] {
+  const results: { cmd: string; desc: string }[] = [];
+  const IGNORE = new Set(["node_modules", "dist", ".git", ".next", "build", ".turbo", "coverage"]);
+
+  function walk(dir: string, prefix: string, depth: number) {
+    if (depth > 2) return;
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const e of entries) {
+        if (IGNORE.has(e.name)) continue;
+        if (e.name.startsWith(".") && !partial.startsWith(".")) continue;
+        const rel = prefix ? `${prefix}/${e.name}` : e.name;
+        const matchStr = rel.toLowerCase();
+        const partialLower = partial.toLowerCase();
+        if (!partial || matchStr.includes(partialLower) || e.name.toLowerCase().startsWith(partialLower)) {
+          results.push({
+            cmd: "@file " + rel + (e.isDirectory() ? "/" : ""),
+            desc: e.isDirectory() ? "dir" : "file",
+          });
+        }
+        if (e.isDirectory()) walk(path.join(dir, e.name), rel, depth + 1);
+        if (results.length >= 30) return;
+      }
+    } catch {}
   }
+
+  walk(workingDir, "", 0);
+  return results.slice(0, 20);
 }
 
 function getFirstPathCompletion(partial: string, workingDir: string): string {
@@ -245,22 +256,34 @@ const PathMenu: React.FC<PathMenuProps> = ({ entries, selectedIdx, label }) => {
   );
 };
 
+// ── Suggestion icon helpers ───────────────────────────────────────────────────
+
+function getSuggestionColor(s: { cmd: string; desc: string }): string {
+  if (s.cmd.startsWith("@file")) return "magenta";
+  if (s.cmd.startsWith("@")) return "yellow";
+  return "cyan";
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 interface UserInputProps {
   isProcessing: boolean;
   queueLength: number;
   workingDir: string;
+  permissionMode: string;
   onSubmit: (value: string) => void;
   onCancel: () => void;
+  onModeChange: (mode: string) => void;
 }
 
 export const UserInput: React.FC<UserInputProps> = ({
   isProcessing,
-  queueLength,
+  queueLength: _queueLength,
   workingDir,
+  permissionMode,
   onSubmit,
   onCancel,
+  onModeChange,
 }) => {
   const [input, setInput]           = useState("");
   const [history, setHistory]       = useState<string[]>([]);
@@ -278,6 +301,9 @@ export const UserInput: React.FC<UserInputProps> = ({
   // Inline ghost
   const [ghost, setGhost] = useState<GhostResult | null>(null);
 
+  // Counter for clipboard image placeholders
+  const imageCountRef = useRef(0);
+
   const clearAll = () => {
     setSuggestions([]);
     setSelectedSuggestion(-1);
@@ -292,27 +318,31 @@ export const UserInput: React.FC<UserInputProps> = ({
     if (line.startsWith("/")) {
       const matches = SLASH_COMMANDS.filter((c) => c.cmd.startsWith(line) && c.cmd !== line);
       setSuggestions(matches.slice(0, 8));
-      setSelectedSuggestion(-1);
+      setSelectedSuggestion(0);
       setPathEntries([]);
       setPathContext(null);
       setGhost(computeGhost(line, hist, workingDir));
       return;
     }
 
-    // ── @provider / @file dropdown ──
+    // ── @provider / file dropdown ──
     const atMatch = line.match(/@(\S*)$/);
     if (atMatch) {
-      const atToken = "@" + atMatch[1];
-      const fileArgMatch = line.match(/@file\s+(\S*)$/);
-      if (fileArgMatch) {
-        setSuggestions(getAtFileSuggestions(fileArgMatch[1], workingDir));
-      } else {
-        setSuggestions(AT_PROVIDERS.filter((p) => p.cmd.startsWith(atToken) && p.cmd !== atToken));
-      }
-      setSelectedSuggestion(-1);
+      const partial = atMatch[1]; // everything after @
+
+      // Match providers
+      const providerMatches = AT_PROVIDERS.filter((p) =>
+        partial === "" || p.cmd.slice(1).toLowerCase().startsWith(partial.toLowerCase())
+      );
+      // Project files — displayed as @path (inserted as @file path)
+      const fileMatches = getProjectFiles(workingDir, partial);
+
+      const combined = [...providerMatches, ...fileMatches].slice(0, 50);
+      setSuggestions(combined);
+      setSelectedSuggestion(0);
       setPathEntries([]);
       setPathContext(null);
-      setGhost(computeGhost(line, hist, workingDir));
+      setGhost(null);
       return;
     }
 
@@ -340,24 +370,76 @@ export const UserInput: React.FC<UserInputProps> = ({
     let newVal: string;
     if (chosen.cmd.startsWith("@")) {
       newVal = input.replace(/@\S*$/, chosen.cmd);
+      // directories keep the "/" but no space — continue drilling in
       if (!newVal.endsWith("/")) newVal += " ";
     } else {
       newVal = chosen.cmd + " ";
     }
     setInput(newVal);
-    setSuggestions([]);
-    setSelectedSuggestion(-1);
-    setGhost(computeGhost(newVal, history, workingDir));
     if (submit) {
       setHistory((h) => [newVal.trim(), ...h].slice(0, 200));
       setHistoryIdx(-1);
       setInput("");
-      setGhost(null);
+      clearAll();
       onSubmit(newVal.trim());
+    } else {
+      // re-run updateAll so directory drilldown populates new suggestions
+      updateAll(newVal, history);
     }
-  }, [input, history, workingDir, onSubmit]);
+  }, [input, history, workingDir, onSubmit, updateAll]);
 
   useInput((char, key) => {
+    // Ctrl+L — clear screen
+    if (key.ctrl && char === "l") {
+      process.stdout.write("\x1b[2J\x1b[H");
+      return;
+    }
+
+    // Ctrl+V — paste from clipboard (text or image placeholder)
+    if (key.ctrl && char === "v") {
+      try {
+        const { execSync } = require("child_process") as typeof import("child_process");
+        // macOS: pbpaste, Linux: xclip -o or xsel -ob
+        let pasted = "";
+        try {
+          pasted = execSync("pbpaste", { encoding: "utf-8", timeout: 500 }).trim();
+        } catch {
+          try {
+            pasted = execSync("xclip -o -selection clipboard", { encoding: "utf-8", timeout: 500 }).trim();
+          } catch {
+            try {
+              pasted = execSync("xsel -ob", { encoding: "utf-8", timeout: 500 }).trim();
+            } catch { /* no clipboard tool */ }
+          }
+        }
+
+        if (pasted) {
+          // Replace newlines with spaces for single-line input
+          const cleaned = pasted.replace(/\n/g, " ").replace(/\r/g, "");
+          const next = input + cleaned;
+          setInput(next);
+          updateAll(next, history);
+        } else {
+          // Clipboard might contain an image — insert placeholder
+          imageCountRef.current += 1;
+          const placeholder = `[Image #${imageCountRef.current}]`;
+          const next = input + placeholder;
+          setInput(next);
+          updateAll(next, history);
+        }
+      } catch { /* skip on any error */ }
+      return;
+    }
+
+    // Shift+Tab — cycle permission mode
+    if (char === "\x1b[Z") {
+      const modes = ["ask", "auto-edit", "auto"];
+      const idx = modes.indexOf(permissionMode);
+      const next = modes[(idx + 1) % modes.length];
+      onModeChange(next);
+      return;
+    }
+
     // ESC
     if (key.escape) {
       if (suggestions.length > 0 || pathEntries.length > 0) { clearAll(); return; }
@@ -421,10 +503,16 @@ export const UserInput: React.FC<UserInputProps> = ({
 
     // Dropdown navigation
     if (suggestions.length > 0) {
-      if (key.upArrow)   { setSelectedSuggestion((s) => Math.max(s - 1, -1)); return; }
-      if (key.downArrow) { setSelectedSuggestion((s) => Math.min(s + 1, suggestions.length - 1)); return; }
-      if (key.return && selectedSuggestion >= 0) {
-        const chosen = suggestions[selectedSuggestion];
+      if (key.upArrow) {
+        setSelectedSuggestion((s) => (s <= 0 ? suggestions.length - 1 : s - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setSelectedSuggestion((s) => (s >= suggestions.length - 1 ? 0 : s + 1));
+        return;
+      }
+      if (key.return) {
+        const chosen = suggestions[selectedSuggestion >= 0 ? selectedSuggestion : 0];
         if (chosen) acceptSuggestion(chosen, chosen.cmd.startsWith("/"));
         return;
       }
@@ -477,30 +565,40 @@ export const UserInput: React.FC<UserInputProps> = ({
     }
   });
 
-  const prompt = queueLength > 0
-    ? `❯ [${queueLength} queued] `
-    : isProcessing ? "❯ [processing] " : "❯ ";
-  const promptColor = queueLength > 0 ? "yellow" : isProcessing ? "gray" : "green";
-
   return (
     <Box flexDirection="column">
 
-      {/* /command and @provider vertical dropdown */}
+      {/* /command and @provider vertical dropdown — windowed, 8 visible */}
       {suggestions.length > 0 ? (
         <Box flexDirection="column" paddingLeft={2}>
-          {suggestions.map((s, i) => (
-            i === selectedSuggestion ? (
-              <Box key={s.cmd}>
-                <Text backgroundColor="cyan" color="black">{` ${s.cmd.padEnd(22)}`}</Text>
-                <Text dimColor>{" " + s.desc}</Text>
-              </Box>
-            ) : (
-              <Box key={s.cmd}>
-                <Text color={s.cmd.startsWith("@") ? "magenta" : "cyan"}>{` ${s.cmd.padEnd(22)}`}</Text>
-                <Text dimColor>{" " + s.desc}</Text>
-              </Box>
-            )
-          ))}
+          {(() => {
+            const WINDOW = 8;
+            const sel = selectedSuggestion >= 0 ? selectedSuggestion : 0;
+            const start = Math.max(0, Math.min(sel - Math.floor(WINDOW / 2), suggestions.length - WINDOW));
+            const visible = suggestions.slice(start, start + WINDOW);
+            return visible.map((s, vi) => {
+              const gi = start + vi; // global index
+              const isSelected = gi === sel;
+              // For @file entries show @path instead of "@file path"
+              const display = s.cmd.startsWith("@file ") ? "@" + s.cmd.slice(6) : s.cmd;
+              const color = getSuggestionColor(s);
+              return isSelected ? (
+                <Box key={s.cmd}>
+                  <Text color="white" bold>{`  ${display}`}</Text>
+                  {s.desc && s.desc !== "file" && s.desc !== "dir" ? (
+                    <Text color="gray">{`  ${s.desc}`}</Text>
+                  ) : null}
+                </Box>
+              ) : (
+                <Box key={s.cmd}>
+                  <Text color={color} dimColor>{`  ${display}`}</Text>
+                </Box>
+              );
+            });
+          })()}
+          <Box marginTop={0} paddingLeft={1}>
+            <Text dimColor>{"↑/↓ to navigate  Enter to select  Tab to complete  Esc to close"}</Text>
+          </Box>
         </Box>
       ) : null}
 
@@ -513,14 +611,23 @@ export const UserInput: React.FC<UserInputProps> = ({
         />
       ) : null}
 
-      {/* Input line with inline ghost */}
-      <Box>
-        <Text color={promptColor} bold>{prompt}</Text>
-        <Text>{input}</Text>
-        <Text color="green">{"▊"}</Text>
-        {ghost && suggestions.length === 0 && pathEntries.length === 0 ? (
-          <Text color="gray" dimColor>{ghost.suffix}</Text>
-        ) : null}
+      {/* Bordered input with placeholder */}
+      <Box borderStyle="round" borderColor="gray" paddingLeft={1} paddingRight={1}>
+        <Box>
+          <Text color="cyan">{"● "}</Text>
+          {input.length > 0 ? <Text>{input}</Text> : null}
+          <Text color="green">{"▊"}</Text>
+          {input.length === 0 ? (
+            <Text color="gray" dimColor>{"Ask anything, @ for context, / for commands, ! for shell"}</Text>
+          ) : ghost && suggestions.length === 0 && pathEntries.length === 0 ? (
+            <Text color="gray" dimColor>{ghost.suffix}</Text>
+          ) : null}
+        </Box>
+      </Box>
+
+      {/* Keyboard hints below input */}
+      <Box paddingLeft={2}>
+        <Text color="cyan" dimColor>{"Press Ctrl+V to paste  ·  Ctrl+L to clear  ·  Shift+Tab to cycle mode"}</Text>
       </Box>
 
     </Box>

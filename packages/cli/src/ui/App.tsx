@@ -26,6 +26,7 @@ import { StreamingMessage } from "./MessageList";
 import { Spinner, ToolSpinner } from "./Spinner";
 import { UserInput } from "./UserInput";
 import { StatusBar } from "./StatusBar";
+import { SessionBrowser } from "./SessionBrowser";
 import { useChat } from "./hooks/useChat";
 import type { ChatMessage } from "./types";
 
@@ -83,6 +84,11 @@ export const App: React.FC<AppProps> = ({
     toolActivity,
     lastUsage,
     workingDir,
+    contextUsage,
+    backgroundJobs,
+    showSessionBrowser,
+    setShowSessionBrowser,
+    conversations,
     sendMessage,
     handleSlashCommand,
     cancelCurrent,
@@ -226,6 +232,34 @@ export const App: React.FC<AppProps> = ({
     [workingDir, handleSlashCommand, sendMessage, addSystemMessage],
   );
 
+  const runningJobs = backgroundJobs.filter((j) => j.status === "running").length;
+
+  // ── Session browser overlay ──────────────────────────────────────────────
+  if (showSessionBrowser) {
+    const convList = conversations();
+    return (
+      <Box flexDirection="column">
+        <SessionBrowser
+          conversations={convList}
+          onSelect={async (id) => {
+            setShowSessionBrowser(false);
+            const result = await handleSlashCommand(`/resume ${id}`);
+            if (result) process.stdout.write(chalk.cyan(result) + "\n");
+          }}
+          onDelete={async (id) => {
+            await handleSlashCommand(`/delete ${id}`);
+          }}
+          onFork={async (id) => {
+            setShowSessionBrowser(false);
+            const result = await handleSlashCommand(`/fork ${id}`);
+            if (result) process.stdout.write(chalk.cyan(result) + "\n");
+          }}
+          onClose={() => setShowSessionBrowser(false)}
+        />
+      </Box>
+    );
+  }
+
   // Ink only renders this small fixed section — no scrolling issues
   return (
     <Box flexDirection="column">
@@ -254,8 +288,13 @@ export const App: React.FC<AppProps> = ({
         isProcessing={isProcessing}
         queueLength={0}
         workingDir={workingDir}
+        permissionMode={permissionManager.getMode()}
         onSubmit={handleSubmit}
         onCancel={cancelCurrent}
+        onModeChange={(mode) => {
+          const { parsePermissionMode } = require("../config") as typeof import("../config");
+          permissionManager.setMode(parsePermissionMode(mode) as any);
+        }}
       />
 
       <StatusBar
@@ -266,6 +305,8 @@ export const App: React.FC<AppProps> = ({
         isProcessing={isProcessing}
         lastUsage={lastUsage}
         queueLength={0}
+        contextUsage={contextUsage}
+        backgroundJobs={runningJobs}
       />
     </Box>
   );

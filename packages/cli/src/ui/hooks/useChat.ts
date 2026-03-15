@@ -32,7 +32,10 @@ import {
   createConversation,
   addMessage,
   loadConversation,
+  listConversations,
   deleteConversation,
+  forkConversation,
+  updateConversationTitle,
   printConversationList,
   type Conversation,
 } from "../../history";
@@ -44,7 +47,7 @@ import {
 } from "../../config";
 import { oauthLogout, oauthStatus } from "../../oauth";
 import { handleInit, handleDoctor } from "../../commands";
-import type { ChatMessage, ToolActivity, UsageInfo } from "../types";
+import type { ChatMessage, ToolActivity, UsageInfo, ContextUsage, BackgroundJob } from "../types";
 
 let _msgId = 0;
 function nextId() {
@@ -60,6 +63,23 @@ export interface UseChatOptions {
   todoStore?: TodoStore;
 }
 
+/** Context window sizes per provider/model family */
+function getContextWindowMax(provider: string, model: string): number {
+  if (provider === "google") return 1_000_000;
+  if (provider === "anthropic") return 200_000;
+  if (provider === "openai") {
+    if (model.includes("o3") || model.includes("o1")) return 200_000;
+    return 128_000;
+  }
+  if (provider === "ollama") return 32_000;
+  return 100_000;
+}
+
+/** Generate a short unique job id */
+function jobId(): string {
+  return `bg-${Date.now().toString(36).slice(-4)}`;
+}
+
 export function useChat(opts: UseChatOptions) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streamingContent, setStreamingContent] = useState("");
@@ -67,6 +87,10 @@ export function useChat(opts: UseChatOptions) {
   const [toolActivity, setToolActivity] = useState<ToolActivity | null>(null);
   const [lastUsage, setLastUsage] = useState<UsageInfo | null>(null);
   const [workingDir, setWorkingDir] = useState(process.cwd());
+  const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
+  const [backgroundJobs, setBackgroundJobs] = useState<BackgroundJob[]>([]);
+  const [showSessionBrowser, setShowSessionBrowser] = useState(false);
+
   // Ref so buildAgent() always reads the latest dir without stale closure issues
   const workingDirRef = useRef(process.cwd());
 
@@ -132,6 +156,37 @@ export function useChat(opts: UseChatOptions) {
 
   function rebuildAgent() {
     agentRef.current = buildAgent();
+  }
+
+  /**
+   * Fire-and-forget: ask the LLM for a short session title, then save it.
+   * Runs in the background so it never blocks the UI.
+   */
+  function generateSessionTitle(conv: Conversation): void {
+    const firstUser = conv.messages.find((m) => m.role === "user");
+    const firstAssistant = conv.messages.find((m) => m.role === "assistant");
+    if (!firstUser) return;
+
+    const snippet = [
+      `User: ${firstUser.content.substring(0, 200)}`,
+      firstAssistant ? `Assistant: ${firstAssistant.content.substring(0, 200)}` : "",
+    ].filter(Boolean).join("\n");
+
+    const titleAgent = buildAgent();
+    let title = "";
+    titleAgent.run(
+      `Generate a concise session title (5–8 words max, no quotes) for this conversation:\n\n${snippet}\n\nTitle:`,
+      {
+        onToken: (t) => { title += t; },
+        onToolCall: () => {},
+        onToolResult: () => {},
+        onComplete: () => {
+          const clean = title.trim().replace(/^["']|["']$/g, "").replace(/\.$/, "");
+          if (clean) updateConversationTitle(conv.id, clean);
+        },
+        onError: () => {},
+      },
+    ).catch(() => {});
   }
 
   function addSystemMessage(content: string) {
@@ -266,6 +321,12 @@ export function useChat(opts: UseChatOptions) {
           setIsProcessing(false);
           abortRef.current = null;
 
+          // Auto-generate session title after first assistant response
+          const conv = conversationRef.current;
+          if (conv.title === "New conversation" && conv.messages.length >= 2) {
+            generateSessionTitle(conv);
+          }
+
           // Process next queued message
           const next = queueRef.current.shift();
           if (next) sendMessage(next);
@@ -285,7 +346,21 @@ export function useChat(opts: UseChatOptions) {
           abortRef.current = null;
         },
         onUsage: (usage) => {
-          setLastUsage(usage as UsageInfo);
+          const u = usage as UsageInfo;
+          setLastUsage(u);
+          // Track context window usage and auto-compact at 80%
+          const provider = String(modelConfigRef.current.provider || "anthropic");
+          const model = String(modelConfigRef.current.model || "");
+          const maxTokens = getContextWindowMax(provider, model);
+          const percent = Math.min(100, (u.inputTokens / maxTokens) * 100);
+          setContextUsage({ inputTokens: u.inputTokens, maxTokens, percent });
+          if (percent >= 80) {
+            const ag = agentRef.current as unknown as Record<string, (...a: unknown[]) => unknown>;
+            if (typeof ag.compactHistory === "function") {
+              ag.compactHistory();
+              addSystemMessage("📦 Context compacted automatically (reached 80%).");
+            }
+          }
         },
       });
     },
@@ -347,6 +422,87 @@ export function useChat(opts: UseChatOptions) {
           if (!arg) return "Usage: /delete <id>";
           const ok = deleteConversation(arg);
           return ok ? `Deleted: ${arg}` : `Not found: ${arg}`;
+        }
+
+        case "/fork": {
+          const sourceId = arg || conversationRef.current.id;
+          const forked = forkConversation(sourceId);
+          if (!forked) return `Not found: ${sourceId}`;
+          return `Forked → new session: ${forked.id}\nTitle: ${forked.title}\nUse /resume ${forked.id} to switch to it.`;
+        }
+
+        case "/ls": {
+          setShowSessionBrowser(true);
+          return null; // TUI takes over
+        }
+
+        case "/bg": {
+          if (!arg) return "Usage: /bg <prompt>  — run a prompt as a background job";
+          const id = jobId();
+          const bgJob: BackgroundJob = {
+            id,
+            prompt: arg,
+            status: "running",
+            startedAt: Date.now(),
+          };
+          setBackgroundJobs((prev) => [...prev, bgJob]);
+          addSystemMessage(`⚡ Background job started: ${id}`);
+
+          const bgAgent = buildAgent();
+          let result = "";
+          bgAgent.run(arg, {
+            onToken: (t) => { result += t; },
+            onToolCall: () => {},
+            onToolResult: () => {},
+            onComplete: () => {
+              setBackgroundJobs((prev) =>
+                prev.map((j) =>
+                  j.id === id
+                    ? { ...j, status: "done", result, completedAt: Date.now() }
+                    : j,
+                ),
+              );
+              addSystemMessage(`✅ Background job done: ${id}`);
+            },
+            onError: (e) => {
+              setBackgroundJobs((prev) =>
+                prev.map((j) =>
+                  j.id === id
+                    ? { ...j, status: "error", error: e.message, completedAt: Date.now() }
+                    : j,
+                ),
+              );
+              addSystemMessage(`❌ Background job failed: ${id} — ${e.message}`);
+            },
+          }).catch(() => {});
+          return `Job ${id} started in background.`;
+        }
+
+        case "/jobs": {
+          if (!backgroundJobs.length) return "No background jobs.";
+          const jobArg = arg.trim();
+          // /jobs <id> — show result
+          if (jobArg) {
+            const job = backgroundJobs.find((j) => j.id === jobArg);
+            if (!job) return `Job not found: ${jobArg}`;
+            const elapsed = job.completedAt
+              ? `${((job.completedAt - job.startedAt) / 1000).toFixed(1)}s`
+              : "running";
+            return [
+              `Job: ${job.id}  [${job.status}]  ${elapsed}`,
+              `Prompt: ${job.prompt.substring(0, 100)}`,
+              job.result ? `\nResult:\n${job.result}` : "",
+              job.error ? `\nError: ${job.error}` : "",
+            ].filter(Boolean).join("\n");
+          }
+          // /jobs — list all
+          return backgroundJobs.map((j) => {
+            const elapsed = j.completedAt
+              ? `${((j.completedAt - j.startedAt) / 1000).toFixed(1)}s`
+              : "running…";
+            const icon = j.status === "done" ? "✅" : j.status === "error" ? "❌" : "⚡";
+            return `${icon} ${j.id}  ${j.status.padEnd(8)} ${elapsed}  ${j.prompt.substring(0, 50)}`;
+          }).join("\n");
         }
 
         case "/config": {
@@ -656,7 +812,12 @@ export function useChat(opts: UseChatOptions) {
     toolActivity,
     lastUsage,
     workingDir,
+    contextUsage,
+    backgroundJobs,
+    showSessionBrowser,
+    setShowSessionBrowser,
     modelConfig: modelConfigRef.current,
+    conversations: listConversations,
     sendMessage,
     handleSlashCommand,
     cancelCurrent,
@@ -755,24 +916,50 @@ function printFileDiff(toolName: string, input: Record<string, unknown>): void {
         process.stdout.write(chalk.gray(`  ... +${lines.length - 20} more lines\n`));
       }
     } else {
-      const { diffLines: computeDiff } = require("diff") as typeof import("diff");
-      const hunks = computeDiff(oldContent, newContent);
+      const { diffLines, diffWords } = require("diff") as typeof import("diff");
+      const lineHunks = diffLines(oldContent, newContent);
       let shownLines = 0;
-      for (const hunk of hunks) {
-        if (hunk.added || hunk.removed) {
-          const lines = (hunk.value || "").split("\n").filter((l, i, arr) => i < arr.length - 1 || l);
-          for (const line of lines) {
-            if (shownLines >= 30) {
-              process.stdout.write(chalk.gray("  ... (diff truncated)\n"));
-              return;
-            }
-            if (hunk.added) {
-              process.stdout.write(chalk.green("  + ") + chalk.green(line) + "\n");
-            } else {
-              process.stdout.write(chalk.red("  - ") + chalk.red(line) + "\n");
-            }
-            shownLines++;
+
+      for (const hunk of lineHunks) {
+        if (!hunk.added && !hunk.removed) continue;
+        const lines = (hunk.value || "").split("\n").filter((l, i, arr) => i < arr.length - 1 || l);
+
+        for (const line of lines) {
+          if (shownLines >= 40) {
+            process.stdout.write(chalk.gray("  ... (diff truncated)\n"));
+            return;
           }
+
+          if (hunk.added) {
+            // For added lines, find the matching removed line (same index) for word-level highlight
+            process.stdout.write(chalk.green("  + ") + chalk.green(line) + "\n");
+          } else {
+            process.stdout.write(chalk.red("  - ") + chalk.red(line) + "\n");
+          }
+          shownLines++;
+        }
+      }
+
+      // Word-level inline diff for file_edit (old_string vs new_string) — compact view
+      if (toolName === "file_edit" && oldContent && newContent) {
+        const wordDiff = diffWords(oldContent, newContent);
+        const hasChanges = wordDiff.some((p) => p.added || p.removed);
+        if (hasChanges) {
+          process.stdout.write(chalk.gray("  ── word diff ──\n  "));
+          for (const part of wordDiff) {
+            if (part.added) {
+              process.stdout.write(chalk.bgGreen.black(part.value));
+            } else if (part.removed) {
+              process.stdout.write(chalk.bgRed.white(part.value));
+            } else {
+              // Context: only show short surrounding text
+              const ctx = part.value.length > 30
+                ? part.value.substring(0, 15) + chalk.gray("…") + part.value.slice(-15)
+                : part.value;
+              process.stdout.write(chalk.gray(ctx));
+            }
+          }
+          process.stdout.write("\n");
         }
       }
     }
@@ -788,27 +975,32 @@ function getHelpText(): string {
     "  /help          — this message",
     "  /clear         — clear conversation",
     "  /new           — new conversation",
-    "  /history       — list saved conversations",
-    "  /resume <id>   — resume a conversation",
-    "  /delete <id>   — delete a conversation",
-    "  /config        — view config",
-    "  /model <name>  — switch model",
-    "  /provider <n>  — switch provider",
-    "  /mode <mode>   — change permission mode",
-    "  /dir <path>    — change working directory",
-    "  /usage         — token usage",
-    "  /plan          — toggle plan mode",
-    "  /effort <lvl>  — set effort level (low/medium/high/max)",
-    "  /btw <q>       — ask without adding to history",
-    "  /rules         — show project rules",
-    "  /mcp           — MCP server status",
-    "  /context       — list context providers",
-    "  /tasks         — show task list",
-    "  /compact       — compact context",
-    "  /exit          — quit",
+    "  /ls             — browse sessions (interactive TUI)",
+    "  /history        — list saved conversations (text)",
+    "  /resume <id>    — resume a conversation",
+    "  /fork [id]      — fork current or given conversation",
+    "  /delete <id>    — delete a conversation",
+    "  /config         — view config",
+    "  /model <name>   — switch model",
+    "  /provider <n>   — switch provider",
+    "  /mode <mode>    — change permission mode",
+    "  /dir <path>     — change working directory",
+    "  /usage          — token usage",
+    "  /plan           — toggle plan mode",
+    "  /effort <lvl>   — set effort level (low/medium/high/max)",
+    "  /btw <q>        — ask without adding to history",
+    "  /bg <prompt>    — run prompt as background job",
+    "  /jobs [id]      — list / inspect background jobs",
+    "  /rules          — show project rules",
+    "  /mcp            — MCP server status",
+    "  /context        — list context providers",
+    "  /tasks          — show task list",
+    "  /compact        — compact context",
+    "  /exit           — quit",
     "",
     "Prefix with ! to run a shell command directly.",
-    "Use @terminal, @tree, @url <u>, @codebase in messages for context.",
+    "Use @terminal, @tree, @url <u>, @codebase, @file <path> in messages.",
+    "Ctrl+V to paste clipboard  ·  Shift+Tab to cycle mode  ·  Ctrl+L to clear",
   ].join("\n");
 }
 

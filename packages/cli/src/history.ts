@@ -134,6 +134,40 @@ export function deleteConversation(id: string): boolean {
   return false;
 }
 
+/**
+ * Fork a conversation — create an identical copy with a new ID.
+ * Returns the forked conversation (already saved to disk).
+ */
+export function forkConversation(idOrConv: string | Conversation): Conversation | null {
+  const original =
+    typeof idOrConv === "string" ? loadConversation(idOrConv) : idOrConv;
+  if (!original) return null;
+
+  ensureDir();
+  const forked: Conversation = {
+    ...original,
+    id: generateId(),
+    title: `Fork of: ${original.title}`,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    messages: original.messages.map((m) => ({ ...m })),
+  };
+  saveConversation(forked);
+  return forked;
+}
+
+/**
+ * Update the title of a conversation in-place.
+ * Useful for AI-generated titles after the first response.
+ */
+export function updateConversationTitle(id: string, title: string): void {
+  const conv = loadConversation(id);
+  if (!conv) return;
+  conv.title = title.length > 80 ? title.substring(0, 77) + "..." : title;
+  conv.updatedAt = Date.now();
+  saveConversation(conv);
+}
+
 /** Print conversation list to console */
 export function printConversationList(): void {
   const convs = listConversations();
