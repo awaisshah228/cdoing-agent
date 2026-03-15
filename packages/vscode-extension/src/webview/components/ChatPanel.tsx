@@ -47,6 +47,7 @@ export const ChatPanel: React.FC = () => {
     closeSettings,
     saveSettings,
     openVscodeSettings,
+    cancelGeneration,
   } = useChatState();
 
   return (
@@ -77,6 +78,7 @@ export const ChatPanel: React.FC = () => {
         isProcessing={isProcessing}
         queueCount={queueCount}
         onSend={sendMessage}
+        onCancel={cancelGeneration}
       />
 
       {showHistory && (

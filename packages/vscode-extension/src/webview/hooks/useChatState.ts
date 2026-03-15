@@ -224,6 +224,10 @@ export function useChatState() {
     vscode.postMessage({ type: "openVscodeSettings" });
   }, [vscode]);
 
+  const cancelGeneration = useCallback(() => {
+    vscode.postMessage({ type: "cancelGeneration" });
+  }, [vscode]);
+
   // ── Message Handler ──────────────────────────────────
 
   useEffect(() => {
@@ -358,6 +362,6 @@ export function useChatState() {
     conversations, showHistory, openHistory, closeHistory,
     resumeConversation, deleteConversation,
     showSettings, extensionConfig, openSettings, closeSettings,
-    saveSettings, openVscodeSettings,
+    saveSettings, openVscodeSettings, cancelGeneration,
   };
 }

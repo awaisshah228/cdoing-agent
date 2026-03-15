@@ -60,6 +60,7 @@ export type OutgoingMessage =
   | { type: "listHistory" }                                  // Request conversation history list
   | { type: "resumeConversation"; id: string }               // Resume a past conversation
   | { type: "deleteConversation"; id: string }               // Delete a past conversation
+  | { type: "cancelGeneration" }                             // Cancel the current streaming response
   | { type: "ready" };                                       // Webview loaded, ready for data
 
 /** Extension configuration (for in-panel settings) */

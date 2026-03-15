@@ -57,6 +57,7 @@ export class AgentRunner {
   private retryDelayMs: number;
   private maxTurns: number;
   private currentTurns: number = 0;
+  private isCancelled: boolean = false;
 
   constructor(
     modelConfig: Partial<ModelConfig>,
@@ -221,6 +222,11 @@ export class AgentRunner {
         const stream = await modelWithTools.stream(allMessages);
 
         for await (const chunk of stream) {
+          // Stop mid-stream if cancelled
+          if (this.isCancelled) {
+            throw new Error("__cancelled__");
+          }
+
           // Accumulate chunks for complete tool_calls
           if (accumulated === null) {
             accumulated = chunk as AIMessageChunk;
@@ -259,10 +265,16 @@ export class AgentRunner {
     throw lastError!;
   }
 
+  /** Cancel an in-progress run. The current streaming turn will stop gracefully. */
+  cancel(): void {
+    this.isCancelled = true;
+  }
+
   /**
    * Run the agentic loop with real streaming, context management, and hooks.
    */
   async run(userMessage: string, callbacks: AgentCallbacks): Promise<string> {
+    this.isCancelled = false;
     this.messages.push(new HumanMessage(userMessage));
     this.currentTurns = 0;
 
@@ -339,7 +351,12 @@ export class AgentRunner {
 
       callbacks.onComplete();
     } catch (error) {
-      callbacks.onError(error instanceof Error ? error : new Error(String(error)));
+      const err = error instanceof Error ? error : new Error(String(error));
+      if (err.message === "__cancelled__") {
+        callbacks.onComplete();
+      } else {
+        callbacks.onError(err);
+      }
     }
 
     return fullResponse;

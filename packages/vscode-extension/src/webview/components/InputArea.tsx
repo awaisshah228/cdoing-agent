@@ -23,6 +23,7 @@ interface InputAreaProps {
   isProcessing: boolean;
   queueCount: number;
   onSend: (text: string, context?: ContextAttachment[]) => void;
+  onCancel?: () => void;
 }
 
 interface FileResult {
@@ -38,7 +39,7 @@ const LANG_ICONS: Record<string, string> = {
   cpp: "C++", c: "C", ruby: "RB", php: "PHP", swift: "SW",
 };
 
-export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, onSend }) => {
+export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, onSend, onCancel }) => {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<ContextAttachment[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -85,11 +86,16 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
         return;
       }
     }
+    if (e.key === "Escape" && isProcessing) {
+      e.preventDefault();
+      onCancel?.();
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey && !showDropdown) {
       e.preventDefault();
       handleSend();
     }
-  }, [showDropdown, fileResults, selectedIndex, handleSend]);
+  }, [showDropdown, fileResults, selectedIndex, handleSend, isProcessing, onCancel]);
 
   // ── Select a file from dropdown ──
   const selectFile = useCallback((file: FileResult) => {
@@ -262,14 +268,24 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
           </div>
           <div className="input-toolbar-right">
             {queueCount > 0 && <span className="input-queue-badge">{queueCount} queued</span>}
-            <button
-              className="input-send-btn"
-              onClick={handleSend}
-              disabled={!text.trim() && attachments.length === 0}
-              title={isProcessing ? "Queue (Enter)" : "Send (Enter)"}
-            >
-              ↑
-            </button>
+            {isProcessing && onCancel ? (
+              <button
+                className="input-stop-btn"
+                onClick={onCancel}
+                title="Stop generation (Esc)"
+              >
+                ■
+              </button>
+            ) : (
+              <button
+                className="input-send-btn"
+                onClick={handleSend}
+                disabled={!text.trim() && attachments.length === 0}
+                title="Send (Enter)"
+              >
+                ↑
+              </button>
+            )}
           </div>
         </div>
       </div>

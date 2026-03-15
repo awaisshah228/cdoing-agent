@@ -139,6 +139,13 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           this.deleteConversation(message.id);
           this.sendConversationList(); // refresh the list
           break;
+        case "cancelGeneration": {
+          const tab = this.getTab();
+          if (tab?.isProcessing) {
+            tab.agent.cancel();
+          }
+          break;
+        }
         case "ready":
           this.webviewReady = true;
           this.sendCurrentConfig();

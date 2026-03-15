@@ -755,6 +755,22 @@ body {
 .input-send-btn:hover { background: var(--btn-hover); }
 .input-send-btn:disabled { opacity: 0.3; cursor: not-allowed; }
 
+.input-stop-btn {
+  background: transparent;
+  color: var(--vscode-errorForeground, #f48771);
+  border: 1px solid var(--vscode-errorForeground, #f48771);
+  border-radius: 6px;
+  width: 26px;
+  height: 26px;
+  font-size: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, opacity 0.15s;
+}
+.input-stop-btn:hover { background: color-mix(in srgb, var(--vscode-errorForeground, #f48771) 15%, transparent); }
+
 /* ─── @ Autocomplete Dropdown ─── */
 .at-dropdown {
   border-top: 1px solid var(--border);
