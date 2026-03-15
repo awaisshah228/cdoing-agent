@@ -50,16 +50,26 @@ interface ToolSpinnerProps {
 }
 
 const TOOL_ICONS: Record<string, string> = {
-  file_read:   "📖",
-  file_write:  "✏️ ",
-  file_edit:   "🔧",
-  glob_search: "🔍",
-  grep_search: "🔎",
-  shell_exec:  "💻",
-  web_fetch:   "🌐",
-  web_search:  "🔮",
-  sub_agent:   "🤖",
-  todo:        "📋",
+  file_read:       "📖",
+  file_write:      "✏️ ",
+  file_edit:       "🔧",
+  multi_edit:      "🔧",
+  file_delete:     "🗑️",
+  ast_edit:        "🌳",
+  glob_search:     "🔍",
+  grep_search:     "🔎",
+  codebase_search: "🔎",
+  shell_exec:      "💻",
+  file_run:        "▶",
+  web_fetch:       "🌐",
+  web_search:      "🔮",
+  sub_agent:       "🤖",
+  todo:            "📋",
+  list_dir:        "📁",
+  view_diff:       "📊",
+  view_repo_map:   "🗺️",
+  code_verify:     "✅",
+  system_info:     "ℹ️",
 };
 
 export const ToolSpinner: React.FC<ToolSpinnerProps> = ({ name, preview, status }) => {

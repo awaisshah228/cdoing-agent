@@ -560,6 +560,70 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     return null;
   }
 
+  /**
+   * Read folder contents — includes tree structure AND file contents.
+   * Similar to @folder context provider: reads up to 20 files, 3k chars each.
+   */
+  private readFolderContents(folderPath: string): string {
+    const workingDir = this.getWorkingDir();
+    const absPath = path.isAbsolute(folderPath) ? folderPath : path.join(workingDir, folderPath);
+    const maxFiles = 20;
+    const maxFileChars = 3000;
+    const maxTotalChars = 50000;
+    const skipDirs = new Set(["node_modules", ".git", "dist", "build", "__pycache__", ".cache", "coverage"]);
+
+    if (!fs.existsSync(absPath) || !fs.statSync(absPath).isDirectory()) {
+      return `Folder: \`${folderPath}\` (not found)`;
+    }
+
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      if (files.length >= maxFiles) return;
+      try {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        const fileEntries = entries.filter((e) => e.isFile());
+        const dirEntries = entries.filter((e) => e.isDirectory() && !skipDirs.has(e.name) && !e.name.startsWith("."));
+        for (const f of fileEntries) {
+          if (files.length >= maxFiles) return;
+          files.push(path.join(dir, f.name));
+        }
+        for (const d of dirEntries) {
+          if (files.length >= maxFiles) return;
+          walk(path.join(dir, d.name));
+        }
+      } catch { /* ignore unreadable dirs */ }
+    };
+    walk(absPath);
+
+    if (files.length === 0) {
+      return `Folder: \`${folderPath}\` (empty)`;
+    }
+
+    let totalChars = 0;
+    const sections: string[] = [`Folder: \`${folderPath}\` (${files.length} files)`];
+
+    for (const file of files) {
+      if (totalChars >= maxTotalChars) {
+        sections.push(`\n... [truncated, ${maxTotalChars} char limit reached]`);
+        break;
+      }
+      const rel = path.relative(absPath, file);
+      try {
+        let content = fs.readFileSync(file, "utf-8");
+        if (content.length > maxFileChars) {
+          content = content.substring(0, maxFileChars) + "\n... [truncated]";
+        }
+        const ext = path.extname(file).substring(1) || "txt";
+        sections.push(`\n### ${rel}\n\`\`\`${ext}\n${content}\n\`\`\``);
+        totalChars += content.length;
+      } catch {
+        sections.push(`\n### ${rel}\n(unable to read)`);
+      }
+    }
+
+    return sections.join("\n");
+  }
+
   /** List folder structure (max 2 levels deep) */
   private listFolderStructure(folderPath: string, depth = 0, maxDepth = 2): string {
     const workingDir = this.getWorkingDir();
@@ -885,9 +949,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
             contextParts.push(`File: \`${att.path}\` (could not read)`);
           }
         } else if (att.type === "folder") {
-          // List folder structure
-          const listing = this.listFolderStructure(att.path);
-          contextParts.push(`Folder: \`${att.path}\`\n\`\`\`\n${listing}\n\`\`\``);
+          // Include folder structure + file contents (like @folder context provider)
+          const folderContext = this.readFolderContents(att.path);
+          contextParts.push(folderContext);
         }
       }
       if (contextParts.length > 0) {

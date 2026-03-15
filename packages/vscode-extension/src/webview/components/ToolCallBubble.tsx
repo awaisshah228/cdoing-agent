@@ -471,6 +471,7 @@ function getOutputSummary(name: string, output: string, isError?: boolean): stri
     case "file_write":
     case "file_edit":
     case "multi_edit":
+    case "ast_edit":
       return trim(output.split("\n")[0] || "done", 50);
     case "grep_search":
     case "glob_search": {
