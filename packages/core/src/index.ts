@@ -78,6 +78,20 @@ export type { McpServerConfig, McpTool } from "./mcp/manager";
 export { EffortManager } from "./effort";
 export type { EffortLevel, EffortConfig } from "./effort";
 
+// OAuth — shared credential storage, PKCE, token management
+export {
+  saveOAuthTokens,
+  loadOAuthTokens,
+  clearOAuthTokens,
+  isOAuthExpired,
+  refreshAccessToken,
+  resolveOAuthToken,
+  generateOAuthUrl,
+  exchangeOAuthCode,
+  getOAuthStatus,
+} from "./oauth";
+export type { OAuthTokens } from "./oauth";
+
 // Codebase Indexing — FTS5 + embeddings
 export { CodebaseIndexer, IndexDatabase, chunkDocument } from "./indexing";
 export type { EmbeddingProvider } from "./indexing";

@@ -369,9 +369,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       baseURL: customBaseURL || undefined,
     };
 
-    // If Anthropic + OAuth, attach the cached OAuth token (sync check only;
-    // async refresh happens in initSharedServices)
-    if (provider === "anthropic" && authMethod === "oauth") {
+    // If Anthropic + OAuth auth method, OR no API key configured (auto-detect),
+    // try to use cached OAuth tokens (same as CLI fallback behavior)
+    if (provider === "anthropic" && (authMethod === "oauth" || !apiKey)) {
       const status = getOAuthStatus();
       if (status.status === "active") {
         const tokens = loadOAuthTokens();
@@ -411,17 +411,15 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       }
     }
 
-    // Auto-refresh OAuth token in background if expired
-    if (modelConfig.oauthToken === undefined && provider === "anthropic") {
-      const config = vscode.workspace.getConfiguration("cdoing");
-      if (config.get<string>("authMethod") === "oauth") {
-        resolveOAuthToken().then((token) => {
-          if (token) {
-            // Token refreshed — rebuild agents
-            this.refreshConfig();
-          }
-        }).catch(() => {});
-      }
+    // Auto-refresh OAuth token in background if expired or not yet loaded
+    // Works regardless of authMethod — if OAuth tokens exist, use them (CLI parity)
+    if (modelConfig.oauthToken === undefined && provider === "anthropic" && !modelConfig.apiKey) {
+      resolveOAuthToken().then((token) => {
+        if (token) {
+          // Token resolved/refreshed — rebuild agents
+          this.refreshConfig();
+        }
+      }).catch(() => {});
     }
 
     // Sandbox manager
@@ -912,9 +910,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     tab.isProcessing = true;
     this.postMessage({ type: "startResponse" });
 
-    // Ensure API key
+    // Ensure API key or OAuth token is available
     const { provider, modelConfig } = this.getConfig();
-    if (!modelConfig.apiKey) {
+    if (!modelConfig.oauthToken && !modelConfig.apiKey) {
       const envVar = getApiKeyEnvVar(provider);
       if (!process.env[envVar]) {
         const storedKey = this.loadApiKeyFromConfig(provider);
