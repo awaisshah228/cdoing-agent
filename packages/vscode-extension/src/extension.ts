@@ -80,6 +80,17 @@ export function activate(context: vscode.ExtensionContext) {
       openEditorPanel(context);
     }),
 
+    // ── Open Chat Panel (right side, no file context — just project path) ──
+    vscode.commands.registerCommand("cdoing.openChatPanel", () => {
+      openEditorPanel(context);
+      // No file/folder context — agent already knows the project path from system prompt
+    }),
+
+    // ── Focus Sidebar (when activity bar icon is clicked) ──
+    vscode.commands.registerCommand("cdoing.focusSidebar", () => {
+      vscode.commands.executeCommand("cdoing.chatPanel.focus");
+    }),
+
     // ── Select Model ──
     vscode.commands.registerCommand("cdoing.selectModel", async () => {
       const config = vscode.workspace.getConfiguration("cdoing");
@@ -164,9 +175,13 @@ export function activate(context: vscode.ExtensionContext) {
     }),
 
     // ── Open File Button (editor title bar icon) ──
+    // If no file is open (e.g., Welcome screen), just open the chat panel
     vscode.commands.registerCommand("cdoing.openFile", () => {
       const editor = vscode.window.activeTextEditor;
-      if (!editor) return;
+      if (!editor) {
+        openEditorPanel(context);
+        return;
+      }
 
       const filePath = vscode.workspace.asRelativePath(editor.document.uri);
       const lang = editor.document.languageId;

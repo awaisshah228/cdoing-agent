@@ -94,6 +94,15 @@
       {
         "command": "cdoing.moveToPrimarySidebar",
         "title": "Cdoing: Move to Left Sidebar"
+      },
+      {
+        "command": "cdoing.openChatPanel",
+        "title": "Cdoing: Open Chat Panel",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "cdoing.focusSidebar",
+        "title": "Cdoing: Focus Chat Sidebar"
       }
     ],
     "menus": {
@@ -102,6 +111,18 @@
           "command": "cdoing.openFile",
           "group": "navigation",
           "when": "editorIsOpen"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "cdoing.openChatPanel",
+          "group": "navigation",
+          "when": "view == cdoing.chatPanel"
+        },
+        {
+          "command": "cdoing.newChat",
+          "group": "navigation",
+          "when": "view == cdoing.chatPanel"
         }
       ],
       "editor/context": [
