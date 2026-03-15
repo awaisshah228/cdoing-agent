@@ -47,6 +47,11 @@ function printMessage(msg: ChatMessage): void {
         msg.content + "\n"
       );
       break;
+    case "shell":
+      // Raw shell output — no prefix, no extra formatting
+      process.stdout.write(msg.content);
+      if (!msg.content.endsWith("\n")) process.stdout.write("\n");
+      break;
   }
 }
 
@@ -79,6 +84,7 @@ export const App: React.FC<AppProps> = ({
 
   const {
     messages,
+    setMessages,
     streamingContent,
     isProcessing,
     toolActivity,
@@ -187,10 +193,10 @@ export const App: React.FC<AppProps> = ({
           return;
         }
 
-        // All other shell commands — stream output in real time via spawn
+        // All other shell commands — buffer output then add as a message
+        // (direct process.stdout.write conflicts with Ink's cursor management)
         {
           const { spawn } = require("child_process") as typeof import("child_process");
-          process.stdout.write(chalk.gray(`$ ${shellCmd}`) + "\n");
           const child = spawn(shellCmd, [], {
             shell: true,
             cwd: workingDir,
@@ -198,21 +204,29 @@ export const App: React.FC<AppProps> = ({
           });
           bgProcessRef.current = child;
 
-          child.stdout?.on("data", (chunk: Buffer) => {
-            process.stdout.write(chunk);
-          });
-          child.stderr?.on("data", (chunk: Buffer) => {
-            process.stdout.write(chunk);
-          });
+          // Print the command header immediately via addSystemMessage so Ink tracks it
+          addSystemMessage(chalk.gray(`$ ${shellCmd}`));
+
+          let output = "";
+          child.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+          child.stderr?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+
           child.on("close", (code) => {
             bgProcessRef.current = null;
+            // Route output through React messages so Ink positions it correctly
+            if (output) {
+              setMessages((prev) => [
+                ...prev,
+                { id: String(Date.now()), role: "shell" as const, content: output },
+              ]);
+            }
             if (code !== null && code !== 0) {
-              process.stdout.write(chalk.red(`\n[exited with code ${code}]\n`));
+              addSystemMessage(chalk.red(`[exited with code ${code}]`));
             }
           });
           child.on("error", (err) => {
             bgProcessRef.current = null;
-            process.stdout.write(chalk.red(`\n[error: ${err.message}]\n`));
+            addSystemMessage(chalk.red(`[error: ${err.message}]`));
           });
         }
         return;

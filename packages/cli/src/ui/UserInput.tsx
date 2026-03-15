@@ -565,21 +565,41 @@ export const UserInput: React.FC<UserInputProps> = ({
     }
   });
 
+  // Compute windowed suggestions (used in render)
+  const WINDOW = 8;
+  const sel = selectedSuggestion >= 0 ? selectedSuggestion : 0;
+  const windowStart = suggestions.length > 0
+    ? Math.max(0, Math.min(sel - Math.floor(WINDOW / 2), suggestions.length - WINDOW))
+    : 0;
+  const windowEnd = Math.min(windowStart + WINDOW, suggestions.length);
+  const visibleSuggestions = suggestions.slice(windowStart, windowEnd);
+
   return (
     <Box flexDirection="column">
 
-      {/* /command and @provider vertical dropdown — windowed, 8 visible */}
-      {suggestions.length > 0 ? (
-        <Box flexDirection="column" paddingLeft={2}>
-          {(() => {
-            const WINDOW = 8;
-            const sel = selectedSuggestion >= 0 ? selectedSuggestion : 0;
-            const start = Math.max(0, Math.min(sel - Math.floor(WINDOW / 2), suggestions.length - WINDOW));
-            const visible = suggestions.slice(start, start + WINDOW);
-            return visible.map((s, vi) => {
-              const gi = start + vi; // global index
+      {/* zsh-style path menu — outside the border, above input */}
+      {pathEntries.length > 0 ? (
+        <PathMenu
+          entries={pathEntries}
+          selectedIdx={selectedPath}
+          label={pathContext?.partial === "" || pathContext?.partial == null ? "directory" : "matches"}
+        />
+      ) : null}
+
+      {/* Main bordered box — contains dropdown (when open) + input line */}
+      <Box borderStyle="round" borderColor="gray" flexDirection="column" paddingLeft={1} paddingRight={1}>
+
+        {/* Dropdown lives INSIDE the border so no extra border line appears below it */}
+        {suggestions.length > 0 ? (
+          <Box flexDirection="column">
+            {/* ▲ more above indicator */}
+            {windowStart > 0 ? (
+              <Text dimColor>{`  ▲ ${windowStart} more`}</Text>
+            ) : null}
+
+            {visibleSuggestions.map((s, vi) => {
+              const gi = windowStart + vi;
               const isSelected = gi === sel;
-              // For @file entries show @path instead of "@file path"
               const display = s.cmd.startsWith("@file ") ? "@" + s.cmd.slice(6) : s.cmd;
               const color = getSuggestionColor(s);
               return isSelected ? (
@@ -594,25 +614,19 @@ export const UserInput: React.FC<UserInputProps> = ({
                   <Text color={color} dimColor>{`  ${display}`}</Text>
                 </Box>
               );
-            });
-          })()}
-          <Box marginTop={0} paddingLeft={1}>
-            <Text dimColor>{"↑/↓ to navigate  Enter to select  Tab to complete  Esc to close"}</Text>
+            })}
+
+            {/* ▼ more below indicator */}
+            {windowEnd < suggestions.length ? (
+              <Text dimColor>{`  ▼ ${suggestions.length - windowEnd} more`}</Text>
+            ) : null}
+
+            {/* hint + position counter */}
+            <Text dimColor>{`  ↑/↓ navigate  Enter select  Esc close    ${sel + 1}/${suggestions.length}`}</Text>
           </Box>
-        </Box>
-      ) : null}
+        ) : null}
 
-      {/* zsh-style path menu — entries in a column-aligned grid */}
-      {pathEntries.length > 0 ? (
-        <PathMenu
-          entries={pathEntries}
-          selectedIdx={selectedPath}
-          label={pathContext?.partial === "" || pathContext?.partial == null ? "directory" : "matches"}
-        />
-      ) : null}
-
-      {/* Bordered input with placeholder */}
-      <Box borderStyle="round" borderColor="gray" paddingLeft={1} paddingRight={1}>
+        {/* Input line */}
         <Box>
           <Text color="cyan">{"● "}</Text>
           {input.length > 0 ? <Text>{input}</Text> : null}
@@ -627,7 +641,7 @@ export const UserInput: React.FC<UserInputProps> = ({
 
       {/* Keyboard hints below input */}
       <Box paddingLeft={2}>
-        <Text color="cyan" dimColor>{"Press Ctrl+V to paste  ·  Ctrl+L to clear  ·  Shift+Tab to cycle mode"}</Text>
+        <Text color="cyan" dimColor>{"Ctrl+V paste  ·  Ctrl+L clear  ·  Shift+Tab cycle mode"}</Text>
       </Box>
 
     </Box>

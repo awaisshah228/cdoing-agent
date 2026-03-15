@@ -807,6 +807,7 @@ export function useChat(opts: UseChatOptions) {
 
   return {
     messages,
+    setMessages,
     streamingContent,
     isProcessing,
     toolActivity,

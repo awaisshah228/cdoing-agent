@@ -1,8 +1,12 @@
 # Cdoing Agent
 
+> Built by [@awaisshah228](https://github.com/awaisshah228)
+
 AI-powered coding assistant — **CLI + VS Code Extension**. Multi-provider (Anthropic, OpenAI, Google), agentic tool use, real-time streaming, and full codebase awareness.
 
-![Cdoing Agent — VS Code Extension + CLI](assets/image.png)
+![Cdoing Agent — VS Code Extension](assets/image.png)
+
+![Cdoing Agent — CLI](assets/cli.png)
 
 ---
 

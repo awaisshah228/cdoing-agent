@@ -30,6 +30,11 @@ export function printWelcome(): void {
     "  " + chalk.hex("#9B5DE5").bold(`AI-Powered Coding Assistant`) +
     chalk.hex("#78909C")(` v${VERSION}`)
   );
+  console.log(
+    "  " + chalk.hex("#546E7A")("by ") +
+    chalk.hex("#4FC3F7").bold("@awaisshah228") +
+    chalk.hex("#546E7A")(" · founder")
+  );
   console.log();
   console.log(chalk.hex("#90A4AE")("  💬 Type a message and press ") + chalk.hex("#FFD93D")("Enter") + chalk.hex("#90A4AE")(" to chat"));
   console.log(chalk.hex("#90A4AE")("  /help") + chalk.hex("#78909C")(" for commands  ·  ") + chalk.hex("#90A4AE")("!cmd") + chalk.hex("#78909C")(" to run shell commands"));
