@@ -12,6 +12,7 @@ import React, { useState, useCallback, useEffect, useRef } from "react";
 import { Box, Text, useInput } from "ink";
 import { loadConfig, saveConfig } from "../config";
 import { generateOAuthUrl, exchangeOAuthCode } from "../oauth";
+import { getTheme } from "./theme";
 
 // ── Static data ───────────────────────────────────────────────────────────────
 
@@ -85,28 +86,29 @@ function Menu<T extends { value: string; label: string; hint?: string }>({
   items,
   selectedIdx,
 }: MenuProps<T>) {
+  const t = getTheme();
   return (
     <Box flexDirection="column" paddingLeft={2}>
-      <Text color="cyan" bold>{title}</Text>
-      <Text dimColor>{"─".repeat(50)}</Text>
+      <Text color={t.accent} bold>{title}</Text>
+      <Text dimColor={t.useDim} color={t.textDim}>{"─".repeat(50)}</Text>
       {items.map((item, i) => {
         const isSelected = i === selectedIdx;
         return (
           <Box key={item.value}>
             {isSelected
-              ? <Text color="cyan" bold>{"  ❯ "}</Text>
-              : <Text dimColor>{"    "}</Text>}
+              ? <Text color={t.accent} bold>{"  ❯ "}</Text>
+              : <Text dimColor={t.useDim} color={t.textDim}>{"    "}</Text>}
             {isSelected
-              ? <Text color="white" bold>{item.label}</Text>
-              : <Text color="white">{item.label}</Text>}
+              ? <Text color={t.text} bold>{item.label}</Text>
+              : <Text color={t.text}>{item.label}</Text>}
             {item.hint
-              ? <Text dimColor>{`  ${item.hint}`}</Text>
+              ? <Text dimColor={t.useDim} color={t.textDim}>{`  ${item.hint}`}</Text>
               : null}
           </Box>
         );
       })}
-      <Text dimColor>{"─".repeat(50)}</Text>
-      <Text dimColor>{"↑/↓ navigate  Enter select  Esc cancel"}</Text>
+      <Text dimColor={t.useDim} color={t.textDim}>{"─".repeat(50)}</Text>
+      <Text dimColor={t.useDim} color={t.textDim}>{"↑/↓ navigate  Enter select  Esc cancel"}</Text>
     </Box>
   );
 }
@@ -287,7 +289,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
   if (step === "provider") {
     return (
       <Box flexDirection="column" paddingY={1}>
-        <Text color="cyan" bold>{`  ⚙  Setup Wizard  (${stepNum.provider} — Provider)`}</Text>
+        <Text color={getTheme().accent} bold>{`  ⚙  Setup Wizard  (${stepNum.provider} — Provider)`}</Text>
         <Menu title={"  Choose a provider"} items={PROVIDERS} selectedIdx={providerIdx} />
       </Box>
     );
@@ -296,7 +298,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
   if (step === "auth-method") {
     return (
       <Box flexDirection="column" paddingY={1}>
-        <Text color="cyan" bold>{`  ⚙  Setup Wizard  (${stepNum["auth-method"]} — Authentication)`}</Text>
+        <Text color={getTheme().accent} bold>{`  ⚙  Setup Wizard  (${stepNum["auth-method"]} — Authentication)`}</Text>
         <Menu title={"  How do you want to authenticate?"} items={AUTH_METHODS} selectedIdx={authIdx} />
       </Box>
     );
@@ -309,67 +311,70 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
       : `  Choose a model for ${chosenProvider}`;
     return (
       <Box flexDirection="column" paddingY={1}>
-        <Text color="cyan" bold>{`  ⚙  Setup Wizard  (${stepNum.model} — Model)`}</Text>
+        <Text color={getTheme().accent} bold>{`  ⚙  Setup Wizard  (${stepNum.model} — Model)`}</Text>
         <Menu title={title} items={models} selectedIdx={modelIdx} />
       </Box>
     );
   }
 
   if (step === "apikey") {
+    const tt = getTheme();
     const masked = showKey ? apiKeyInput : apiKeyInput.replace(/./g, "●");
     const url = KEY_URLS[chosenProvider];
     return (
       <Box flexDirection="column" paddingY={1} paddingLeft={2}>
-        <Text color="cyan" bold>{`  ⚙  Setup Wizard  (${stepNum.apikey} — API Key)`}</Text>
-        <Text dimColor>{"─".repeat(50)}</Text>
-        <Text color="white">{`  Provider: ${chosenProvider}   Model: ${chosenModel}`}</Text>
-        {url ? <Text dimColor>{`  Get a key: ${url}`}</Text> : null}
+        <Text color={tt.accent} bold>{`  ⚙  Setup Wizard  (${stepNum.apikey} — API Key)`}</Text>
+        <Text dimColor={tt.useDim} color={tt.textDim}>{"─".repeat(50)}</Text>
+        <Text color={tt.text}>{`  Provider: ${chosenProvider}   Model: ${chosenModel}`}</Text>
+        {url ? <Text dimColor={tt.useDim} color={tt.textDim}>{`  Get a key: ${url}`}</Text> : null}
         <Text>{" "}</Text>
         <Box>
-          <Text color="green">{"  API key: "}</Text>
-          <Text color="white">{masked || " "}</Text>
-          <Text color="green">{"▊"}</Text>
+          <Text color={tt.prompt}>{"  API key: "}</Text>
+          <Text color={tt.text}>{masked || " "}</Text>
+          <Text color={tt.cursor}>{"▊"}</Text>
         </Box>
         <Text>{" "}</Text>
-        <Text dimColor>{"  Paste key then Enter  ·  Ctrl+S toggle visible  ·  Enter alone to skip"}</Text>
-        <Text dimColor>{"  Esc cancel"}</Text>
+        <Text dimColor={tt.useDim} color={tt.textDim}>{"  Paste key then Enter  ·  Ctrl+S toggle visible  ·  Enter alone to skip"}</Text>
+        <Text dimColor={tt.useDim} color={tt.textDim}>{"  Esc cancel"}</Text>
       </Box>
     );
   }
 
   if (step === "oauth-paste") {
+    const tt = getTheme();
     const maskedCode = showCode ? oauthCodeInput : oauthCodeInput.replace(/./g, "●");
     return (
       <Box flexDirection="column" paddingY={1} paddingLeft={2}>
-        <Text color="cyan" bold>{`  ⚙  Setup Wizard  (${stepNum["oauth-paste"]} — OAuth)`}</Text>
-        <Text dimColor>{"─".repeat(50)}</Text>
-        <Text color="white">{"  1. Browser opening to Claude login…"}</Text>
+        <Text color={tt.accent} bold>{`  ⚙  Setup Wizard  (${stepNum["oauth-paste"]} — OAuth)`}</Text>
+        <Text dimColor={tt.useDim} color={tt.textDim}>{"─".repeat(50)}</Text>
+        <Text color={tt.text}>{"  1. Browser opening to Claude login…"}</Text>
         {oauthUrl
-          ? <Text dimColor>{`     If it didn't open: ${oauthUrl.substring(0, 72)}…`}</Text>
+          ? <Text dimColor={tt.useDim} color={tt.textDim}>{`     If it didn't open: ${oauthUrl.substring(0, 72)}…`}</Text>
           : null}
-        <Text color="white">{"  2. Approve → you'll land on a page with a code in the URL"}</Text>
-        <Text color="white">{"  3. Copy the code= value from the URL and paste below"}</Text>
+        <Text color={tt.text}>{"  2. Approve → you'll land on a page with a code in the URL"}</Text>
+        <Text color={tt.text}>{"  3. Copy the code= value from the URL and paste below"}</Text>
         {oauthError
-          ? <Text color="red">{`\n  ✗ ${oauthError}`}</Text>
+          ? <Text color={tt.error}>{`\n  ✗ ${oauthError}`}</Text>
           : null}
         <Text>{" "}</Text>
         <Box>
-          <Text color="green">{"  Code: "}</Text>
-          <Text color="white">{maskedCode || " "}</Text>
-          <Text color="green">{"▊"}</Text>
+          <Text color={tt.prompt}>{"  Code: "}</Text>
+          <Text color={tt.text}>{maskedCode || " "}</Text>
+          <Text color={tt.cursor}>{"▊"}</Text>
         </Box>
         <Text>{" "}</Text>
-        <Text dimColor>{"  Paste code then Enter  ·  Ctrl+S toggle visible  ·  Esc cancel"}</Text>
+        <Text dimColor={tt.useDim} color={tt.textDim}>{"  Paste code then Enter  ·  Ctrl+S toggle visible  ·  Esc cancel"}</Text>
       </Box>
     );
   }
 
   if (step === "oauth-exchanging") {
+    const tt = getTheme();
     return (
       <Box flexDirection="column" paddingY={1} paddingLeft={2}>
-        <Text color="cyan" bold>{`  ⚙  Setup Wizard  (${stepNum["oauth-exchanging"]} — OAuth)`}</Text>
-        <Text dimColor>{"─".repeat(50)}</Text>
-        <Text color="yellow">{"  Exchanging code for tokens…"}</Text>
+        <Text color={tt.accent} bold>{`  ⚙  Setup Wizard  (${stepNum["oauth-exchanging"]} — OAuth)`}</Text>
+        <Text dimColor={tt.useDim} color={tt.textDim}>{"─".repeat(50)}</Text>
+        <Text color={tt.warning}>{"  Exchanging code for tokens…"}</Text>
       </Box>
     );
   }

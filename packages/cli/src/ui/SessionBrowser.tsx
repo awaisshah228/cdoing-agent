@@ -8,6 +8,7 @@
 import React, { useState, useCallback } from "react";
 import { Box, Text, useInput } from "ink";
 import type { Conversation } from "../history";
+import { getTheme } from "./theme";
 
 interface SessionBrowserProps {
   conversations: Conversation[];
@@ -85,12 +86,14 @@ export const SessionBrowser: React.FC<SessionBrowserProps> = ({
     }
   }, [confirmDelete, conversations, selectedIdx, onSelect, onDelete, onFork, onClose]));
 
+  const t = getTheme();
+
   if (conversations.length === 0) {
     return (
       <Box flexDirection="column" paddingX={2} paddingY={1}>
-        <Text color="cyan" bold>  📚 Session Browser</Text>
-        <Text dimColor>  No saved conversations.</Text>
-        <Text dimColor>  Press Esc to close.</Text>
+        <Text color={t.accent} bold>  📚 Session Browser</Text>
+        <Text dimColor={t.useDim} color={t.textDim}>  No saved conversations.</Text>
+        <Text dimColor={t.useDim} color={t.textDim}>  Press Esc to close.</Text>
       </Box>
     );
   }
@@ -99,16 +102,16 @@ export const SessionBrowser: React.FC<SessionBrowserProps> = ({
     <Box flexDirection="column" paddingX={2} paddingY={1}>
       {/* Header */}
       <Box>
-        <Text color="cyan" bold>  📚 Sessions </Text>
-        <Text dimColor>{`(${conversations.length} total)`}</Text>
+        <Text color={t.accent} bold>  📚 Sessions </Text>
+        <Text dimColor={t.useDim} color={t.textDim}>{`(${conversations.length} total)`}</Text>
       </Box>
-      <Text dimColor>  {"─".repeat(60)}</Text>
+      <Text dimColor={t.useDim} color={t.textDim}>  {"─".repeat(60)}</Text>
 
       {/* Confirm delete */}
       {confirmDelete ? (
         <Box paddingLeft={2}>
-          <Text color="red">Delete this session? </Text>
-          <Text color="yellow">[y/N] </Text>
+          <Text color={t.error}>Delete this session? </Text>
+          <Text color={t.warning}>[y/N] </Text>
         </Box>
       ) : null}
 
@@ -124,17 +127,17 @@ export const SessionBrowser: React.FC<SessionBrowserProps> = ({
           <Box key={conv.id} paddingLeft={2}>
             {isSelected ? (
               <Box>
-                <Text color="cyan" bold>{"▶ "}</Text>
-                <Text backgroundColor="cyan" color="black">{` ${title.padEnd(42)} `}</Text>
-                <Text color="yellow">{` ${date.padEnd(8)} `}</Text>
-                <Text dimColor>{`${msgCount}msg`}</Text>
+                <Text color={t.accent} bold>{"▶ "}</Text>
+                <Text backgroundColor={t.selectedBg} color={t.selected === "white" ? "black" : t.selected}>{` ${title.padEnd(42)} `}</Text>
+                <Text color={t.sessionDate}>{` ${date.padEnd(8)} `}</Text>
+                <Text dimColor={t.useDim} color={t.textDim}>{`${msgCount}msg`}</Text>
               </Box>
             ) : (
               <Box>
-                <Text dimColor>{"  "}</Text>
-                <Text color="white">{` ${title.padEnd(42)} `}</Text>
-                <Text dimColor>{` ${date.padEnd(8)} `}</Text>
-                <Text dimColor>{`${msgCount}msg`}</Text>
+                <Text dimColor={t.useDim} color={t.textDim}>{"  "}</Text>
+                <Text color={t.sessionTitle}>{` ${title.padEnd(42)} `}</Text>
+                <Text dimColor={t.useDim} color={t.textDim}>{` ${date.padEnd(8)} `}</Text>
+                <Text dimColor={t.useDim} color={t.textDim}>{`${msgCount}msg`}</Text>
               </Box>
             )}
           </Box>
@@ -144,15 +147,15 @@ export const SessionBrowser: React.FC<SessionBrowserProps> = ({
       {/* Scroll indicator */}
       {conversations.length > maxVisible ? (
         <Box paddingLeft={2}>
-          <Text dimColor>
+          <Text dimColor={t.useDim} color={t.textDim}>
             {`  ${scrollOffset + 1}–${Math.min(scrollOffset + maxVisible, conversations.length)} of ${conversations.length}`}
           </Text>
         </Box>
       ) : null}
 
       {/* Footer controls */}
-      <Text dimColor>  {"─".repeat(60)}</Text>
-      <Text dimColor>{"  ↑/↓ navigate  Enter=load  f=fork  d=delete  Esc=close"}</Text>
+      <Text dimColor={t.useDim} color={t.textDim}>  {"─".repeat(60)}</Text>
+      <Text dimColor={t.useDim} color={t.textDim}>{"  ↑/↓ navigate  Enter=load  f=fork  d=delete  Esc=close"}</Text>
     </Box>
   );
 };

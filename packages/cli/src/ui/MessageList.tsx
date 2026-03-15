@@ -1,6 +1,7 @@
 import React from "react";
 import { Box, Text, Static } from "ink";
 import type { ChatMessage, ToolActivity } from "./types";
+import { getTheme } from "./theme";
 
 // ── Tool icons ─────────────────────────────────────────────────────────────
 
@@ -34,44 +35,54 @@ function toolIcon(name: string) {
 
 // ── Individual message renderers ────────────────────────────────────────────
 
-const UserMessage: React.FC<{ content: string }> = ({ content }) => (
-  <Box marginY={0} flexDirection="row">
-    <Text color="green" bold>
-      {"❯ "}
-    </Text>
-    <Text color="white">{content}</Text>
-  </Box>
-);
-
-const AssistantMessage: React.FC<{ content: string }> = ({ content }) => (
-  <Box flexDirection="column" marginTop={1} paddingLeft={2}>
-    <RenderMarkdown text={content} />
-    <Box marginTop={0}>
-      <Text color="gray">{"─".repeat(40)}</Text>
+const UserMessage: React.FC<{ content: string }> = ({ content }) => {
+  const t = getTheme();
+  return (
+    <Box marginY={0} flexDirection="row">
+      <Text color={t.prompt} bold>
+        {"❯ "}
+      </Text>
+      <Text color={t.text}>{content}</Text>
     </Box>
-  </Box>
-);
+  );
+};
+
+const AssistantMessage: React.FC<{ content: string }> = ({ content }) => {
+  const t = getTheme();
+  return (
+    <Box flexDirection="column" marginTop={1} paddingLeft={2}>
+      <RenderMarkdown text={content} />
+      <Box marginTop={0}>
+        <Text color={t.separator}>{"─".repeat(40)}</Text>
+      </Box>
+    </Box>
+  );
+};
 
 const SystemMessage: React.FC<{ content: string; isError?: boolean }> = ({
   content,
   isError,
-}) => (
-  <Box marginY={0} paddingLeft={2}>
-    <Text color={isError ? "red" : "yellow"}>{content}</Text>
-  </Box>
-);
+}) => {
+  const t = getTheme();
+  return (
+    <Box marginY={0} paddingLeft={2}>
+      <Text color={isError ? t.error : t.info}>{content}</Text>
+    </Box>
+  );
+};
 
 // ── Simple inline markdown renderer ────────────────────────────────────────
 
 const RenderMarkdown: React.FC<{ text: string }> = ({ text }) => {
+  const t = getTheme();
   const lines = text.split("\n");
   return (
     <Box flexDirection="column">
       {lines.map((line, i) => {
-        // Code block fence — handled block-level outside, best effort inline
+        // Code block fence
         if (line.startsWith("```")) {
           return (
-            <Text key={i} color="gray">
+            <Text key={i} color={t.codeBlock}>
               {line}
             </Text>
           );
@@ -79,7 +90,7 @@ const RenderMarkdown: React.FC<{ text: string }> = ({ text }) => {
         // Headers
         if (line.startsWith("### ")) {
           return (
-            <Text key={i} color="cyan" bold>
+            <Text key={i} color={t.heading2} bold>
               {"  ▸ "}
               {line.slice(4)}
             </Text>
@@ -87,7 +98,7 @@ const RenderMarkdown: React.FC<{ text: string }> = ({ text }) => {
         }
         if (line.startsWith("## ")) {
           return (
-            <Text key={i} color="cyan" bold>
+            <Text key={i} color={t.heading2} bold>
               {" ▸▸ "}
               {line.slice(3)}
             </Text>
@@ -95,7 +106,7 @@ const RenderMarkdown: React.FC<{ text: string }> = ({ text }) => {
         }
         if (line.startsWith("# ")) {
           return (
-            <Text key={i} color="blueBright" bold>
+            <Text key={i} color={t.heading1} bold>
               {"▸▸▸ "}
               {line.slice(2)}
             </Text>
@@ -108,7 +119,7 @@ const RenderMarkdown: React.FC<{ text: string }> = ({ text }) => {
           return (
             <Text key={i}>
               {indent}
-              <Text color="red">{"● "}</Text>
+              <Text color={t.bullet}>{"● "}</Text>
               {content}
             </Text>
           );
@@ -119,7 +130,7 @@ const RenderMarkdown: React.FC<{ text: string }> = ({ text }) => {
           return (
             <Text key={i}>
               {numMatch[1]}
-              <Text color="magenta">{numMatch[2] + ". "}</Text>
+              <Text color={t.listNumber}>{numMatch[2] + ". "}</Text>
               {numMatch[3]}
             </Text>
           );
@@ -127,12 +138,12 @@ const RenderMarkdown: React.FC<{ text: string }> = ({ text }) => {
         // Horizontal rule
         if (line.match(/^---+$/)) {
           return (
-            <Text key={i} color="gray">
+            <Text key={i} color={t.horizontalRule}>
               {"═".repeat(40)}
             </Text>
           );
         }
-        // Plain line — render bold/italic inline as plain for simplicity
+        // Plain line
         const cleaned = line
           .replace(/\*\*([^*]+)\*\*/g, "$1")
           .replace(/\*([^*]+)\*/g, "$1")
@@ -148,11 +159,12 @@ const RenderMarkdown: React.FC<{ text: string }> = ({ text }) => {
 export const StreamingMessage: React.FC<{ content: string }> = ({
   content,
 }) => {
+  const t = getTheme();
   if (!content) return null;
   return (
     <Box flexDirection="column" paddingLeft={2} marginTop={1}>
       <RenderMarkdown text={content} />
-      <Text color="cyan">{"▊"}</Text>
+      <Text color={t.accent}>{"▊"}</Text>
     </Box>
   );
 };
@@ -162,20 +174,21 @@ export const StreamingMessage: React.FC<{ content: string }> = ({
 export const ToolActivityBar: React.FC<{ tool: ToolActivity }> = ({
   tool,
 }) => {
+  const t = getTheme();
   const icon = toolIcon(tool.name);
   const color =
     tool.status === "error"
-      ? "red"
+      ? t.toolError
       : tool.status === "done"
-        ? "green"
-        : "yellow";
+        ? t.toolDone
+        : t.toolRunning;
   const statusChar =
     tool.status === "error" ? "✗" : tool.status === "done" ? "✓" : "…";
   return (
     <Box paddingLeft={2}>
       <Text color={color}>
         {`${statusChar} ${icon} ${tool.name}`}
-        <Text color="gray">{tool.preview ? `  ${tool.preview}` : ""}</Text>
+        <Text color={t.toolPreview}>{tool.preview ? `  ${tool.preview}` : ""}</Text>
       </Text>
     </Box>
   );

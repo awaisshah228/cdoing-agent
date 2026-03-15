@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef } from "react";
 import { Box, Text, useInput } from "ink";
 import * as fs from "fs";
 import * as path from "path";
+import { getTheme } from "./theme";
 
 const SLASH_COMMANDS = [
   { cmd: "/help",        desc: "Show help" },
@@ -32,6 +33,7 @@ const SLASH_COMMANDS = [
   { cmd: "/mcp",         desc: "MCP server status / interactive picker" },
   { cmd: "/context",     desc: "List context providers" },
   { cmd: "/queue",       desc: "Show message queue" },
+  { cmd: "/theme",       desc: "Switch theme (dark/light/auto)" },
   { cmd: "/setup",       desc: "View & change provider / model / API key" },
   { cmd: "/doctor",      desc: "Check system health" },
   { cmd: "/init",        desc: "Initialize project" },
@@ -492,15 +494,14 @@ interface PathMenuProps {
 }
 
 const PathMenu: React.FC<PathMenuProps> = ({ entries, selectedIdx, label }) => {
+  const t = getTheme();
   const termWidth = process.stdout.columns || 100;
-  const padWidth  = 2; // spaces between columns
+  const padWidth  = 2;
 
-  // Column width = longest name + padding, capped so at least 2 cols fit
   const maxName   = Math.max(...entries.map((e) => e.name.length), 4);
   const colWidth  = Math.min(maxName + padWidth, Math.floor(termWidth / 2));
   const numCols   = Math.max(1, Math.floor((termWidth - 4) / colWidth));
 
-  // Split entries into rows
   const rows: PathEntry[][] = [];
   for (let i = 0; i < entries.length; i += numCols) {
     rows.push(entries.slice(i, i + numCols));
@@ -508,7 +509,7 @@ const PathMenu: React.FC<PathMenuProps> = ({ entries, selectedIdx, label }) => {
 
   return (
     <Box flexDirection="column" paddingLeft={2}>
-      <Text dimColor>{label}</Text>
+      <Text dimColor={t.useDim} color={t.textDim}>{label}</Text>
       {rows.map((row, rowIdx) => (
         <Box key={rowIdx} flexDirection="row">
           {row.map((e, colIdx) => {
@@ -516,14 +517,14 @@ const PathMenu: React.FC<PathMenuProps> = ({ entries, selectedIdx, label }) => {
             const isSelected = globalIdx === selectedIdx;
             const padded = e.name.padEnd(colWidth);
             return isSelected ? (
-              <Text key={e.full} backgroundColor="cyan" color="black">{padded}</Text>
+              <Text key={e.full} backgroundColor={t.selectedBg} color={t.selected === "white" ? "black" : t.selected}>{padded}</Text>
             ) : (
-              <Text key={e.full} color={e.isDir ? "cyan" : "white"}>{padded}</Text>
+              <Text key={e.full} color={e.isDir ? t.accent : t.text}>{padded}</Text>
             );
           })}
         </Box>
       ))}
-      <Text dimColor>{"Tab=cycle  →=accept  ESC=close"}</Text>
+      <Text dimColor={t.useDim} color={t.textDim}>{"Tab=cycle  →=accept  ESC=close"}</Text>
     </Box>
   );
 };
@@ -531,12 +532,12 @@ const PathMenu: React.FC<PathMenuProps> = ({ entries, selectedIdx, label }) => {
 // ── Suggestion icon helpers ───────────────────────────────────────────────────
 
 function getSuggestionColor(s: { cmd: string; desc: string }): string {
-  if (s.cmd.startsWith("@file")) return "magenta";
-  if (s.cmd.startsWith("@")) return "yellow";
-  // Tool subcommands (npm, git, etc.) — green tint
+  const t = getTheme();
+  if (s.cmd.startsWith("@file")) return t.suggestionFile;
+  if (s.cmd.startsWith("@")) return t.suggestionProvider;
   const toolMatch = s.cmd.match(/^!?(\w[\w-]*)\s/);
-  if (toolMatch && TOOL_SUBCOMMANDS[toolMatch[1].toLowerCase()]) return "green";
-  return "cyan";
+  if (toolMatch && TOOL_SUBCOMMANDS[toolMatch[1].toLowerCase()]) return t.suggestionTool;
+  return t.suggestionDefault;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -876,6 +877,8 @@ export const UserInput: React.FC<UserInputProps> = ({
   const windowEnd = Math.min(windowStart + WINDOW, suggestions.length);
   const visibleSuggestions = suggestions.slice(windowStart, windowEnd);
 
+  const t = getTheme();
+
   return (
     <Box flexDirection="column">
 
@@ -889,14 +892,14 @@ export const UserInput: React.FC<UserInputProps> = ({
       ) : null}
 
       {/* Main bordered box — contains dropdown (when open) + input line */}
-      <Box borderStyle="round" borderColor="gray" flexDirection="column" paddingLeft={1} paddingRight={1}>
+      <Box borderStyle="round" borderColor={t.border} flexDirection="column" paddingLeft={1} paddingRight={1}>
 
         {/* Dropdown lives INSIDE the border so no extra border line appears below it */}
         {suggestions.length > 0 ? (
           <Box flexDirection="column">
             {/* ▲ more above indicator */}
             {windowStart > 0 ? (
-              <Text dimColor>{`  ▲ ${windowStart} more`}</Text>
+              <Text dimColor={t.useDim} color={t.textDim}>{`  ▲ ${windowStart} more`}</Text>
             ) : null}
 
             {visibleSuggestions.map((s, vi) => {
@@ -906,44 +909,44 @@ export const UserInput: React.FC<UserInputProps> = ({
               const color = getSuggestionColor(s);
               return isSelected ? (
                 <Box key={s.cmd}>
-                  <Text color="white" bold>{`  ${display}`}</Text>
+                  <Text color={t.selected} bold>{`  ${display}`}</Text>
                   {s.desc && s.desc !== "file" && s.desc !== "dir" ? (
-                    <Text color="gray">{`  ${s.desc}`}</Text>
+                    <Text color={t.textDim}>{`  ${s.desc}`}</Text>
                   ) : null}
                 </Box>
               ) : (
                 <Box key={s.cmd}>
-                  <Text color={color} dimColor>{`  ${display}`}</Text>
+                  <Text color={color} dimColor={t.useDim}>{`  ${display}`}</Text>
                 </Box>
               );
             })}
 
             {/* ▼ more below indicator */}
             {windowEnd < suggestions.length ? (
-              <Text dimColor>{`  ▼ ${suggestions.length - windowEnd} more`}</Text>
+              <Text dimColor={t.useDim} color={t.textDim}>{`  ▼ ${suggestions.length - windowEnd} more`}</Text>
             ) : null}
 
             {/* hint + position counter */}
-            <Text dimColor>{`  ↑/↓ navigate  Enter select  Esc close    ${sel + 1}/${suggestions.length}`}</Text>
+            <Text dimColor={t.useDim} color={t.textDim}>{`  ↑/↓ navigate  Enter select  Esc close    ${sel + 1}/${suggestions.length}`}</Text>
           </Box>
         ) : null}
 
         {/* Input line */}
         <Box>
-          <Text color="cyan">{"● "}</Text>
+          <Text color={t.accent}>{"● "}</Text>
           {input.length > 0 ? <Text>{input}</Text> : null}
-          <Text color="green">{"▊"}</Text>
+          <Text color={t.cursor}>{"▊"}</Text>
           {input.length === 0 ? (
-            <Text color="gray" dimColor>{"Ask anything, @ for context, / for commands, ! for shell"}</Text>
+            <Text color={t.placeholder} dimColor={t.useDim}>{"Ask anything, @ for context, / for commands, ! for shell"}</Text>
           ) : ghost && suggestions.length === 0 && pathEntries.length === 0 ? (
-            <Text color="gray" dimColor>{ghost.suffix}</Text>
+            <Text color={t.placeholder} dimColor={t.useDim}>{ghost.suffix}</Text>
           ) : null}
         </Box>
       </Box>
 
       {/* Keyboard hints below input */}
       <Box paddingLeft={2}>
-        <Text color="cyan" dimColor>{"Ctrl+V paste  ·  Ctrl+L clear  ·  Shift+Tab cycle mode"}</Text>
+        <Text color={t.accent} dimColor={t.useDim}>{"Ctrl+V paste  ·  Ctrl+L clear  ·  Shift+Tab cycle mode"}</Text>
       </Box>
 
     </Box>

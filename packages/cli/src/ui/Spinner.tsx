@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Box, Text } from "ink";
+import { getTheme } from "./theme";
 
 const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const INTERVAL_MS = 80;
@@ -16,9 +17,11 @@ interface SpinnerProps {
 
 export const Spinner: React.FC<SpinnerProps> = ({
   label,
-  color = "yellow",
+  color,
   startTime,
 }) => {
+  const t = getTheme();
+  const spinnerColor = color || t.spinner;
   const [dotFrame, setDotFrame] = useState(0);
   const [elapsed, setElapsed] = useState(0);
 
@@ -36,9 +39,9 @@ export const Spinner: React.FC<SpinnerProps> = ({
 
   return (
     <Box paddingLeft={2}>
-      <Text color={color as any}>{label}</Text>
-      <Text color={color as any}>{DOT_FRAMES[dotFrame]}</Text>
-      <Text color="gray" dimColor>{elapsedStr}</Text>
+      <Text color={spinnerColor as any}>{label}</Text>
+      <Text color={spinnerColor as any}>{DOT_FRAMES[dotFrame]}</Text>
+      <Text color={t.elapsed} dimColor={t.useDim}>{elapsedStr}</Text>
     </Box>
   );
 };
@@ -74,6 +77,7 @@ const TOOL_ICONS: Record<string, string> = {
 };
 
 export const ToolSpinner: React.FC<ToolSpinnerProps> = ({ name, preview, status }) => {
+  const t = getTheme();
   const [frame, setFrame] = useState(0);
 
   useEffect(() => {
@@ -85,7 +89,7 @@ export const ToolSpinner: React.FC<ToolSpinnerProps> = ({ name, preview, status 
   const icon = TOOL_ICONS[name] || "⚡";
   const spinner = status === "running" ? FRAMES[frame] + " " : "";
   const color =
-    status === "error" ? "red" : status === "done" ? "green" : "yellow";
+    status === "error" ? t.toolError : status === "done" ? t.toolDone : t.toolRunning;
   const statusMark =
     status === "done" ? "✓ " : status === "error" ? "✗ " : spinner;
 
@@ -93,7 +97,7 @@ export const ToolSpinner: React.FC<ToolSpinnerProps> = ({ name, preview, status 
     <Box paddingLeft={2}>
       <Text color={color as any}>{statusMark}{icon} </Text>
       <Text color={color as any}>{name}</Text>
-      {preview ? <Text color="gray" dimColor>{"  " + preview.slice(0, 55)}</Text> : null}
+      {preview ? <Text color={t.toolPreview} dimColor={t.useDim}>{"  " + preview.slice(0, 55)}</Text> : null}
     </Box>
   );
 };

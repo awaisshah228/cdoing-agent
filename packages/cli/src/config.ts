@@ -22,6 +22,8 @@ export interface StoredConfig {
   mode?: string;
   baseUrl?: string;
   apiKeyHelper?: string;
+  /** UI theme: "dark", "light", or "auto" (default) */
+  theme?: string;
   /** Indexer configuration */
   indexer?: {
     /** Embedding model ID (e.g. "text-embedding-3-small", "nomic-embed-text") */
@@ -243,13 +245,13 @@ export function selectMenu(title: string, options: SelectOption[], defaultIndex 
       }
       (render as any).drawn = true;
 
-      process.stdout.write(`\n`);
+      process.stdout.write(`\x1b[2K\n`);
       options.forEach((opt, i) => {
         const selected = i === idx;
         const pointer = selected ? chalk.cyan("  ❯ ") : "    ";
         const label = selected ? chalk.bold.white(opt.label) : chalk.white(opt.label);
         const hint = opt.hint ? chalk.dim(`  ${opt.hint}`) : "";
-        process.stdout.write(`${pointer}${label}${hint}\n`);
+        process.stdout.write(`\x1b[2K${pointer}${label}${hint}\n`);
       });
     };
 

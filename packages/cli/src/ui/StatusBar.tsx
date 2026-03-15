@@ -1,6 +1,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import type { UsageInfo, ContextUsage } from "./types";
+import { getTheme } from "./theme";
 
 interface StatusBarProps {
   provider: string;
@@ -37,10 +38,11 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   contextUsage,
   backgroundJobs = 0,
 }) => {
+  const t = getTheme();
   const dir = workingDir.replace(process.env.HOME || "", "~");
   const modelDisplay = model || "(default)";
   const modeColor =
-    mode === "auto" ? "green" : mode === "auto-edit" ? "yellow" : "blue";
+    mode === "auto" ? t.success : mode === "auto-edit" ? t.warning : t.info;
   const hasUsage = !!lastUsage;
   const usageText = hasUsage
     ? ` · ${lastUsage!.totalTokens.toLocaleString()} tokens` +
@@ -52,23 +54,23 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   return (
     <Box
       borderStyle="single"
-      borderColor="gray"
+      borderColor={t.border}
       paddingLeft={1}
       paddingRight={1}
       justifyContent="space-between"
     >
       {/* Left side */}
       <Box>
-        <Text color="cyan">{provider}</Text>
-        <Text color="gray"> · </Text>
-        <Text color="white">{modelDisplay}</Text>
-        <Text color="gray"> · </Text>
+        <Text color={t.provider}>{provider}</Text>
+        <Text color={t.separator}> · </Text>
+        <Text color={t.model}>{modelDisplay}</Text>
+        <Text color={t.separator}> · </Text>
         <Text color={modeColor}>{mode}</Text>
 
         {/* Context window usage bar */}
         {ctxPercent !== null ? (
           <>
-            <Text color="gray"> · </Text>
+            <Text color={t.separator}> · </Text>
             <Text color={contextColor(ctxPercent)}>
               {contextBar(ctxPercent)}
             </Text>
@@ -80,24 +82,24 @@ export const StatusBar: React.FC<StatusBarProps> = ({
 
         {/* Background jobs indicator */}
         {backgroundJobs > 0 ? (
-          <Text color="magenta">{` · ⚡${backgroundJobs} bg`}</Text>
+          <Text color={t.bgJobs}>{` · ⚡${backgroundJobs} bg`}</Text>
         ) : null}
 
         {queueLength > 0 ? (
-          <Text color="yellow"> · {queueLength} queued</Text>
+          <Text color={t.warning}> · {queueLength} queued</Text>
         ) : null}
       </Box>
 
       {/* Right side */}
       <Box>
-        <Text color="gray">{dir}</Text>
+        <Text color={t.textDim}>{dir}</Text>
         {isProcessing ? (
-          <Text color="yellow"> · processing…</Text>
+          <Text color={t.warning}> · processing…</Text>
         ) : null}
         {hasUsage ? (
-          <Text color="gray" dimColor>{usageText}</Text>
+          <Text color={t.textDim} dimColor={t.useDim}>{usageText}</Text>
         ) : null}
-        <Text color="gray" dimColor>{"  ?=/help  ESC=cancel  ^C^C=exit"}</Text>
+        <Text color={t.textDim} dimColor={t.useDim}>{"  ?=/help  ESC=cancel  ^C^C=exit"}</Text>
       </Box>
     </Box>
   );

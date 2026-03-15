@@ -68,6 +68,7 @@ import {
 } from "../../config";
 import { oauthLogout, oauthStatus } from "../../oauth";
 import { handleInit, handleDoctor } from "../../commands";
+import { setTheme, getThemeName, getAvailableThemes } from "../theme";
 
 // Split modules
 import { useAgent }            from "./useAgent";
@@ -850,6 +851,20 @@ export function useChat(opts: UseChatOptions) {
         case "/queue": {
           if (!queueRef.current.length) return "No messages in queue.";
           return queueRef.current.map((m, i) => `${i + 1}. ${m.substring(0, 60)}`).join("\n");
+        }
+
+        case "/theme": {
+          if (!arg) {
+            const current = getThemeName();
+            const available = getAvailableThemes().join(", ");
+            return `Current theme: ${current}\nUsage: /theme <${available}>`;
+          }
+          const validThemes = getAvailableThemes();
+          if (!validThemes.includes(arg)) {
+            return `Unknown theme "${arg}". Available: ${validThemes.join(", ")}`;
+          }
+          const result = setTheme(arg as any);
+          return result;
         }
 
         case "/doctor":

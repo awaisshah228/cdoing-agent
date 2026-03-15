@@ -25,6 +25,7 @@ import type {
 } from "@cdoing/core";
 import { App } from "./ui/App";
 import { printWelcome } from "./help";
+import { initTheme } from "./ui/theme";
 
 export class ChatInterface {
   private modelConfig: Partial<ModelConfig>;
@@ -51,6 +52,7 @@ export class ChatInterface {
   }
 
   async start(initialPrompt?: string): Promise<void> {
+    initTheme();
     printWelcome();
 
     const { waitUntilExit } = render(

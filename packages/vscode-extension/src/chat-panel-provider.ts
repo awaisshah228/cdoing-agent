@@ -80,7 +80,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
   private webviewReady = false;
   private pendingMessages: any[] = [];
-  private pendingPermissionResolvers = new Map<string, (decision: "allow" | "always" | "project" | "deny") => void>();
+  private pendingPermissionResolvers = new Map<string, (decision: "allow" | "always" | "project" | "deny" | "deny_always" | "deny_project") => void>();
   private permissionIdCounter = 0;
   private oauthCodeVerifier: string | null = null;
 
@@ -449,7 +449,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     this.permissionManager.setSandboxManager(sandboxManager);
     this.permissionManager.setPromptFn(async (toolName, message, hasProject) => {
       const id = `perm-${++this.permissionIdCounter}-${Date.now()}`;
-      return new Promise<"allow" | "always" | "project" | "deny">((resolve) => {
+      return new Promise<"allow" | "always" | "project" | "deny" | "deny_always" | "deny_project">((resolve) => {
         this.pendingPermissionResolvers.set(id, resolve);
         this.postMessage({
           type: "permissionRequest",

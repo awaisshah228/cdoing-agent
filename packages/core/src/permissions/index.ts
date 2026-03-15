@@ -4,7 +4,7 @@
  * Implements the Claude Code permission system:
  *   - Settings-based allow/ask/deny rules loaded from .claude/settings.json files
  *   - Permission modes: default, acceptEdits, plan, dontAsk, bypassPermissions
- *   - Rule evaluation order: deny → allow → ask (deny always wins)
+ *   - Rule evaluation order: deny → ask → allow (deny always wins)
  *   - Rule syntax: Tool, Tool(*), Bash(cmd *), Read(path), WebFetch(domain:x), Agent(name)
  *   - Settings precedence: local project → shared project → user (~/.claude/settings.json)
  *
@@ -31,6 +31,16 @@ const GLOBAL_PERMISSIONS_FILE = path.join(GLOBAL_CDOING_DIR, "permissions.json")
 // Settings files — check both .cdoing/ (our format) and .claude/ (Claude Code compat)
 const USER_SETTINGS_FILE = path.join(HOME_DIR, ".cdoing", "settings.json");
 const USER_SETTINGS_FILE_CLAUDE = path.join(HOME_DIR, ".claude", "settings.json");
+
+// Managed settings — highest priority, cannot be overridden
+// macOS: /Library/Application Support/cdoing/managed-settings.json
+// Linux: /etc/cdoing/managed-settings.json
+const MANAGED_SETTINGS_FILE = process.platform === "darwin"
+  ? "/Library/Application Support/cdoing/managed-settings.json"
+  : "/etc/cdoing/managed-settings.json";
+const MANAGED_SETTINGS_FILE_CLAUDE = process.platform === "darwin"
+  ? "/Library/Application Support/claude-code/managed-settings.json"
+  : "/etc/claude-code/managed-settings.json";
 
 // ── Public types ───────────────────────────────────────────────────────────────
 
@@ -66,7 +76,7 @@ export type PermissionPromptFn = (
   toolName: string,
   message: string,
   hasProject: boolean,
-) => Promise<"allow" | "always" | "project" | "deny">;
+) => Promise<"allow" | "always" | "project" | "deny" | "deny_always" | "deny_project">;
 
 // ── Internal types ─────────────────────────────────────────────────────────────
 
@@ -74,6 +84,14 @@ interface SettingsPermissions {
   allow: string[];
   ask:   string[];
   deny:  string[];
+}
+
+/** Managed-only settings that cannot be overridden */
+interface ManagedOnlySettings {
+  disableBypassPermissionsMode?: "disable" | string;
+  allowManagedPermissionRulesOnly?: boolean;
+  allowManagedHooksOnly?: boolean;
+  allowManagedMcpServersOnly?: boolean;
 }
 
 // ── Tool → Rule category mapping ───────────────────────────────────────────────
@@ -101,7 +119,7 @@ const TOOL_CATEGORY: Record<string, string> = {
 const PLAN_BLOCKED = new Set(["shell_exec", "file_run", "file_write", "file_edit", "multi_edit", "file_delete"]);
 
 /** File-edit tools that are auto-allowed in acceptEdits mode */
-const ACCEPT_EDITS_AUTO = new Set(["file_write", "file_edit"]);
+const ACCEPT_EDITS_AUTO = new Set(["file_write", "file_edit", "multi_edit"]);
 
 /**
  * Tools whose "don't ask again" approval is stored permanently to disk
@@ -192,6 +210,41 @@ function matchWebFetch(url: string, specifier: string): boolean {
   return url === specifier;
 }
 
+// ── MCP tool matching ─────────────────────────────────────────────────────────
+
+/**
+ * Match an MCP tool name against a rule.
+ *
+ * MCP tools are named: mcp__<server>__<tool>
+ * Rules can be:
+ *   mcp__puppeteer            → matches all tools from "puppeteer" server
+ *   mcp__puppeteer__*         → same (wildcard matches all tools)
+ *   mcp__puppeteer__navigate  → matches only the "navigate" tool
+ */
+function matchMcpTool(toolName: string, ruleCategory: string, _specifier: string | null): boolean {
+  // Rule without specifier (parsed from "mcp__puppeteer" or "mcp__puppeteer__*")
+  // ruleCategory is the full rule string when no parens are used
+  const ruleParts = ruleCategory.split("__");
+  const toolParts = toolName.split("__");
+
+  // Both must start with "mcp"
+  if (ruleParts[0] !== "mcp" || toolParts[0] !== "mcp") return false;
+
+  // Server must match
+  if (ruleParts.length < 2 || toolParts.length < 2) return false;
+  if (ruleParts[1] !== toolParts[1]) return false;
+
+  // Rule is just mcp__server → matches all tools from that server
+  if (ruleParts.length === 2) return true;
+
+  // Rule is mcp__server__* → matches all tools from that server
+  if (ruleParts[2] === "*") return true;
+
+  // Rule is mcp__server__tool → exact tool match
+  if (toolParts.length < 3) return false;
+  return ruleParts[2] === toolParts[2];
+}
+
 // ── Settings file loading ──────────────────────────────────────────────────────
 
 function loadSettingsFile(filePath: string): SettingsPermissions | null {
@@ -236,14 +289,63 @@ export class PermissionManager {
   private settingsAsk:   string[] = [];
   private settingsDeny:  string[] = [];
 
+  // Managed settings — highest priority, cannot be overridden by user/project
+  private managedSettings: ManagedOnlySettings = {};
+  private managedAllow: string[] = [];
+  private managedAsk:   string[] = [];
+  private managedDeny:  string[] = [];
+
   constructor(mode: PermissionMode = PermissionMode.DEFAULT, projectDir?: string) {
     this.projectDir = projectDir || null;
     this.cwd        = projectDir || process.cwd();
+    this.loadManagedSettings();
     this.loadRuntimeRules();
     this.loadSettingsRules();
     // defaultMode from settings files can override the constructor argument
     const settingsMode = this.readDefaultModeFromSettings();
     this.mode = this.normalizeMode(settingsMode ?? mode);
+
+    // Managed policy: disableBypassPermissionsMode prevents bypass mode
+    if (this.managedSettings.disableBypassPermissionsMode === "disable" &&
+        this.mode === PermissionMode.BYPASS) {
+      this.mode = PermissionMode.DEFAULT;
+    }
+  }
+
+  // ── Managed settings loading ───────────────────────────────────────────────
+
+  /**
+   * Load managed settings from system-level config.
+   * Managed settings have the highest priority and cannot be overridden.
+   *
+   * Paths:
+   *   macOS: /Library/Application Support/cdoing/managed-settings.json
+   *   Linux: /etc/cdoing/managed-settings.json
+   */
+  private loadManagedSettings(): void {
+    const managed = loadSettingsFile(MANAGED_SETTINGS_FILE)
+      || loadSettingsFile(MANAGED_SETTINGS_FILE_CLAUDE);
+
+    if (managed) {
+      this.managedAllow = managed.allow;
+      this.managedAsk   = managed.ask;
+      this.managedDeny  = managed.deny;
+    }
+
+    // Load managed-only settings (disableBypassPermissionsMode, etc.)
+    for (const filePath of [MANAGED_SETTINGS_FILE, MANAGED_SETTINGS_FILE_CLAUDE]) {
+      try {
+        if (!fs.existsSync(filePath)) continue;
+        const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+        this.managedSettings = {
+          disableBypassPermissionsMode: data.disableBypassPermissionsMode,
+          allowManagedPermissionRulesOnly: data.allowManagedPermissionRulesOnly,
+          allowManagedHooksOnly: data.allowManagedHooksOnly,
+          allowManagedMcpServersOnly: data.allowManagedMcpServersOnly,
+        };
+        break; // Use first found
+      } catch { /* skip malformed files */ }
+    }
   }
 
   // ── Mode normalisation ─────────────────────────────────────────────────────
@@ -296,7 +398,13 @@ export class PermissionManager {
   }
 
   setMode(mode: PermissionMode): void {
-    this.mode = this.normalizeMode(mode);
+    const normalized = this.normalizeMode(mode);
+    // Managed policy: prevent bypass mode if disabled by admin
+    if (this.managedSettings.disableBypassPermissionsMode === "disable" &&
+        normalized === PermissionMode.BYPASS) {
+      return; // Silently refuse to switch to bypass mode
+    }
+    this.mode = normalized;
   }
 
   getMode(): PermissionMode {
@@ -366,33 +474,37 @@ export class PermissionManager {
    * overridden by an allow at any other level.
    */
   loadSettingsRules(): void {
-    // Load each layer (null if file doesn't exist)
-    // Load from .cdoing/ (our format) with .claude/ fallback (Claude Code compat)
-    const local = this.projectDir
-      ? (loadSettingsFile(path.join(this.projectDir, ".cdoing", "settings.local.json"))
-        || loadSettingsFile(path.join(this.projectDir, ".claude", "settings.local.json")))
-      : null;
-    const shared = this.projectDir
-      ? (loadSettingsFile(path.join(this.projectDir, ".cdoing", "settings.json"))
-        || loadSettingsFile(path.join(this.projectDir, ".claude", "settings.json")))
-      : null;
-    const user = loadSettingsFile(USER_SETTINGS_FILE)
-      || loadSettingsFile(USER_SETTINGS_FILE_CLAUDE);
+    // Managed rules always apply (highest priority)
+    const allow: string[] = [...this.managedAllow];
+    const ask:   string[] = [...this.managedAsk];
+    const deny:  string[] = [...this.managedDeny];
 
-    // For allow/ask: highest precedence first so "first match wins" works correctly.
-    // Order: local → shared → user
-    const orderedSources = [local, shared, user];
+    // If allowManagedPermissionRulesOnly is set, skip user/project rules entirely
+    if (!this.managedSettings.allowManagedPermissionRulesOnly) {
+      // Load each layer (null if file doesn't exist)
+      // Load from .cdoing/ (our format) with .claude/ fallback (Claude Code compat)
+      const local = this.projectDir
+        ? (loadSettingsFile(path.join(this.projectDir, ".cdoing", "settings.local.json"))
+          || loadSettingsFile(path.join(this.projectDir, ".claude", "settings.local.json")))
+        : null;
+      const shared = this.projectDir
+        ? (loadSettingsFile(path.join(this.projectDir, ".cdoing", "settings.json"))
+          || loadSettingsFile(path.join(this.projectDir, ".claude", "settings.json")))
+        : null;
+      const user = loadSettingsFile(USER_SETTINGS_FILE)
+        || loadSettingsFile(USER_SETTINGS_FILE_CLAUDE);
 
-    const allow: string[] = [];
-    const ask:   string[] = [];
-    const deny:  string[] = [];
+      // For allow/ask: highest precedence first so "first match wins" works correctly.
+      // Order: managed → local → shared → user
+      const orderedSources = [local, shared, user];
 
-    for (const src of orderedSources) {
-      if (!src) continue;
-      allow.push(...src.allow);
-      ask.push(...src.ask);
-      // Deny rules are collected from every layer — any deny wins
-      deny.push(...src.deny);
+      for (const src of orderedSources) {
+        if (!src) continue;
+        allow.push(...src.allow);
+        ask.push(...src.ask);
+        // Deny rules are collected from every layer — any deny wins
+        deny.push(...src.deny);
+      }
     }
 
     this.settingsAllow = allow;
@@ -452,6 +564,13 @@ export class PermissionManager {
         return name === parsed.specifier;
       }
       default: {
+        // MCP tools: match mcp__server or mcp__server__tool patterns
+        // e.g. rule "mcp__puppeteer" matches tool "mcp__puppeteer__navigate"
+        //      rule "mcp__puppeteer__*" matches all tools from puppeteer server
+        //      rule "mcp__puppeteer__navigate" matches exact tool
+        if (toolName.startsWith("mcp__") && parsed.category.startsWith("mcp__")) {
+          return matchMcpTool(toolName, parsed.category, parsed.specifier);
+        }
         // Fallback: compare specifier against first input value
         const first = String(Object.values(input)[0] ?? "");
         return first === parsed.specifier;
@@ -520,7 +639,7 @@ export class PermissionManager {
 
     // ask rule: prompt even if a stored/allow rule would otherwise bypass it
     if (ruleResult === "ask") {
-      return this.askUser(toolName, this.describeAction(toolDef, input));
+      return this.askUser(toolName, this.describeAction(toolDef, input), input);
     }
 
     if (ruleResult === "allow") return true;
@@ -536,7 +655,7 @@ export class PermissionManager {
           paths.write.some((p)  => this.pathMatchesAsk(p, "Edit"))   ||
           paths.delete.some((p) => this.pathMatchesAsk(p, "Delete"));
         if (needsAsk) {
-          return this.askUser(toolName, this.describeAction(toolDef, input));
+          return this.askUser(toolName, this.describeAction(toolDef, input), input);
         }
       }
     }
@@ -569,7 +688,7 @@ export class PermissionManager {
       }
     }
 
-    return this.askUser(toolName, this.describeAction(toolDef, input));
+    return this.askUser(toolName, this.describeAction(toolDef, input), input);
   }
 
   // ── Runtime stored rules (legacy) ─────────────────────────────────────────
@@ -663,6 +782,18 @@ export class PermissionManager {
   }
 
   /**
+   * Save a deny rule to settings.json so it persists across sessions.
+   * Creates the .cdoing/ folder and settings.json file if they don't exist.
+   */
+  private addDenyRule(toolName: string, scope: PermissionScope, inputMatch?: string): void {
+    const category = TOOL_CATEGORY[toolName] || toolName;
+    const ruleString = inputMatch ? `${category}(${inputMatch})` : category;
+
+    // Persist deny to settings.json
+    this.addToSettingsDeny(ruleString, scope);
+  }
+
+  /**
    * Persist a permission rule to settings.json.
    *
    * Writes to:
@@ -670,6 +801,25 @@ export class PermissionManager {
    *   - Global scope  → ~/.cdoing/settings.json
    */
   private addToSettingsAllow(rule: string, scope: PermissionScope): void {
+    this.addToSettingsField(rule, "allow", scope);
+  }
+
+  /**
+   * Persist a deny rule to settings.json.
+   *
+   * Writes to:
+   *   - Project scope → <project>/.cdoing/settings.json
+   *   - Global scope  → ~/.cdoing/settings.json
+   */
+  private addToSettingsDeny(rule: string, scope: PermissionScope): void {
+    this.addToSettingsField(rule, "deny", scope);
+  }
+
+  /**
+   * Persist a permission rule to a specific field (allow/deny/ask) in settings.json.
+   * Creates the directory and file if they don't exist.
+   */
+  private addToSettingsField(rule: string, field: "allow" | "deny" | "ask", scope: PermissionScope): void {
     const filePath = scope === "project" && this.projectDir
       ? path.join(this.projectDir, ".cdoing", "settings.json")
       : USER_SETTINGS_FILE;
@@ -685,11 +835,11 @@ export class PermissionManager {
 
       if (!data.permissions) data.permissions = {};
       const perms = data.permissions as Record<string, string[]>;
-      if (!Array.isArray(perms.allow)) perms.allow = [];
+      if (!Array.isArray(perms[field])) perms[field] = [];
 
       // Don't add duplicates
-      if (!perms.allow.includes(rule)) {
-        perms.allow.push(rule);
+      if (!perms[field].includes(rule)) {
+        perms[field].push(rule);
         fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf-8");
 
         // Reload settings so the new rule takes effect immediately
@@ -698,6 +848,41 @@ export class PermissionManager {
     } catch {
       // If we can't write settings, fall back to session-only
     }
+  }
+
+  /** Check whether bypass mode is disabled by managed settings. */
+  isBypassDisabled(): boolean {
+    return this.managedSettings.disableBypassPermissionsMode === "disable";
+  }
+
+  /** Return managed-only settings for external inspection. */
+  getManagedSettings(): Readonly<ManagedOnlySettings> {
+    return { ...this.managedSettings };
+  }
+
+  /**
+   * Remove a permission rule from settings.json.
+   * Removes from the specified field (allow/deny/ask) in the given scope.
+   */
+  removeSettingsRule(rule: string, field: "allow" | "deny" | "ask", scope: PermissionScope): void {
+    const filePath = scope === "project" && this.projectDir
+      ? path.join(this.projectDir, ".cdoing", "settings.json")
+      : USER_SETTINGS_FILE;
+
+    try {
+      if (!fs.existsSync(filePath)) return;
+      const data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      if (!data.permissions) return;
+      const perms = data.permissions as Record<string, string[]>;
+      if (!Array.isArray(perms[field])) return;
+
+      const idx = perms[field].indexOf(rule);
+      if (idx !== -1) {
+        perms[field].splice(idx, 1);
+        fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf-8");
+        this.loadSettingsRules();
+      }
+    } catch { /* ignore errors */ }
   }
 
   removeRule(toolName?: string, scope?: PermissionScope): void {
@@ -745,19 +930,41 @@ export class PermissionManager {
    *
    * Uses customPromptFn if set (e.g. VS Code UI), otherwise falls back to CLI readline.
    */
-  private async askUser(toolName: string, message: string): Promise<boolean> {
+  private async askUser(toolName: string, message: string, input?: Record<string, unknown>): Promise<boolean> {
     const hasProject = !!this.projectDir;
     const label      = toolName.replace(/_/g, " ");
+
+    // Build input match for persistent rules (command for Bash, path for Edit/Read/Delete)
+    const category = TOOL_CATEGORY[toolName] || toolName;
+    let inputMatch: string | undefined;
+    if (input) {
+      if (category === "Bash") {
+        inputMatch = String(input.command || "") || undefined;
+      } else if (category === "Read" || category === "Edit" || category === "Delete") {
+        inputMatch = String(input.file_path || input.path || input.pattern || "") || undefined;
+      } else if (category === "WebFetch") {
+        const url = String(input.url || "");
+        try { inputMatch = `domain:${new URL(url).hostname}`; } catch { inputMatch = url || undefined; }
+      }
+    }
 
     if (this.customPromptFn) {
       const choice = await this.customPromptFn(toolName, message, hasProject);
       if (choice === "always") {
-        this.addRule(toolName, "global");
+        this.addRule(toolName, "global", inputMatch);
         return true;
       }
       if (choice === "project" && hasProject) {
-        this.addRule(toolName, "project");
+        this.addRule(toolName, "project", inputMatch);
         return true;
+      }
+      if (choice === "deny_always") {
+        this.addDenyRule(toolName, "global", inputMatch);
+        return false;
+      }
+      if (choice === "deny_project" && hasProject) {
+        this.addDenyRule(toolName, "project", inputMatch);
+        return false;
       }
       if (choice === "deny") return false;
       return choice === "allow";
@@ -766,23 +973,32 @@ export class PermissionManager {
     // CLI readline fallback
     return new Promise((resolve) => {
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      const projectHint = hasProject ? ` · (p)roject only` : "";
+      const projectHint = hasProject ? ` · (p)roject allow` : "";
+      const denyProjectHint = hasProject ? ` · (dp) deny project` : "";
 
       rl.question(
         `\n  \x1b[33m⚡ Permission:\x1b[0m ${message}\n` +
-        `  \x1b[2m(y)es, allow once · (a)lways allow${projectHint} · (n)o, deny\x1b[0m\n` +
-        `  \x1b[2mChoice [Y/a${hasProject ? "/p" : ""}/n]:\x1b[0m `,
+        `  \x1b[2m(y)es, allow once · (a)lways allow${projectHint} · (n)o, deny once · (d)eny always${denyProjectHint}\x1b[0m\n` +
+        `  \x1b[2mChoice [Y/a${hasProject ? "/p" : ""}/n/d${hasProject ? "/dp" : ""}]:\x1b[0m `,
         (answer: string) => {
           rl.close();
           const a = answer.trim().toLowerCase();
           if (a === "a" || a === "always") {
-            this.addRule(toolName, "global");
+            this.addRule(toolName, "global", inputMatch);
             console.log(`  \x1b[32m✓ Permission saved globally for ${label}\x1b[0m`);
             resolve(true);
           } else if ((a === "p" || a === "project") && hasProject) {
-            this.addRule(toolName, "project");
+            this.addRule(toolName, "project", inputMatch);
             console.log(`  \x1b[32m✓ Permission saved for project for ${label}\x1b[0m`);
             resolve(true);
+          } else if (a === "d" || a === "deny always") {
+            this.addDenyRule(toolName, "global", inputMatch);
+            console.log(`  \x1b[31m✗ Deny rule saved globally for ${label}\x1b[0m`);
+            resolve(false);
+          } else if ((a === "dp" || a === "deny project") && hasProject) {
+            this.addDenyRule(toolName, "project", inputMatch);
+            console.log(`  \x1b[31m✗ Deny rule saved for project for ${label}\x1b[0m`);
+            resolve(false);
           } else if (a === "n" || a === "no") {
             resolve(false);
           } else {

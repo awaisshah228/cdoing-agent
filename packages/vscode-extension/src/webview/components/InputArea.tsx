@@ -261,8 +261,24 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
               onClick={() => onPermissionResponse("deny")}
             >
               <span className="permission-option-num">{permissionRequest.hasProject ? "4" : "3"}</span>
-              <span>No</span>
+              <span>No, deny once</span>
             </button>
+            <button
+              className="permission-option permission-option-deny"
+              onClick={() => onPermissionResponse("deny_always")}
+            >
+              <span className="permission-option-num">{permissionRequest.hasProject ? "5" : "4"}</span>
+              <span>No, always deny <strong>{permissionRequest.toolName}</strong></span>
+            </button>
+            {permissionRequest.hasProject && (
+              <button
+                className="permission-option permission-option-deny"
+                onClick={() => onPermissionResponse("deny_project")}
+              >
+                <span className="permission-option-num">6</span>
+                <span>No, deny for this project</span>
+              </button>
+            )}
           </div>
         </div>
       )}

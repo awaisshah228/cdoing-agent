@@ -29,19 +29,21 @@ import { StatusBar } from "./StatusBar";
 import { SessionBrowser } from "./SessionBrowser";
 import { SetupWizard } from "./SetupWizard";
 import { useChat } from "./hooks/useChat";
+import { getTheme } from "./theme";
 import type { ChatMessage } from "./types";
 
 // ── Static message renderer ─────────────────────────────────────────────────
 
 function renderStaticMessage(msg: ChatMessage): React.ReactElement {
+  const t = getTheme();
   switch (msg.role) {
     case "user":
       return (
         <Box key={msg.id} flexDirection="column">
           <Text>{" "}</Text>
           <Box>
-            <Text color="green" bold>{"❯ "}</Text>
-            <Text color="white">{msg.content}</Text>
+            <Text color={t.prompt} bold>{"❯ "}</Text>
+            <Text color={t.text}>{msg.content}</Text>
           </Box>
         </Box>
       );
@@ -50,13 +52,13 @@ function renderStaticMessage(msg: ChatMessage): React.ReactElement {
         <Box key={msg.id} flexDirection="column">
           <Text>{" "}</Text>
           <Text>{msg.content}</Text>
-          <Text color="gray">{"─".repeat(process.stdout.columns > 0 ? Math.min(process.stdout.columns, 60) : 40)}</Text>
+          <Text color={t.separator}>{"─".repeat(process.stdout.columns > 0 ? Math.min(process.stdout.columns, 60) : 40)}</Text>
         </Box>
       );
     case "system":
       return (
         <Box key={msg.id}>
-          {msg.isError ? <Text color="red">{"  ❌ "}</Text> : <Text color="yellow">{"  ▸ "}</Text>}
+          {msg.isError ? <Text color={t.error}>{"  ❌ "}</Text> : <Text color={t.info}>{"  ▸ "}</Text>}
           <Text>{msg.content}</Text>
         </Box>
       );
@@ -347,7 +349,6 @@ export const App: React.FC<AppProps> = ({
       {isProcessing && !streamingContent && !toolActivity ? (
         <Spinner
           label="Thinking…"
-          color="yellow"
           startTime={processingStartRef.current ?? undefined}
         />
       ) : null}
