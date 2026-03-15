@@ -20,10 +20,19 @@ export { ListDirTool } from "./tools/list-dir";
 export { ViewDiffTool } from "./tools/view-diff";
 export { ViewRepoMapTool } from "./tools/view-repo-map";
 export { CodebaseSearchTool } from "./tools/codebase-search";
+export { ASTEditTool } from "./tools/ast-edit";
 export type { ToolDefinition, ToolResult, BaseTool } from "./tools/types";
 
 // Search matching utilities
 export { findSearchMatch, findAllSearchMatches, executeFindAndReplace, executeMultiFindAndReplace, isUnifiedDiff, applyUnifiedDiff } from "./utils/search-match";
+
+// Streaming diff utilities
+export { streamDeterministicDiff, streamUnifiedDiff, StreamingDiffAccumulator } from "./utils/streaming-diff";
+export type { DiffChunk, DiffChunkCallback } from "./utils/streaming-diff";
+
+// Lazy apply — placeholder expansion for LLM-generated edits
+export { hasPlaceholders, expandPlaceholders, isPlaceholderLine } from "./utils/lazy-apply";
+export type { LazyApplyResult } from "./utils/lazy-apply";
 
 // Permissions
 export { PermissionManager, PermissionMode } from "./permissions";

@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import type { BaseTool, ToolDefinition, ToolResult } from "./types";
 import { safePath } from "../utils/path-safety";
+import { hasPlaceholders, expandPlaceholders } from "../utils/lazy-apply";
 import type { SandboxManager } from "../sandbox";
 
 export class FileWriteTool implements BaseTool {
@@ -57,7 +58,7 @@ Do NOT use this for partial edits — use file_edit or multi_edit instead, which
       }
     }
 
-    const content = input.content as string;
+    let content = input.content as string;
 
     try {
       const dir = path.dirname(filePath);
@@ -65,6 +66,15 @@ Do NOT use this for partial edits — use file_edit or multi_edit instead, which
 
       const existed = fs.existsSync(filePath);
       const oldContent = existed ? fs.readFileSync(filePath, "utf-8") : "";
+
+      // Lazy apply: if content has placeholders and file exists, expand them
+      if (existed && hasPlaceholders(content)) {
+        const { content: expanded, placeholdersExpanded } = expandPlaceholders(oldContent, content);
+        if (placeholdersExpanded > 0) {
+          content = expanded;
+        }
+      }
+
       fs.writeFileSync(filePath, content, "utf-8");
       const lines = content.split("\n").length;
 

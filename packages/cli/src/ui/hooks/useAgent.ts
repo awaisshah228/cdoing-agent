@@ -165,7 +165,6 @@ export function useAgent(opts: UseAgentOptions) {
     } catch (err) {
       // Don't crash — agentRef keeps the previous agent (or null).
       // The error will surface as a friendly message on the next send.
-      console.error("[cdoing] Failed to build agent:", (err as Error).message);
     }
   }
 

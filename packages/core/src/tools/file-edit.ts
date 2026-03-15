@@ -1,14 +1,15 @@
 import * as fs from "fs";
 import type { BaseTool, ToolDefinition, ToolResult } from "./types";
 import { safePath } from "../utils/path-safety";
-import { executeFindAndReplace } from "../utils/search-match";
+import { executeFindAndReplace, isUnifiedDiff, applyUnifiedDiff } from "../utils/search-match";
+import { hasPlaceholders, expandPlaceholders } from "../utils/lazy-apply";
 import type { SandboxManager } from "../sandbox";
 
 export class FileEditTool implements BaseTool {
   definition: ToolDefinition = {
     name: "file_edit",
     description:
-      `Performs string replacement in a file using multi-strategy matching (exact → trimmed → case-insensitive → whitespace-ignored). Requires user permission. Access controlled by sandbox/permission rules.
+      `Performs string replacement in a file using multi-strategy matching (exact → trimmed → case-insensitive → whitespace-ignored). Also supports unified diff patches. Requires user permission. Access controlled by sandbox/permission rules.
 
 IMPORTANT:
 - Always read the file first before editing to see its current contents.
@@ -16,6 +17,7 @@ IMPORTANT:
 - old_string and new_string MUST be different.
 - When not using replace_all, old_string must be unique in the file. Add more surrounding context if ambiguous.
 - Use replace_all for renaming variables or strings across the file.
+- You can pass a unified diff (with @@ hunk headers) as old_string and leave new_string empty to apply the diff patch directly.
 - This tool CANNOT be called in parallel with itself on the SAME file.`,
     inputSchema: {
       type: "object",
@@ -65,12 +67,30 @@ IMPORTANT:
     const content = fs.readFileSync(filePath, "utf-8");
 
     try {
-      const { result, count, strategy } = executeFindAndReplace(content, oldStr, newStr, replaceAll);
+      // Unified diff mode: detect @@ hunk headers in old_string
+      if (isUnifiedDiff(oldStr)) {
+        const result = applyUnifiedDiff(content, oldStr);
+        fs.writeFileSync(filePath, result, "utf-8");
+        return { success: true, output: `Applied unified diff patch to ${filePath}\n\n${oldStr}` };
+      }
+
+      // Lazy apply: expand placeholder markers in new_string before replacing
+      let expandedNewStr = newStr;
+      let lazyNote = "";
+      if (hasPlaceholders(newStr)) {
+        const { content: expanded, placeholdersExpanded, strategy: lazyStrategy } = expandPlaceholders(content, newStr);
+        if (placeholdersExpanded > 0) {
+          expandedNewStr = expanded;
+          lazyNote = ` (lazy apply: ${placeholdersExpanded} placeholder(s) expanded via ${lazyStrategy})`;
+        }
+      }
+
+      const { result, count, strategy } = executeFindAndReplace(content, oldStr, expandedNewStr, replaceAll);
       fs.writeFileSync(filePath, result, "utf-8");
 
-      const diff = generateDiff(filePath, oldStr, newStr, count);
+      const diff = generateDiff(filePath, oldStr, expandedNewStr, count);
       const strategyNote = strategy !== "exact" ? ` (matched via ${strategy} strategy)` : "";
-      return { success: true, output: `Edited ${filePath}: replaced ${count} occurrence(s)${strategyNote}\n\n${diff}` };
+      return { success: true, output: `Edited ${filePath}: replaced ${count} occurrence(s)${strategyNote}${lazyNote}\n\n${diff}` };
     } catch (err) {
       return { success: false, output: "", error: (err as Error).message };
     }

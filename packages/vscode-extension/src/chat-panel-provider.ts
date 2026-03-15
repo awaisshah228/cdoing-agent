@@ -29,6 +29,7 @@ import {
   ViewDiffTool,
   ViewRepoMapTool,
   CodebaseSearchTool,
+  ASTEditTool,
   loadProjectConfig,
 } from "@cdoing/core";
 import {
@@ -373,14 +374,10 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     // try to use cached OAuth tokens (same as CLI fallback behavior)
     if (provider === "anthropic" && (authMethod === "oauth" || !apiKey)) {
       const status = getOAuthStatus();
-      console.log("[cdoing] getConfig — authMethod:", authMethod, "apiKey:", !!apiKey, "oauthStatus:", status);
       if (status.status === "active") {
         const tokens = loadOAuthTokens();
-        console.log("[cdoing] getConfig — loaded OAuth token:", !!tokens?.access_token);
         if (tokens) modelConfig.oauthToken = tokens.access_token;
       }
-    } else {
-      console.log("[cdoing] getConfig — skipped OAuth check. provider:", provider, "authMethod:", authMethod, "apiKey:", !!apiKey);
     }
 
     let permMode: PermissionMode;
@@ -404,14 +401,11 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     const workingDir = this.getWorkingDir();
     const { modelConfig, permMode, provider } = this.getConfig();
 
-    console.log("[cdoing] initSharedServices — provider:", provider, "hasOAuth:", !!modelConfig.oauthToken, "hasApiKey:", !!modelConfig.apiKey, "envKey:", !!process.env[getApiKeyEnvVar(provider)]);
-
     // If OAuth token is available, clear any previously-set env API key
     // so the agent doesn't accidentally use the API key instead of OAuth
     if (modelConfig.oauthToken) {
       const envVar = getApiKeyEnvVar(provider);
       if (process.env[envVar]) {
-        console.log("[cdoing] OAuth active — clearing env var", envVar);
         delete process.env[envVar];
       }
     }
@@ -422,7 +416,6 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       if (!process.env[envVar]) {
         const storedKey = this.loadApiKeyFromConfig(provider);
         if (storedKey) {
-          console.log("[cdoing] No OAuth — loaded stored API key for", provider);
           process.env[envVar] = storedKey;
         }
       }
@@ -488,6 +481,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     this.toolRegistry.register(new FileEditTool(workingDir, sm));
     this.toolRegistry.register(new MultiEditTool(workingDir, sm));
     this.toolRegistry.register(new FileDeleteTool(workingDir, sm));
+    this.toolRegistry.register(new ASTEditTool(workingDir, sm));
     this.toolRegistry.register(new GlobSearchTool(workingDir));
     this.toolRegistry.register(new GrepSearchTool(workingDir));
     this.toolRegistry.register(new ListDirTool(workingDir, sm));
@@ -1017,12 +1011,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     };
 
     try {
-      console.log("[cdoing] runTab — starting agent.run, oauthToken:", !!modelConfig.oauthToken, "apiKey:", !!modelConfig.apiKey);
       await tab.agent.run(text, callbacks);
-      console.log("[cdoing] runTab — agent.run completed");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error("[cdoing] runTab — agent.run error:", msg);
       tab.isProcessing = false;
       if (this.activeTabId === tabId) this.postMessage({ type: "error", text: msg });
       this.processTabQueue(tabId);

@@ -27,6 +27,8 @@ import {
 import { AIMessageChunk } from "@langchain/core/messages";
 import type { BaseMessage } from "@langchain/core/messages";
 import type { ToolRegistry, PermissionManager, HookManager } from "@cdoing/core";
+import type { DiffChunk } from "@cdoing/core";
+import { streamDeterministicDiff } from "@cdoing/core";
 
 export interface AgentCallbacks {
   onToken: (token: string) => void;
@@ -35,6 +37,8 @@ export interface AgentCallbacks {
   onComplete: () => void;
   onError: (error: Error) => void;
   onUsage?: (usage: TurnUsage) => void;
+  /** Emitted for each diff chunk during file edit/write operations, enabling real-time diff rendering */
+  onDiffChunk?: (chunk: DiffChunk) => void;
 }
 
 export interface AgentRunnerOptions {
@@ -66,7 +70,6 @@ export class AgentRunner {
     hookManager?: HookManager,
     options?: AgentRunnerOptions,
   ) {
-    console.log("[cdoing] AgentRunner — creating model. provider:", modelConfig.provider, "model:", modelConfig.model, "hasOAuth:", !!modelConfig.oauthToken, "hasApiKey:", !!modelConfig.apiKey);
     this.model = createModel(modelConfig);
     this.hookManager = hookManager || null;
     this.maxRetries = options?.maxRetries ?? 3;
@@ -220,9 +223,7 @@ export class AgentRunner {
       try {
         let accumulated: AIMessageChunk | null = null;
 
-        console.log("[cdoing] streamWithRetry — attempt", attempt, "starting stream...");
         const stream = await modelWithTools.stream(allMessages);
-        console.log("[cdoing] streamWithRetry — stream created, reading chunks...");
 
         for await (const chunk of stream) {
           // Stop mid-stream if cancelled
@@ -251,8 +252,6 @@ export class AgentRunner {
         return accumulated;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
-        console.error("[cdoing] streamWithRetry — error on attempt", attempt, ":", lastError.message);
-
         // Don't retry on auth errors, invalid requests, or client errors
         const msg = lastError.message.toLowerCase();
         if (msg.includes("401") || msg.includes("403") || msg.includes("400") || msg.includes("invalid_api_key") || msg.includes("authentication") || msg.includes("credit balance")) {
@@ -375,7 +374,7 @@ export class AgentRunner {
 
   /** Tools that can run in parallel IF they target different files */
   private static readonly PARALLEL_IF_DIFFERENT_FILES = new Set([
-    "file_write", "file_edit",
+    "file_write", "file_edit", "multi_edit", "ast_edit",
   ]);
 
   /** Tools that must always run sequentially (side effects, shared state) */
@@ -412,8 +411,36 @@ export class AgentRunner {
       }
     }
 
+    // Capture file content before edit for streaming diff
+    const isFileEdit = tc.name === "file_edit" || tc.name === "multi_edit" || tc.name === "file_write";
+    let preEditContent: string | null = null;
+    if (isFileEdit && callbacks.onDiffChunk) {
+      const targetPath = (tc.args.file_path || tc.args.path) as string | undefined;
+      if (targetPath) {
+        try {
+          const fs = await import("fs");
+          if (fs.existsSync(targetPath)) {
+            preEditContent = fs.readFileSync(targetPath, "utf-8");
+          }
+        } catch { /* ignore — file may not exist yet */ }
+      }
+    }
+
     // Execute tool
     const result = await this.toolRegistry.execute(tc.name, tc.args);
+
+    // Stream diff chunks for file edit operations
+    if (isFileEdit && result.success && callbacks.onDiffChunk && preEditContent !== null) {
+      const targetPath = ((tc.args.file_path || tc.args.path) as string) || "unknown";
+      try {
+        const fs = await import("fs");
+        const postEditContent = fs.readFileSync(targetPath, "utf-8");
+        if (preEditContent !== postEditContent) {
+          streamDeterministicDiff(preEditContent, postEditContent, targetPath, callbacks.onDiffChunk);
+        }
+      } catch { /* ignore — streaming diff is best-effort */ }
+    }
+
     let resultText: string;
 
     if (result.success) {

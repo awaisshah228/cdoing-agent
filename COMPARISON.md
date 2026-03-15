@@ -56,7 +56,8 @@ A detailed feature-by-feature comparison of Cdoing Agent with **Claude Code**, *
 | Repo map | `view_repo_map` | No | `view_repo_map` | No | No |
 | Codebase search | `codebase_search` (FTS5) | No | `codebase` (vector RAG) | Yes (embeddings) | Yes (embeddings) |
 | Notebook edit | No | NotebookEdit | No | Yes | No |
-| **Total** | **20** | **~15** | **19** | **~12** | **~10** |
+| AST edit | `ast_edit` (tree-sitter, 13 langs) | No | Yes | Yes | No |
+| **Total** | **21** | **~15** | **19** | **~12** | **~10** |
 
 ---
 
@@ -70,10 +71,10 @@ A detailed feature-by-feature comparison of Cdoing Agent with **Claude Code**, *
 | Whitespace-ignored match | Yes | Yes | Yes | N/A | N/A |
 | Fuzzy match (Jaro-Winkler) | No | No | Yes (disabled) | N/A | N/A |
 | Multi-edit atomic batch | Yes | Yes | Yes | Yes | Yes |
-| Unified diff patches | No | No | Yes | Yes | Yes |
-| Streaming diff | No | No | Yes | Yes | Yes |
-| Lazy apply (placeholders) | No | No | Yes | Yes | Yes |
-| Tree-sitter AST editing | No | No | Yes | Yes | No |
+| Unified diff patches | Yes | No | Yes | Yes | Yes |
+| Streaming diff | Yes (3 strategies: deterministic, unified, streaming) | No | Yes | Yes | Yes |
+| Lazy apply (placeholders) | Yes (deterministic anchor-based expansion) | No | Yes | Yes | Yes |
+| Tree-sitter AST editing | Yes (13 languages) | No | Yes | Yes | No |
 
 ---
 
@@ -203,8 +204,6 @@ A detailed feature-by-feature comparison of Cdoing Agent with **Claude Code**, *
 | Gap | Who Does It Better |
 |-----|-------------------|
 | **Vector embeddings (RAG)** | Cursor, Continue.dev, Windsurf — all have production embedding pipelines |
-| **Tree-sitter AST** | Continue.dev, Cursor — structural code understanding |
-| **Streaming diff / lazy apply** | Continue.dev, Cursor — advanced edit strategies |
 | **Accurate token counting** | Continue.dev — tiktoken/llama tokenizers vs our ~4 chars/token estimate |
 | **Tests** | All competitors have test suites; Cdoing Agent has none |
 | **JetBrains support** | Continue.dev only |
