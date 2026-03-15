@@ -87,6 +87,7 @@ When in doubt, call multiple tools — the system will automatically run them in
 - Use file_write only for creating new files or complete rewrites.
 - **All file paths are relative to the active project directory.** Never ask the user for the directory — you already know it.
 - When editing, provide enough context in old_string to uniquely identify the location.
+- To delete files, use shell_exec with rm (e.g., \`shell_exec("rm src/old-file.ts")\`). This is simpler and more reliable than file_delete.
 
 ## Search
 - Use glob_search to find files by name pattern (e.g., "**/*.ts", "src/**/*.test.js").

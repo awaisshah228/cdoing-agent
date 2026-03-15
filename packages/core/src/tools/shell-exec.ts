@@ -44,6 +44,15 @@ Commands are also subject to sandbox restrictions.`,
           type: "boolean",
           description: "Run in background. Returns immediately with PID. Use for servers/watchers. Default: false.",
         },
+        env_vars: {
+          type: "object",
+          description: "Environment variables to set (e.g., {\"PORT\": \"3001\", \"DEBUG\": \"app:*\"})",
+          additionalProperties: { type: "string" },
+        },
+        debug: {
+          type: "boolean",
+          description: "Enable debug/verbose mode. Sets DEBUG=*, NODE_DEBUG=*, RUST_BACKTRACE=1, PYTHONTRACEBACK=1. Default: false",
+        },
         dangerouslyDisableSandbox: {
           type: "boolean",
           description: "Set to true to run this command outside the sandbox. Requires permission approval.",
@@ -119,8 +128,26 @@ Commands are also subject to sandbox restrictions.`,
       }
     }
 
-    // Use sandboxed env if available
+    // Build environment
     const env = this.sandboxManager ? this.sandboxManager.getShellEnv() : { ...process.env };
+
+    // Merge user-provided env vars
+    const envVars = input.env_vars as Record<string, string> | undefined;
+    if (envVars && typeof envVars === "object") {
+      for (const [key, val] of Object.entries(envVars)) {
+        env[key] = String(val);
+      }
+    }
+
+    // Debug mode
+    if (input.debug) {
+      env.DEBUG = env.DEBUG || "*";
+      env.NODE_DEBUG = env.NODE_DEBUG || "*";
+      env.RUST_BACKTRACE = env.RUST_BACKTRACE || "1";
+      env.PYTHONTRACEBACK = env.PYTHONTRACEBACK || "1";
+      env.PYTHONFAULTHANDLER = env.PYTHONFAULTHANDLER || "1";
+    }
+
     const background = (input.background as boolean) || false;
 
     // Background mode: spawn detached, return immediately with PID

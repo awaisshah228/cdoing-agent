@@ -15,7 +15,7 @@ export type { SubAgentRunnerFactory } from "./tools/sub-agent";
 export { TodoTool } from "./tools/todo";
 export { SystemInfoTool } from "./tools/system-info";
 export { MultiEditTool } from "./tools/multi-edit";
-export { FileDeleteTool } from "./tools/file-delete";
+
 export { ListDirTool } from "./tools/list-dir";
 export { ViewDiffTool } from "./tools/view-diff";
 export { ViewRepoMapTool } from "./tools/view-repo-map";

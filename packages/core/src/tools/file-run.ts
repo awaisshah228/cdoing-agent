@@ -26,6 +26,15 @@ export class FileRunTool implements BaseTool {
         file_path: { type: "string", description: "Path to the file to run" },
         args: { type: "string", description: "Command-line arguments (optional)" },
         timeout: { type: "number", description: "Timeout in ms. Default: 30000" },
+        env_vars: {
+          type: "object",
+          description: "Environment variables to set (e.g., {\"PORT\": \"3001\", \"NODE_ENV\": \"test\"})",
+          additionalProperties: { type: "string" },
+        },
+        debug: {
+          type: "boolean",
+          description: "Enable debug/verbose mode. Sets DEBUG=*, NODE_DEBUG=*, RUST_BACKTRACE=1, PYTHONTRACEBACK=1. Default: false",
+        },
       },
       required: ["file_path"],
     },
@@ -70,8 +79,25 @@ export class FileRunTool implements BaseTool {
 
     const command = `${runner} "${filePath}"${args ? ` ${args}` : ""}`;
 
-    // Use sandboxed env if available
+    // Build environment
     const env = this.sandboxManager ? this.sandboxManager.getShellEnv() : { ...process.env };
+
+    // Merge user-provided env vars
+    const envVars = input.env_vars as Record<string, string> | undefined;
+    if (envVars && typeof envVars === "object") {
+      for (const [key, val] of Object.entries(envVars)) {
+        env[key] = String(val);
+      }
+    }
+
+    // Debug mode — set common debug env vars
+    if (input.debug) {
+      env.DEBUG = env.DEBUG || "*";
+      env.NODE_DEBUG = env.NODE_DEBUG || "*";
+      env.RUST_BACKTRACE = env.RUST_BACKTRACE || "1";
+      env.PYTHONTRACEBACK = env.PYTHONTRACEBACK || "1";
+      env.PYTHONFAULTHANDLER = env.PYTHONFAULTHANDLER || "1";
+    }
 
     return new Promise((resolve) => {
       const child = exec(command, { cwd: this.workingDir, timeout, maxBuffer: 10 * 1024 * 1024, env },

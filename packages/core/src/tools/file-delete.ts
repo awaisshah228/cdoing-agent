@@ -26,15 +26,7 @@ export class FileDeleteTool implements BaseTool {
   definition: ToolDefinition = {
     name: "file_delete",
     description:
-      `Delete a file or directory. Requires user permission (Delete category in settings rules).
-
-Use this instead of shell rm/del for safer, permission-controlled deletion. The user can configure Delete rules in their settings to allow or deny deletion of specific paths.
-
-Safety features:
-- Directory deletion requires recursive=true.
-- Directories with more than ${MAX_DIR_FILES} items require force=true.
-- All deletions go through sandbox and permission rules — the user controls what can be deleted.
-- Deletion is PERMANENT — there is no undo.`,
+      `Delete a file or directory. You can also use shell_exec with rm/del for simple deletions if preferred.`,
     inputSchema: {
       type: "object",
       properties: {

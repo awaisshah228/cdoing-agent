@@ -20,7 +20,7 @@ import {
   SandboxManager,
   SystemInfoTool,
   MultiEditTool,
-  FileDeleteTool,
+
   ListDirTool,
   ViewDiffTool,
   ViewRepoMapTool,
@@ -58,7 +58,6 @@ export function createToolRegistry(
   registry.register(new FileWriteTool(workingDir, sm));
   registry.register(new FileEditTool(workingDir, sm));
   registry.register(new MultiEditTool(workingDir, sm));
-  registry.register(new FileDeleteTool(workingDir, sm));
   registry.register(new ASTEditTool(workingDir, sm));
   registry.register(new NotebookEditTool(workingDir, sm));
 

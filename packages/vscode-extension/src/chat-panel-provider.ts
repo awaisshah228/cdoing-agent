@@ -24,7 +24,7 @@ import {
   SandboxManager,
   SystemInfoTool,
   MultiEditTool,
-  FileDeleteTool,
+
   ListDirTool,
   ViewDiffTool,
   ViewRepoMapTool,
@@ -481,7 +481,6 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     this.toolRegistry.register(new FileWriteTool(workingDir, sm));
     this.toolRegistry.register(new FileEditTool(workingDir, sm));
     this.toolRegistry.register(new MultiEditTool(workingDir, sm));
-    this.toolRegistry.register(new FileDeleteTool(workingDir, sm));
     this.toolRegistry.register(new ASTEditTool(workingDir, sm));
     this.toolRegistry.register(new NotebookEditTool(workingDir, sm));
     this.toolRegistry.register(new GlobSearchTool(workingDir));
