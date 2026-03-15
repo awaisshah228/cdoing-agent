@@ -4,6 +4,12 @@
  * The sub-agent gets its own conversation context and the same tools,
  * but cannot spawn further sub-agents (prevents infinite recursion).
  *
+ * Security:
+ *  - Sub-agents inherit the parent's PermissionManager — all tool calls
+ *    inside the child go through the same deny/ask/allow rules.
+ *  - Task descriptions are screened for destructive intent patterns.
+ *  - Permission prompt shows a ⚠ warning for destructive tasks.
+ *
  * Features:
  *  - Custom timeout (useful for long-running tasks like npm install)
  *  - Background mode (returns agent ID immediately, check status later)
@@ -12,6 +18,30 @@
 
 import type { BaseTool, ToolDefinition, ToolResult } from "./types";
 import { SubAgentManager } from "./sub-agent-manager";
+
+// ── Destructive task detection ──────────────────────────────────────────────
+
+/**
+ * Patterns in task descriptions that indicate destructive intent.
+ * These trigger an elevated permission prompt (⚠ DESTRUCTIVE) so the
+ * user is clearly warned before the sub-agent is spawned.
+ */
+const DESTRUCTIVE_TASK_PATTERNS = [
+  // File deletion
+  /\bdelete\b.*\bfiles?\b/i, /\bremove\b.*\bfiles?\b/i, /\brm\s+-rf\b/i,
+  /\bwipe\b/i, /\bpurge\b/i, /\bclean\s*up\b/i, /\bnuke\b/i,
+  // Git destructive
+  /\bforce\s*push\b/i, /\bgit\s+reset\s+--hard\b/i, /\bgit\s+clean\b/i,
+  /\brewrite\s+history\b/i, /\bdelete\b.*\bbranch/i,
+  // Database
+  /\bdrop\b.*\b(table|database|collection)\b/i, /\btruncate\b/i,
+  // System
+  /\bkill\b.*\bprocess/i, /\bshutdown\b/i, /\brestart\b.*\bserver/i,
+  /\bformat\b.*\bdisk\b/i,
+  // Destructive ops
+  /\boverwrite\b/i, /\bdestroy\b/i, /\buninstall\b/i,
+  /\bdrop\b.*\bpermission/i, /\brevoke\b/i,
+];
 
 /**
  * Factory function signature for creating sub-agent runners.
@@ -46,7 +76,14 @@ export class SubAgentTool implements BaseTool {
       },
       required: ["task"],
     },
-    requiresPermission: false,
+    requiresPermission: true,
+    permissionMessage: (input) => {
+      const task = String(input.task || "").slice(0, 200);
+      if (DESTRUCTIVE_TASK_PATTERNS.some((p) => p.test(task))) {
+        return `⚠ DESTRUCTIVE sub-agent task: ${task}`;
+      }
+      return `Spawn sub-agent: ${task}`;
+    },
   };
 
   private runnerFactory: SubAgentRunnerFactory;
@@ -66,7 +103,19 @@ export class SubAgentTool implements BaseTool {
       return { success: false, output: "", error: "Task cannot be empty" };
     }
 
-    const runnerFn = (signal: AbortSignal) => this.runnerFactory(task, signal);
+    // Prepend a safety instruction if the task looks destructive.
+    // The sub-agent inherits the parent's PermissionManager so each tool call
+    // will still go through deny/ask/allow checks, but this extra context
+    // makes the LLM aware it should proceed cautiously.
+    const isDestructive = DESTRUCTIVE_TASK_PATTERNS.some((p) => p.test(task));
+    const safeTask = isDestructive
+      ? `[CAUTION: This task involves potentially destructive operations. ` +
+        `You MUST ask for explicit user confirmation before executing any ` +
+        `destructive commands (rm, delete, drop, force push, reset --hard, etc.). ` +
+        `Prefer safe alternatives when possible.]\n\n${task}`
+      : task;
+
+    const runnerFn = (signal: AbortSignal) => this.runnerFactory(safeTask, signal);
 
     if (background) {
       // Background mode: return immediately with agent ID

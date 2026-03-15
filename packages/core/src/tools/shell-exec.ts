@@ -38,15 +38,16 @@ const COLOR_ENV = {
 
 /** Absolute danger — always blocked regardless of permissions */
 const ALWAYS_BLOCKED = [
-  // Unix
+  // Unix — catastrophic filesystem destruction
   "rm -rf /",
   "rm -rf ~",
   "rm -rf /*",
   "rm -rf ~/*",
+  "rm -rf $HOME",
   "mkfs",
   "dd if=",
-  ":(){",
-  // Windows
+  ":(){",           // fork bomb
+  // Windows — catastrophic filesystem destruction
   "rd /s /q C:\\",
   "del /f /s /q C:\\",
   "format C:",
@@ -55,12 +56,30 @@ const ALWAYS_BLOCKED = [
 
 /** Destructive patterns for elevated permission message */
 const DESTRUCTIVE_PATTERNS = [
-  // Unix
+  // File deletion (Unix)
   /\brm\s/, /\brm$/, /\brmdir\s/, /\bunlink\s/, /\bshred\s/,
-  // Windows
-  /\bdel\s/, /\brd\s/, /\berase\s/, /\brmdir\s/,
-  // Git (cross-platform)
-  /\bgit\s+clean\b/, /\bgit\s+reset\s+--hard\b/,
+  // File deletion (Windows)
+  /\bdel\s/, /\brd\s/, /\berase\s/,
+  // Git destructive operations
+  /\bgit\s+clean\b/,
+  /\bgit\s+reset\s+--hard\b/,
+  /\bgit\s+push\s+.*--force\b/, /\bgit\s+push\s+-f\b/,
+  /\bgit\s+checkout\s+--\s/, /\bgit\s+restore\s/,
+  /\bgit\s+branch\s+-[dD]\b/,
+  /\bgit\s+rebase\b/,
+  /\bgit\s+stash\s+drop\b/,
+  // Process killing
+  /\bkill\s+-9\b/, /\bkillall\b/, /\bpkill\b/,
+  // Permission changes
+  /\bchmod\s+777\b/, /\bchmod\s+-R\b/, /\bchown\s+-R\b/,
+  // Database destructive (SQL injection risk via shell)
+  /\bDROP\s+(TABLE|DATABASE)\b/i, /\bTRUNCATE\s+TABLE\b/i, /\bDELETE\s+FROM\b/i,
+  // Disk/system
+  /\bdd\s/, /\bmv\s+\//, /\bsudo\s/,
+  // Docker destructive
+  /\bdocker\s+(rm|rmi|system\s+prune)\b/,
+  // npm/package destructive
+  /\bnpm\s+unpublish\b/,
 ];
 
 

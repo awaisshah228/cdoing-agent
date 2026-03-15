@@ -507,8 +507,28 @@ export class AgentRunner {
     if (tool) {
       const allowed = await this.permissionManager.requestPermission(tool.definition, tc.args);
       if (!allowed) {
-        this.messages.push(new ToolMessage({ content: "Permission denied by user.", tool_call_id: tc.id }));
-        callbacks.onToolResult(tc.name, "Permission denied", true);
+        // Build a descriptive denial message for the LLM so it understands what was blocked and why
+        const actionDesc = tool.definition.permissionMessage
+          ? tool.definition.permissionMessage(tc.args)
+          : `${tc.name}: ${tc.args.command || tc.args.file_path || tc.args.task || JSON.stringify(tc.args).slice(0, 200)}`;
+        const isDestructive = actionDesc.includes("DESTRUCTIVE");
+        const denialMessage = [
+          `Permission denied by user for: ${actionDesc}`,
+          "",
+          isDestructive
+            ? "This was flagged as a DESTRUCTIVE operation. The user chose not to allow it."
+            : "The user did not grant permission for this action.",
+          "",
+          "You MUST respect the user's decision. Do NOT retry this exact command.",
+          "Instead, consider:",
+          "- Asking the user what they'd like you to do instead",
+          "- Using a safer alternative approach",
+          isDestructive ? "- Explaining what the destructive operation would do and confirming intent" : "",
+          "- Breaking the task into smaller, less risky steps",
+        ].filter(Boolean).join("\n");
+
+        this.messages.push(new ToolMessage({ content: denialMessage, tool_call_id: tc.id }));
+        callbacks.onToolResult(tc.name, `Permission denied: ${actionDesc}`, true);
         return;
       }
     }
