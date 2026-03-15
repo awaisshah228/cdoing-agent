@@ -628,17 +628,59 @@ export class PermissionManager {
   }
 
   private addRule(toolName: string, scope: PermissionScope, inputMatch?: string): void {
-    // File-modification tools: "don't ask again" lasts only until session end.
-    // Bash/exec tools: persisted permanently to disk per project + command.
-    if (!PERMANENT_APPROVAL_TOOLS.has(toolName)) {
-      this.sessionApprovals.add(toolName);
-      return;
+    // Build a settings-style rule string (e.g., "Edit", "Bash(npm test *)")
+    const category = TOOL_CATEGORY[toolName] || toolName;
+    const ruleString = inputMatch ? `${category}(${inputMatch})` : category;
+
+    // Persist to settings.json (like Claude Code does)
+    this.addToSettingsAllow(ruleString, scope);
+
+    // Also add session approval for immediate effect
+    this.sessionApprovals.add(toolName);
+
+    // Legacy: persist to permissions.json for backward compat
+    if (PERMANENT_APPROVAL_TOOLS.has(toolName)) {
+      const rules  = scope === "project" ? this.projectRules : this.globalRules;
+      const exists = rules.some((r) => r.tool === toolName && r.inputMatch === inputMatch);
+      if (!exists) {
+        rules.push({ tool: toolName, inputMatch, createdAt: new Date().toISOString() });
+        scope === "project" ? this.saveProjectRules() : this.saveGlobalRules();
+      }
     }
-    const rules  = scope === "project" ? this.projectRules : this.globalRules;
-    const exists = rules.some((r) => r.tool === toolName && r.inputMatch === inputMatch);
-    if (!exists) {
-      rules.push({ tool: toolName, inputMatch, createdAt: new Date().toISOString() });
-      scope === "project" ? this.saveProjectRules() : this.saveGlobalRules();
+  }
+
+  /**
+   * Persist a permission rule to .claude/settings.json (project) or ~/.claude/settings.json (global).
+   * This is the same format Claude Code uses, making permissions portable and editable.
+   */
+  private addToSettingsAllow(rule: string, scope: PermissionScope): void {
+    const filePath = scope === "project" && this.projectDir
+      ? path.join(this.projectDir, ".claude", "settings.json")
+      : USER_SETTINGS_FILE;
+
+    try {
+      const dir = path.dirname(filePath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+      let data: Record<string, unknown> = {};
+      if (fs.existsSync(filePath)) {
+        data = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      }
+
+      if (!data.permissions) data.permissions = {};
+      const perms = data.permissions as Record<string, string[]>;
+      if (!Array.isArray(perms.allow)) perms.allow = [];
+
+      // Don't add duplicates
+      if (!perms.allow.includes(rule)) {
+        perms.allow.push(rule);
+        fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf-8");
+
+        // Reload settings so the new rule takes effect immediately
+        this.loadSettingsRules();
+      }
+    } catch {
+      // If we can't write settings, fall back to session-only
     }
   }
 
