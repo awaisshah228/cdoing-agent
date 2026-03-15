@@ -179,33 +179,36 @@ Comparison with **Claude Code CLI**, **Continue.dev**, and **Cursor** — what w
 
 ## Feature Comparison Matrix
 
-| Feature | Cdoing | Claude Code | Continue.dev | Cursor |
-|---------|:------:|:-----------:|:------------:|:------:|
-| Chat interface | Yes | Yes (terminal) | Yes | Yes |
-| Multi-tab conversations | Yes | No | No | Yes |
-| @ file autocomplete | Yes | Yes | Yes | Yes |
-| @ codebase search | **Yes** | No | Yes | Yes |
-| @ terminal context | **Yes** | No | Yes | No |
-| @ URL context | **Yes** | No | Yes | No |
-| Inline autocomplete | **Yes** | No | Yes | Yes |
-| Inline edit (Cmd+I) | **Yes** | No | Yes | Yes |
-| Plan mode | **Yes** | Yes | Yes | Yes |
-| Agent/tool use | Yes (12 tools) | Yes | Yes | Yes |
-| Diff preview | Yes | Yes | Yes | Yes |
-| Multi-provider | Yes (4+) | No (Anthropic only) | Yes (any) | Yes |
-| In-panel settings | Yes | No | Via config file | Yes |
-| Permission system | Yes (3 modes) | Yes (5 modes) | No | Basic |
-| Hooks system | Yes | Yes (20+ events) | No | No |
-| Persistent memory | Yes | Yes | No | No |
-| Conversation history | Yes | Yes | No | Yes |
-| Project rules | **Yes (glob-scoped)** | Yes (4-tier) | Yes (config) | Yes (.cursor/rules/) |
-| MCP servers | **Yes** | Yes | Yes | No |
-| Image support | **Yes** | Yes | No | Yes |
-| Sub-agents | Yes | Yes | No | Yes |
-| Effort control | **Yes** | Yes | No | Yes |
-| Side questions (/btw) | **Yes** | Yes | No | No |
-| Open source | Yes | No | Yes | No |
-| CLI | Yes | Yes | No | Yes |
+> For a full detailed comparison, see [COMPARISON.md](COMPARISON.md).
+
+| Feature | Cdoing | Claude Code | Continue.dev | Cursor | Windsurf |
+|---------|:------:|:-----------:|:------------:|:------:|:--------:|
+| Chat interface | Yes | Yes (terminal) | Yes | Yes | Yes |
+| Multi-tab conversations | Yes | No | No | Yes | Yes |
+| @ file autocomplete | Yes | Yes | Yes | Yes | Yes |
+| @ codebase search | **Yes** (FTS5) | No | Yes (RAG) | Yes | Yes |
+| @ terminal context | **Yes** | No | Yes | No | No |
+| @ URL context | **Yes** | Yes | Yes | Yes | No |
+| @ git / @ diff | **Yes** | No | Yes | Yes | No |
+| Inline autocomplete | **Yes** | No | Yes | Yes | Yes |
+| Inline edit (Cmd+I) | **Yes** | No | Yes | Yes | Yes |
+| Plan mode | **Yes** | Yes | Yes | Yes | No |
+| Agent/tool use | Yes (20 tools) | Yes (~15) | Yes (19) | Yes (~12) | Yes (~10) |
+| Diff preview | Yes | Yes | Yes | Yes | Yes |
+| Multi-provider | Yes (5+) | No (Anthropic only) | Yes (any) | Yes (limited) | No |
+| In-panel settings | Yes | No | Via config file | Yes | Yes |
+| Permission system | Yes (5 modes) | Yes (5 modes) | Tool policies | Basic | Basic |
+| Hooks system | Yes | Yes (20+ events) | No | No | No |
+| Persistent memory | Yes | Yes | No | No | No |
+| Conversation history | Yes | Yes | No | Yes | Yes |
+| Project rules | **Yes (glob-scoped)** | Yes (4-tier) | Yes (config) | Yes (.cursor/rules/) | Yes (.windsurfrules) |
+| MCP servers | **Yes** | Yes | Yes | No | No |
+| Image support | **Yes** | Yes | No | Yes | No |
+| Sub-agents | Yes | Yes | No | Yes | Yes |
+| Effort control | **Yes** | Yes | No | Yes | No |
+| Side questions (/btw) | **Yes** | Yes | No | No | No |
+| Open source | Yes | No | Yes | No | No |
+| CLI | Yes | Yes | No | No | No |
 
 ---
 
