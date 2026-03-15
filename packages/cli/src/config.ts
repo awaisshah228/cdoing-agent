@@ -8,7 +8,7 @@ import * as path from "path";
 import * as os from "os";
 import * as readline from "readline";
 import chalk from "chalk";
-import { PermissionManager, PermissionMode } from "@cdoing/core";
+import { PermissionManager, PermissionMode, SandboxManager } from "@cdoing/core";
 import { getApiKeyEnvVar, type ModelConfig } from "@cdoing/ai";
 import { resolveOAuthToken } from "./oauth";
 
@@ -22,6 +22,19 @@ export interface StoredConfig {
   mode?: string;
   baseUrl?: string;
   apiKeyHelper?: string;
+  /** Indexer configuration */
+  indexer?: {
+    /** Embedding model ID (e.g. "text-embedding-3-small", "nomic-embed-text") */
+    embeddingModel?: string;
+    /** Embedding provider: "openai", "ollama", or "none" (FTS only) */
+    embeddingProvider?: string;
+    /** Base URL for embedding API (e.g. "http://localhost:11434" for Ollama) */
+    embeddingBaseUrl?: string;
+    /** API key for embedding provider (uses main provider key if not set) */
+    embeddingApiKey?: string;
+    /** Auto-index on startup. Default: true */
+    autoIndex?: boolean;
+  };
 }
 
 export interface CLIOptions {
@@ -48,9 +61,14 @@ export interface CLIOptions {
 
 export function parsePermissionMode(mode: string): PermissionMode {
   switch (mode) {
-    case "auto": return PermissionMode.AUTO;
-    case "auto-edit": return PermissionMode.AUTO_EDIT;
-    default: return PermissionMode.ASK;
+    case "bypassPermissions": return PermissionMode.BYPASS;
+    case "auto":              return PermissionMode.BYPASS;     // legacy alias
+    case "acceptEdits":       return PermissionMode.ACCEPT_EDITS;
+    case "auto-edit":         return PermissionMode.ACCEPT_EDITS; // legacy alias
+    case "plan":              return PermissionMode.PLAN;
+    case "dontAsk":           return PermissionMode.DONT_ASK;
+    case "default":           return PermissionMode.DEFAULT;
+    default:                  return PermissionMode.DEFAULT;    // "ask" and unknown → default
   }
 }
 
@@ -67,6 +85,11 @@ export function buildModelConfig(options: CLIOptions): Partial<ModelConfig> {
 export function createPermissionManager(options: CLIOptions): PermissionManager {
   const dir = path.resolve(options.dir || process.cwd());
   return new PermissionManager(parsePermissionMode(options.mode), dir);
+}
+
+export function createSandboxManager(options: CLIOptions): SandboxManager {
+  const dir = path.resolve(options.dir || process.cwd());
+  return new SandboxManager(dir, dir);
 }
 
 // ── Config file ─────────────────────────────────────────────
@@ -108,9 +131,9 @@ export function updateStoredConfig(key: string, value: string): { success: boole
       config.model = value;
       break;
     case "mode": {
-      const validModes = ["ask", "auto-edit", "auto"];
+      const validModes = ["default", "acceptEdits", "plan", "dontAsk", "bypassPermissions", "ask", "auto-edit", "auto"];
       if (!validModes.includes(value)) {
-        return { success: false, error: `Invalid mode "${value}". Valid: ${validModes.join(", ")}` };
+        return { success: false, error: `Invalid mode "${value}". Valid: ${validModes.slice(0, 5).join(", ")}` };
       }
       config.mode = value;
       break;

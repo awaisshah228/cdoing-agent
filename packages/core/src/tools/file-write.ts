@@ -2,12 +2,19 @@ import * as fs from "fs";
 import * as path from "path";
 import type { BaseTool, ToolDefinition, ToolResult } from "./types";
 import { safePath } from "../utils/path-safety";
+import type { SandboxManager } from "../sandbox";
 
 export class FileWriteTool implements BaseTool {
   definition: ToolDefinition = {
     name: "file_write",
     description:
-      "Create or overwrite a file with the given content. Creates parent directories if needed.",
+      `Create a new file or completely overwrite an existing file. Creates parent directories if needed. Requires user permission.
+
+Use this tool ONLY for:
+- Creating new files that don't exist yet
+- Complete file rewrites where the entire content changes
+
+Do NOT use this for partial edits — use file_edit or multi_edit instead, which preserve unchanged code and provide diffs.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -27,8 +34,11 @@ export class FileWriteTool implements BaseTool {
   };
 
   private workingDir: string;
-  constructor(workingDir: string) {
+  private sandboxManager?: SandboxManager;
+
+  constructor(workingDir: string, sandboxManager?: SandboxManager) {
     this.workingDir = workingDir;
+    this.sandboxManager = sandboxManager;
   }
 
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
@@ -37,6 +47,14 @@ export class FileWriteTool implements BaseTool {
       filePath = safePath(input.file_path as string, this.workingDir);
     } catch (err) {
       return { success: false, output: "", error: (err as Error).message };
+    }
+
+    // Sandbox write check
+    if (this.sandboxManager) {
+      const check = this.sandboxManager.checkFileWrite(filePath);
+      if (!check.allowed) {
+        return { success: false, output: "", error: check.reason || "Sandbox: write access denied" };
+      }
     }
 
     const content = input.content as string;

@@ -36,7 +36,8 @@ export type IncomingMessage =
   | { type: "tabCreated"; tabId: string; title: string }               // New tab created
   | { type: "tabSwitched"; tabId: string }                             // Switched to a tab
   | { type: "tabClosed"; tabId: string }                               // Tab closed
-  | { type: "tabTitleUpdated"; tabId: string; title: string };         // Tab title changed
+  | { type: "tabTitleUpdated"; tabId: string; title: string }          // Tab title changed
+  | { type: "permissionRequest"; id: string; toolName: string; message: string; hasProject: boolean }; // Permission prompt
 
 // ─── Messages FROM webview TO extension host ───
 
@@ -61,6 +62,7 @@ export type OutgoingMessage =
   | { type: "resumeConversation"; id: string }               // Resume a past conversation
   | { type: "deleteConversation"; id: string }               // Delete a past conversation
   | { type: "cancelGeneration" }                             // Cancel the current streaming response
+  | { type: "permissionResponse"; id: string; decision: string } // Permission decision from user
   | { type: "ready" };                                       // Webview loaded, ready for data
 
 /** Extension configuration (for in-panel settings) */
@@ -73,6 +75,13 @@ export interface ExtensionConfig {
   temperature: number;
   maxTokens: number;
   permissionMode: string;
+  sandboxEnabled?: boolean;
+  sandboxMode?: string;
+  /** Indexer settings */
+  indexerEmbeddingModel?: string;
+  indexerEmbeddingProvider?: string;
+  indexerEmbeddingBaseUrl?: string;
+  indexerAutoIndex?: boolean;
 }
 
 /** A saved conversation summary (for history view) */

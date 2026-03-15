@@ -31,9 +31,11 @@ const DEFAULT_MODELS: Record<string, string> = {
 };
 
 const PERMISSION_MODES = [
-  { value: "ask", label: "Ask", desc: "Ask before any tool operation" },
-  { value: "auto-edit", label: "Auto Edit", desc: "Auto-approve edits, ask for shell" },
-  { value: "auto", label: "Auto", desc: "Auto-approve all operations" },
+  { value: "default",            label: "Default",         desc: "Prompt on first use of each tool" },
+  { value: "acceptEdits",        label: "Accept Edits",    desc: "Auto-approve file edits, ask for shell" },
+  { value: "plan",               label: "Plan",            desc: "Read-only: block all write and exec tools" },
+  { value: "dontAsk",            label: "Don't Ask",       desc: "Deny all tools unless explicitly allowed" },
+  { value: "bypassPermissions",  label: "Bypass",          desc: "Skip all permission checks (unsafe)" },
 ];
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -50,6 +52,12 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [temperature, setTemperature] = useState(config?.temperature ?? 0);
   const [maxTokens, setMaxTokens] = useState(config?.maxTokens ?? 8096);
   const [permissionMode, setPermissionMode] = useState(config?.permissionMode || "ask");
+  const [sandboxEnabled, setSandboxEnabled] = useState(config?.sandboxEnabled ?? false);
+  const [sandboxMode, setSandboxMode] = useState(config?.sandboxMode || "regular");
+  const [indexerEmbeddingModel, setIndexerEmbeddingModel] = useState(config?.indexerEmbeddingModel || "");
+  const [indexerEmbeddingProvider, setIndexerEmbeddingProvider] = useState(config?.indexerEmbeddingProvider || "none");
+  const [indexerEmbeddingBaseUrl, setIndexerEmbeddingBaseUrl] = useState(config?.indexerEmbeddingBaseUrl || "");
+  const [indexerAutoIndex, setIndexerAutoIndex] = useState(config?.indexerAutoIndex ?? true);
 
   // Update local state when config comes in
   useEffect(() => {
@@ -62,6 +70,12 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       setTemperature(config.temperature ?? 0);
       setMaxTokens(config.maxTokens ?? 8096);
       setPermissionMode(config.permissionMode || "ask");
+      setSandboxEnabled(config.sandboxEnabled ?? false);
+      setSandboxMode(config.sandboxMode || "regular");
+      setIndexerEmbeddingModel(config.indexerEmbeddingModel || "");
+      setIndexerEmbeddingProvider(config.indexerEmbeddingProvider || "none");
+      setIndexerEmbeddingBaseUrl(config.indexerEmbeddingBaseUrl || "");
+      setIndexerAutoIndex(config.indexerAutoIndex ?? true);
     }
   }, [config]);
 
@@ -75,6 +89,12 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       temperature,
       maxTokens,
       permissionMode,
+      sandboxEnabled,
+      sandboxMode,
+      indexerEmbeddingModel,
+      indexerEmbeddingProvider,
+      indexerEmbeddingBaseUrl,
+      indexerAutoIndex,
     });
     onClose();
   };
@@ -173,6 +193,108 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Sandbox */}
+          <div className="settings-group">
+            <label className="settings-label">Sandbox</label>
+            <div className="settings-row" style={{ alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+              <input
+                type="checkbox"
+                id="sandbox-toggle"
+                checked={sandboxEnabled}
+                onChange={(e) => setSandboxEnabled(e.target.checked)}
+              />
+              <label htmlFor="sandbox-toggle" style={{ cursor: "pointer" }}>
+                Enable Sandbox
+              </label>
+            </div>
+            {sandboxEnabled && (
+              <div className="settings-mode-grid">
+                <button
+                  className={`settings-mode-btn ${sandboxMode === "auto-allow" ? "active" : ""}`}
+                  onClick={() => setSandboxMode("auto-allow")}
+                  title="Auto-approve sandboxed commands without permission prompts"
+                >
+                  <span className="settings-mode-label">Auto-allow</span>
+                  <span className="settings-mode-desc">Auto-approve sandboxed commands</span>
+                </button>
+                <button
+                  className={`settings-mode-btn ${sandboxMode === "regular" ? "active" : ""}`}
+                  onClick={() => setSandboxMode("regular")}
+                  title="Sandbox enforces restrictions but still prompts for permission"
+                >
+                  <span className="settings-mode-label">Regular</span>
+                  <span className="settings-mode-desc">Enforce restrictions, still prompt</span>
+                </button>
+              </div>
+            )}
+            <span className="settings-hint">
+              Restricts file and network access. Configure paths and domains in .claude/settings.json.
+            </span>
+          </div>
+
+          {/* Codebase Indexer */}
+          <div className="settings-group">
+            <label className="settings-label">Codebase Indexer</label>
+            <div className="settings-row" style={{ alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+              <input
+                type="checkbox"
+                id="indexer-auto"
+                checked={indexerAutoIndex}
+                onChange={(e) => setIndexerAutoIndex(e.target.checked)}
+              />
+              <label htmlFor="indexer-auto" style={{ cursor: "pointer" }}>
+                Auto-index on startup
+              </label>
+            </div>
+            <div className="settings-group" style={{ marginBottom: "8px" }}>
+              <label className="settings-label" style={{ fontSize: "11px" }}>Embedding Provider</label>
+              <div className="settings-provider-grid">
+                {[
+                  { value: "none", label: "None (FTS only)" },
+                  { value: "openai", label: "OpenAI" },
+                  { value: "ollama", label: "Ollama" },
+                ].map((p) => (
+                  <button
+                    key={p.value}
+                    className={`settings-provider-btn ${indexerEmbeddingProvider === p.value ? "active" : ""}`}
+                    onClick={() => setIndexerEmbeddingProvider(p.value)}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {indexerEmbeddingProvider !== "none" && (
+              <>
+                <div className="settings-group" style={{ marginBottom: "8px" }}>
+                  <label className="settings-label" style={{ fontSize: "11px" }}>Embedding Model</label>
+                  <input
+                    className="settings-input"
+                    value={indexerEmbeddingModel}
+                    onChange={(e) => setIndexerEmbeddingModel(e.target.value)}
+                    placeholder={indexerEmbeddingProvider === "openai" ? "text-embedding-3-small" : "nomic-embed-text"}
+                  />
+                </div>
+                {indexerEmbeddingProvider === "ollama" && (
+                  <div className="settings-group" style={{ marginBottom: "8px" }}>
+                    <label className="settings-label" style={{ fontSize: "11px" }}>Ollama Base URL</label>
+                    <input
+                      className="settings-input"
+                      value={indexerEmbeddingBaseUrl}
+                      onChange={(e) => setIndexerEmbeddingBaseUrl(e.target.value)}
+                      placeholder="http://localhost:11434"
+                    />
+                  </div>
+                )}
+              </>
+            )}
+            <span className="settings-hint">
+              {indexerEmbeddingProvider === "none"
+                ? "Uses full-text search (BM25) only. Fast, no external dependencies."
+                : "Adds semantic search via embeddings. Requires embedding model API access."}
+            </span>
           </div>
 
           {/* Temperature */}

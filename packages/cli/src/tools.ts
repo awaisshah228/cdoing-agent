@@ -17,12 +17,23 @@ import {
   SubAgentTool,
   TodoTool,
   TodoStore,
+  SandboxManager,
+  SystemInfoTool,
+  MultiEditTool,
+  FileDeleteTool,
+  ListDirTool,
+  ViewDiffTool,
+  ViewRepoMapTool,
+  CodebaseSearchTool,
+  PermissionManager,
 } from "@cdoing/core";
 import type { SubAgentRunnerFactory } from "@cdoing/core";
 
 export interface ToolRegistryOptions {
   subAgentFactory?: SubAgentRunnerFactory;
   todoStore?: TodoStore;
+  sandboxManager?: SandboxManager;
+  permissionManager?: PermissionManager;
 }
 
 export function createToolRegistry(
@@ -37,24 +48,31 @@ export function createToolRegistry(
     options = optionsOrSubAgentFactory;
   }
 
+  const sm = options.sandboxManager;
   const registry = new ToolRegistry();
 
   // File tools
-  registry.register(new FileReadTool(workingDir));
-  registry.register(new FileWriteTool(workingDir));
-  registry.register(new FileEditTool(workingDir));
+  registry.register(new FileReadTool(workingDir, sm));
+  registry.register(new FileWriteTool(workingDir, sm));
+  registry.register(new FileEditTool(workingDir, sm));
+  registry.register(new MultiEditTool(workingDir, sm));
+  registry.register(new FileDeleteTool(workingDir, sm));
 
-  // Search tools
+  // Search & discovery tools
   registry.register(new GlobSearchTool(workingDir));
   registry.register(new GrepSearchTool(workingDir));
+  registry.register(new ListDirTool(workingDir, sm));
+  registry.register(new ViewDiffTool(workingDir));
+  registry.register(new ViewRepoMapTool(workingDir));
+  registry.register(new CodebaseSearchTool(workingDir));
 
   // Execution tools
-  registry.register(new ShellExecTool(workingDir));
-  registry.register(new FileRunTool(workingDir));
+  registry.register(new ShellExecTool(workingDir, sm, options.permissionManager));
+  registry.register(new FileRunTool(workingDir, sm));
   registry.register(new CodeVerifyTool(workingDir));
 
   // Web tools
-  registry.register(new WebFetchTool());
+  registry.register(new WebFetchTool(sm));
   registry.register(new WebSearchTool());
 
   // Sub-agent (only if factory provided — prevents infinite recursion)
@@ -65,6 +83,11 @@ export function createToolRegistry(
   // Todo tool (for task tracking)
   if (options.todoStore) {
     registry.register(new TodoTool(options.todoStore));
+  }
+
+  // System info tool — gives the LLM live access to its permission/sandbox state
+  if (options.permissionManager) {
+    registry.register(new SystemInfoTool(options.permissionManager, registry, sm));
   }
 
   return registry;

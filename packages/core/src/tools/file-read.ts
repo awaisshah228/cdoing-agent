@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import type { BaseTool, ToolDefinition, ToolResult } from "./types";
 import { safePath } from "../utils/path-safety";
+import type { SandboxManager } from "../sandbox";
 
 /** Binary/image extensions we can describe but not read as text */
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico"]);
@@ -11,7 +12,7 @@ export class FileReadTool implements BaseTool {
   definition: ToolDefinition = {
     name: "file_read",
     description:
-      "Read the contents of a file. Returns content with line numbers. Supports text files, images (returns metadata), and PDFs (extracts text). Always read before editing.",
+      "Read the contents of a file. Returns content with line numbers. Supports text files, images (returns metadata), and PDFs (extracts text). Always read before editing. Access is governed by the permission system — certain paths may be denied by sandbox or permission rules.",
     inputSchema: {
       type: "object",
       properties: {
@@ -34,8 +35,11 @@ export class FileReadTool implements BaseTool {
   };
 
   private workingDir: string;
-  constructor(workingDir: string) {
+  private sandboxManager?: SandboxManager;
+
+  constructor(workingDir: string, sandboxManager?: SandboxManager) {
     this.workingDir = workingDir;
+    this.sandboxManager = sandboxManager;
   }
 
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
@@ -44,6 +48,14 @@ export class FileReadTool implements BaseTool {
       filePath = safePath(input.file_path as string, this.workingDir);
     } catch (err) {
       return { success: false, output: "", error: (err as Error).message };
+    }
+
+    // Sandbox read check
+    if (this.sandboxManager) {
+      const check = this.sandboxManager.checkFileRead(filePath);
+      if (!check.allowed) {
+        return { success: false, output: "", error: check.reason || "Sandbox: read access denied" };
+      }
     }
 
     if (!fs.existsSync(filePath))

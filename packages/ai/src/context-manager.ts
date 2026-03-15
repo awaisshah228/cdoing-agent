@@ -8,9 +8,41 @@
 import type { BaseMessage } from "@langchain/core/messages";
 import { HumanMessage, AIMessage, SystemMessage } from "@langchain/core/messages";
 
-/** Rough token estimation: ~4 chars per token (works across providers) */
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
+/**
+ * Token counting — uses js-tiktoken for OpenAI models (accurate),
+ * falls back to ~4 chars/token estimate for others.
+ */
+let tiktokenEncoder: any = null;
+let tiktokenLoaded = false;
+
+function loadTiktoken(): void {
+  if (tiktokenLoaded) return;
+  tiktokenLoaded = true;
+  try {
+    const { encodingForModel } = require("js-tiktoken");
+    tiktokenEncoder = encodingForModel("gpt-4o");
+  } catch {
+    // js-tiktoken not available — use fallback
+    tiktokenEncoder = null;
+  }
+}
+
+function estimateTokens(text: string, model?: string): number {
+  // Use tiktoken for OpenAI models
+  if (model && (model.startsWith("gpt") || model.startsWith("o1") || model.startsWith("o3"))) {
+    loadTiktoken();
+    if (tiktokenEncoder) {
+      try {
+        return tiktokenEncoder.encode(text).length;
+      } catch {
+        // Fallback on encoding error
+      }
+    }
+  }
+
+  // For Anthropic/Google/others: estimate ~3.5 chars per token (more accurate than 4)
+  // Claude models average ~3.5 chars/token for English text
+  return Math.ceil(text.length / 3.5);
 }
 
 function messageContent(msg: BaseMessage): string {

@@ -2,7 +2,7 @@
 
 > Built by [@awaisshah228](https://github.com/awaisshah228)
 
-AI-powered coding assistant — **CLI + VS Code Extension**. Multi-provider (Anthropic, OpenAI, Google), agentic tool use, real-time streaming, and full codebase awareness.
+AI-powered coding assistant — **CLI + VS Code Extension**. Multi-provider (Anthropic, OpenAI, Google), agentic tool use, real-time streaming, permission-controlled sandboxing, and full codebase awareness.
 
 ![Cdoing Agent — VS Code Extension](assets/image.png)
 
@@ -39,6 +39,158 @@ On first run with no API key configured, the CLI launches an interactive setup w
 
 ---
 
+## Comparison with Continue.dev
+
+### Tools
+
+| Area | Cdoing Agent (17 tools) | Continue (19 tools) | Status |
+|---|---|---|---|
+| File read | `file_read` (full file + offset/limit + images + PDFs) | `read_file` + `read_file_range` | ✅ Complete |
+| File write | `file_write` (create/overwrite) | `create_new_file` | ✅ Complete |
+| File edit | `file_edit` (multi-strategy match: exact → trimmed → case-insensitive → whitespace-ignored) | `single_find_and_replace` | ✅ Enhanced |
+| Multi edit | `multi_edit` (atomic batch edits) | `multi_edit` | ✅ Complete |
+| File delete | `file_delete` (permission-controlled, safe deletion) | *(via shell)* | ✅ We have extra |
+| Glob search | `glob_search` (.gitignore aware) | `file_glob_search` | ✅ Complete |
+| Grep search | `grep_search` (regex, .gitignore aware) | `grep_search` (ripgrep + trigrams) | ✅ Complete |
+| Shell exec | `shell_exec` (path permission checks, destructive detection) | `run_terminal_command` (+ background mode) | ⚠️ Missing: background mode |
+| File run | `file_run` (auto-detect 14 languages) | — | ✅ We have extra |
+| Code verify | `code_verify` (syntax/type check) | — | ✅ We have extra |
+| Web fetch | `web_fetch` (HTML → text, JSON) | `fetch_url_content` | ✅ Complete |
+| Web search | `web_search` (DuckDuckGo) | `search_web` | ✅ Complete |
+| Sub-agent | `sub_agent` (parallel research) | — | ✅ We have extra |
+| Todo | `todo` (task tracking) | — | ✅ We have extra |
+| System info | `system_info` (live permission/sandbox state) | — | ✅ We have extra |
+| **Missing** | — | `ls` (directory listing) | 🔴 To implement |
+| **Missing** | — | `view_diff` (git diff) | 🔴 To implement |
+| **Missing** | — | `view_repo_map` (structural overview) | 🔴 To implement |
+| **Missing** | — | `codebase` (semantic RAG search) | 🔴 Major gap |
+
+### Permission & Security
+
+| Feature | Cdoing Agent | Continue |
+|---|---|---|
+| Permission modes | 5 modes (default, acceptEdits, plan, dontAsk, bypass) | Tool policies (allow, deny, allowWithPermission) |
+| Settings-based rules | ✅ Allow/Ask/Deny with path/command matching | ✅ Similar |
+| Sandbox (filesystem) | ✅ allowWrite/denyWrite/denyRead with path prefixes | ✅ OS-level (Seatbelt/bubblewrap) |
+| Sandbox (network) | ✅ Domain allowlist + session approval | ✅ Similar |
+| Shell path checking | ✅ Extracts paths from commands, checks Read/Edit/Delete rules | ❌ Not implemented |
+| Delete protection | ✅ Dedicated `file_delete` tool with `Delete` permission category | ❌ Via shell only |
+| System introspection | ✅ `system_info` tool — LLM queries own permissions live | ❌ Not available |
+
+### Context Management
+
+| Feature | Cdoing Agent | Continue | Gap |
+|---|---|---|---|
+| Token counting | ~4 chars/token estimate | Tiktoken (OpenAI) / Llama tokenizer | 🟡 Less accurate |
+| Context pruning | Summarize old messages at 75% limit | FIFO prune from top, preserve system + last turn | ✅ Different, both work |
+| Output budgeting | Dynamic per-tool char budget | Similar | ✅ Same |
+| Cost tracking | Per-turn with model pricing tables | Similar | ✅ Same |
+| Tool output truncation | 30k chars, preserve tail | Similar | ✅ Same |
+
+### Context Providers
+
+| Provider | Cdoing Agent | Continue |
+|---|---|---|
+| Terminal | `@terminal` ✅ | ✅ |
+| Open files | `@open` ✅ | ✅ OpenFiles |
+| URL | `@url` ✅ | ✅ URL |
+| Tree | `@tree` ✅ | ✅ FileTree |
+| Problems | `@problems` ✅ | ✅ Problems |
+| Codebase | `@codebase` ✅ (text search + ranking) | ✅ (vector embeddings + RAG) |
+| Clipboard | `@clipboard` ✅ | ✅ |
+| File include | `@file` ✅ | ✅ File |
+| **Missing** | — | Git (commit, issues, MRs) |
+| **Missing** | — | Jira, Discord, Database |
+| **Missing** | — | Docs (HTTP), Greptile |
+| **Missing** | — | RepoMap, Folder, DiffContext |
+| **Missing** | — | DebugLocals |
+
+### Indexing & Retrieval — Major Gap
+
+| Feature | Cdoing Agent | Continue |
+|---|---|---|
+| **Codebase indexing** | ❌ None | ✅ 4 index types |
+| **Vector embeddings** | ❌ None | ✅ LanceDB + configurable models |
+| **Full-text search** | ❌ Runtime ripgrep only | ✅ SQLite FTS5 + BM25 + trigrams |
+| **Code structure** | ❌ None | ✅ Tree-sitter AST (15+ languages) |
+| **Chunking** | ❌ None | ✅ Adaptive code-aware (384 tokens) |
+| **RAG pipeline** | ❌ None | ✅ 2 pipelines, 4 retrieval sources |
+| **Cross-branch cache** | ❌ None | ✅ Content-addressed dedup |
+| **Recently edited** | ❌ None | ✅ LRU cache feeds into retrieval |
+
+### Edit Tool Sophistication
+
+| Feature | Cdoing Agent | Continue |
+|---|---|---|
+| Exact match | ✅ | ✅ |
+| Trimmed match | ✅ | ✅ |
+| Case-insensitive match | ✅ | ✅ |
+| Whitespace-ignored match | ✅ (position mapping back to original) | ✅ |
+| Fuzzy match (Jaro-Winkler) | ❌ | ✅ (disabled but implemented) |
+| Multi-edit atomic batch | ✅ | ✅ |
+| Reverse-order replacement | ✅ (preserves positions) | ✅ |
+| Lazy apply (LLM-assisted) | ❌ | ✅ (3 strategies: deterministic, unified diff, streaming) |
+| Tree-sitter AST editing | ❌ | ✅ |
+| Streaming diff | ❌ | ✅ |
+
+---
+
+## Roadmap — What To Implement Next
+
+### Phase 1: Missing Tools (Quick Wins)
+
+- [ ] **`ls` tool** — list directory contents with optional recursive mode
+- [ ] **`view_diff` tool** — show git diff (working changes, staged, between commits)
+- [ ] **`view_repo_map` tool** — generate structural overview of the repository
+- [ ] **Background shell mode** — `shell_exec` with `background: true` for servers/watchers
+
+### Phase 2: Codebase Indexing (High Impact)
+
+- [ ] **SQLite FTS5 index** — full-text search with BM25 ranking + trigram tokenization
+  - Index on first use, incremental updates on file change
+  - Path-weighted search (10x boost for filename matches)
+  - Store in `~/.cdoing/index.sqlite`
+- [ ] **Code chunking** — split files into meaningful chunks (384 tokens default)
+  - Code-aware chunking using simple heuristic (function/class boundaries)
+  - Basic chunker fallback for non-code files
+  - Skip files >1MB
+- [ ] **Upgrade `@codebase` provider** — use FTS index instead of runtime scan
+
+### Phase 3: Vector Embeddings & RAG (Major Upgrade)
+
+- [ ] **Embedding model support** — configurable (OpenAI, local models via Ollama)
+- [ ] **Vector storage** — LanceDB or SQLite with vector extension
+- [ ] **RAG retrieval pipeline** — combine:
+  - Recently edited files (25%)
+  - Full-text search (25%)
+  - Vector embeddings (50%)
+- [ ] **`codebase` search tool** — semantic search exposed as an LLM tool
+- [ ] **Content-addressed caching** — hash file content to skip re-indexing across branches
+
+### Phase 4: Advanced Edit Strategies
+
+- [ ] **Jaro-Winkler fuzzy matching** — for when LLM output doesn't match exactly
+- [ ] **Unified diff application** — accept `@@ -n,m +n,m @@` format patches
+- [ ] **Streaming diff** — real-time diff generation as LLM streams code
+- [ ] **Lazy apply** — LLM uses `// ... existing code ...` placeholders, system fills in
+
+### Phase 5: More Context Providers
+
+- [ ] **Git context** — `@git` for commit history, blame, branch info
+- [ ] **Diff context** — `@diff` for current working changes
+- [ ] **Folder context** — `@folder` for directory-scoped context
+- [ ] **Docs context** — `@docs <url>` for documentation retrieval
+- [ ] **Database context** — `@db` for schema/query context
+
+### Phase 6: Accurate Token Counting
+
+- [ ] **Tiktoken integration** — accurate token counting for OpenAI models
+- [ ] **Llama tokenizer** — for Anthropic and local models
+- [ ] **Image token counting** — proper estimation for multimodal inputs
+- [ ] **Tool definition tokens** — count tokens used by tool schemas
+
+---
+
 ## Authentication
 
 ### Interactive Setup Wizard
@@ -57,8 +209,6 @@ The wizard walks through:
 
 ### API Key
 
-The quickest way to get started:
-
 ```bash
 # Environment variable (recommended for CI/scripts)
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -69,55 +219,19 @@ cdoing config set api-key sk-ant-...
 
 ### OAuth (Claude Pro/Max subscription) — [full guide](OAUTH.md)
 
-Log in with your Claude account — no API key needed, uses your subscription:
-
 ```bash
 cdoing --login        # Opens browser → paste code → done
-```
-
-Or use `/setup` → choose **OAuth** → approve in browser → paste the code from the redirect URL.
-
-Tokens are stored securely in the OS credential store (macOS Keychain, Linux secret-tool, Windows Credential Manager) with an AES-256 encrypted file fallback.
-
-```bash
 cdoing --logout       # Clear stored OAuth tokens
 ```
 
 ### API Key Helper (Proxy / Dynamic Keys)
 
-For proxies (e.g. Antigravity) or any setup where the key is generated dynamically, use `apiKeyHelper` — a shell script whose stdout is used as the API key:
-
 ```bash
-# 1. Create the helper script
-mkdir -p ~/.cdoing
-cat > ~/.cdoing/api-key-helper.sh << 'EOF'
-#!/bin/bash
-echo "YOUR_PROXY_API_KEY"
-EOF
-chmod +x ~/.cdoing/api-key-helper.sh
-
-# 2. Configure cdoing to use it
 cdoing config set api-key-helper ~/.cdoing/api-key-helper.sh
-cdoing config set base-url http://127.0.0.1:8045   # proxy base URL
+cdoing config set base-url http://127.0.0.1:8045
 ```
-
-Or in `~/.cdoing/config.json`:
-
-```json
-{
-  "apiKeyHelper": "~/.cdoing/api-key-helper.sh",
-  "baseUrl": "http://127.0.0.1:8045"
-}
-```
-
-The script runs on every startup and its output is used as the API key. Useful for:
-- API proxies (Antigravity, LiteLLM, custom gateways)
-- Keys fetched from a secret manager (Vault, AWS Secrets Manager)
-- Keys that rotate frequently
 
 ### Key Resolution Order
-
-When resolving the API key, cdoing checks sources in this order and uses the first match:
 
 ```
 1. --api-key flag (CLI argument)
@@ -135,322 +249,40 @@ When resolving the API key, cdoing checks sources in this order and uses the fir
 ### Setup
 
 ```bash
-# Build everything first
 yarn build
-
-# Open extension in VS Code
 code packages/vscode-extension
-
 # Press F5 → launches Extension Development Host
-# Or launch directly:
-code --extensionDevelopmentPath=packages/vscode-extension
 ```
 
-### Chat Panel
+### Features
 
 | Action | What Happens |
 |--------|-------------|
 | Click `</>` icon in activity bar | Opens chat in sidebar |
-| `Cmd+Shift+L` | Opens chat as editor panel **beside your code** |
-| `Cmd+I` / `Ctrl+I` | **Inline edit** — select code, type instruction, see diff |
+| `Cmd+Shift+L` | Opens chat as editor panel beside your code |
+| `Cmd+I` / `Ctrl+I` | Inline edit — select code, type instruction, see diff |
 | Click 💬 on file title bar | Opens chat with file context pre-filled |
 | Right-click selected code | Explain, Refactor, Fix, Inline Edit, Send to Chat |
 
-### Inline Edit Mode (Cmd+I)
+### Multi-Tab, Image Support, Inline Autocomplete
 
-<!-- Learning note: Inline edit is one of the highest-impact features.
-     It lets users make AI-powered changes without leaving their editor flow. -->
-
-Select code → press `Cmd+I` (or `Ctrl+I`) → type an instruction → the AI generates
-changes and shows them as a diff. Accept or reject with one click.
-
-- Works without opening the chat panel
-- Uses a focused prompt for precise edits
-- Shows native VS Code diff view for review
-
-### Inline Autocomplete (Tab Completion)
-
-<!-- Learning note: Ghost text completion works via VS Code's
-     InlineCompletionItemProvider API — the same API GitHub Copilot uses. -->
-
-AI-powered code suggestions as you type, shown as faded "ghost text":
-
-- **Tab** to accept, **Esc** to dismiss
-- Configurable model (use a smaller/faster model for speed)
-- Debounced requests (300ms) to avoid API spam
-- Enable/disable with `/toggleAutocomplete` or in settings
-
-```json
-// settings.json
-{
-  "cdoing.autocomplete.enabled": true,
-  "cdoing.autocomplete.model": "gpt-4o-mini"  // optional: faster model
-}
-```
-
-### Multi-Tab Conversations
-- Click `+` to create a new conversation tab
-- Each tab has its own AgentRunner, history, and context
-- Tab titles auto-update from your first message
-- Close tabs with `×` (last tab creates a new one)
-- Background processing — tabs continue working when you switch away
-
-### Image Support
-
-- **Attach images** — click the image button or use `cdoing.attachImage` command
-- Supports PNG, JPG, GIF, WebP, SVG, BMP
-- Multimodal models (Claude, GPT-4o) can analyze attached images
-
-### Performance (inspired by Continue.dev)
-- **Batched streaming** — `requestAnimationFrame` groups tokens (not per-token re-renders)
-- **ResizeObserver scroll** — efficient auto-scroll, pauses when user scrolls up
-- **React.memo** — memoized message and tool call components
-- **Syntax highlighting** — `marked` + `highlight.js` (15+ languages)
-- **Code blocks** — copy button, language label, proper highlighting
-
-### Tool Call Steps (Claude Code style)
-- Collapsible accordion rows with status icons (⏳ running, ✓ success, ✗ error)
-- Specialized summaries: file tools → clickable path, shell → `$ command`, search → result count
-- Expand to see structured input (key-value) or formatted output
-- Click file paths to open in editor
-
-### All Slash Commands
-`/new`, `/clear`, `/history`, `/resume <id>`, `/model`, `/provider`, `/mode`, `/config`, `/plan`, `/effort`, `/btw`, `/rules`, `/mcp`, `/context`, `/usage`, `/cost`, `/compact`, `/permissions`, `/memory`, `/hooks`, `/queue`, `/settings`, `/help`
+- Multiple conversation tabs with independent state
+- Attach images (PNG, JPG, GIF, WebP, SVG)
+- Tab completion with configurable model
 
 ---
 
-## Context Providers
-
-<!-- Learning note: Context providers use the @ trigger pattern popularized
-     by Continue.dev and Cursor. Each provider is a pluggable module that
-     resolves a specific type of context. -->
-
-Use `@` triggers in your message to attach context automatically:
-
-| Trigger | Description | Requires Arg |
-|---------|-------------|:---:|
-| `@terminal` | Last terminal command output | No |
-| `@tree [path] [depth]` | Workspace file tree visualization | No |
-| `@url <url>` | Fetch and attach web page content | Yes |
-| `@codebase <query>` | Search entire codebase for relevant code | Yes |
-| `@open` | All open editor files (VS Code only) | No |
-| `@problems` | Current file diagnostics/errors (VS Code only) | No |
-
-**Examples:**
-```
-What's wrong? @terminal
-How is the project structured? @tree src 4
-Explain this API @url https://docs.example.com/api
-Where is authentication handled? @codebase auth middleware
-Fix all errors @problems
-```
-
----
-
-## Plan Mode
-
-<!-- Learning note: Plan mode forces the agent to think before acting.
-     This produces better results for complex tasks and gives the user
-     a chance to course-correct before any files change. -->
-
-Plan mode makes the agent analyze and plan before executing changes:
-
-```
-/plan                    # Toggle plan mode on/off
-/plan refactor the auth  # Generate a plan for a specific request
-/plan show               # Show the current plan
-/plan approve            # Approve and execute the plan
-/plan reject             # Reject the plan
-```
-
-When active, the agent:
-1. Reads files and searches code (read-only)
-2. Generates a step-by-step implementation plan
-3. Waits for your approval before making any changes
-4. Executes the plan with progress tracking
-
----
-
-## Effort Level Control
-
-<!-- Learning note: Effort level is a UX abstraction — instead of tweaking
-     temperature, max tokens, and system prompt, users just say "try harder". -->
-
-Control how deeply the agent analyzes your request:
-
-```
-/effort low     # Quick, minimal analysis
-/effort medium  # Balanced (default)
-/effort high    # Deep analysis, reads more files
-/effort max     # Maximum thoroughness, extended thinking
-```
-
-| Level | Behavior |
-|-------|----------|
-| `low` | Shortest correct answer, fewest tools, fast |
-| `medium` | Balanced analysis and speed (default) |
-| `high` | Reads all relevant files, considers edge cases, verifies changes |
-| `max` | Exhaustive search, multiple approaches, comprehensive testing |
-
----
-
-## Side Questions (/btw)
-
-<!-- Learning note: /btw creates a temporary agent that doesn't share
-     history with the main conversation, keeping context clean. -->
-
-Ask questions without polluting conversation history:
-
-```
-/btw what does the -p flag do in grep?
-/btw how do I destructure a TypeScript generic?
-```
-
-Results are shown but not added to the conversation context — perfect for quick lookups.
-
----
-
-## Project Rules
-
-<!-- Learning note: Rules use glob-based scoping so you can have different
-     coding standards for different parts of your project. -->
-
-Define coding standards in `.cdoing/rules/` with glob-scoped markdown files:
-
-```
-.cdoing/rules/
-├── typescript.md     # Rules for *.ts, *.tsx files
-├── api.md            # Rules for src/api/** files
-└── testing.md        # Rules for *.test.* files
-```
-
-Each rule file supports YAML frontmatter for scoping:
-
-```markdown
----
-globs: ["*.ts", "*.tsx"]
-description: TypeScript coding standards
----
-
-- Always use strict TypeScript (no `any`)
-- Prefer named exports over default exports
-- Use async/await instead of callbacks
-```
-
-Rule hierarchy: **path-specific** > **project** > **global** (`~/.cdoing/rules/`)
-
-```
-/rules          # View loaded rules
-/rules reload   # Refresh from disk
-```
-
----
-
-## MCP Server Support
-
-<!-- Learning note: MCP (Model Context Protocol) is an open protocol that
-     lets AI models connect to external tools. Think of it as "USB for AI". -->
-
-Connect to external tools via the [Model Context Protocol](https://modelcontextprotocol.io/):
-
-Configure in `.cdoing/mcp.json`:
-
-```json
-{
-  "servers": [
-    {
-      "name": "github",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": { "GITHUB_TOKEN": "ghp_..." }
-    },
-    {
-      "name": "postgres",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-postgres"],
-      "env": { "DATABASE_URL": "postgresql://..." }
-    }
-  ]
-}
-```
-
-```
-/mcp              # Show connected servers and tools
-/mcp connect      # Connect to all configured servers
-/mcp disconnect   # Disconnect all
-```
-
-MCP tools are automatically discovered and available to the agent alongside built-in tools.
-
----
-
-## CLI Usage
-
-```
-Usage: cdoing [options] [prompt]
-
-Arguments:
-  prompt                        One-shot prompt (skips interactive mode)
-
-Options:
-  -V, --version                 Output the version number
-  -m, --model <model>           Model to use (e.g., claude-sonnet-4-20250514, gpt-4o)
-  -p, --provider <provider>     AI provider: anthropic, openai, google, custom (default: "anthropic")
-  --base-url <url>              Base URL for custom providers
-  --api-key <key>               API key (overrides environment variable)
-  --login                       Login with Claude via OAuth (opens browser)
-  --logout                      Clear stored OAuth tokens
-  --mode <mode>                 Permission mode: ask, auto-edit, auto (default: "ask")
-  -d, --dir <directory>         Working directory (default: current directory)
-  --print                       Print output only (non-interactive)
-  -r, --resume <id>             Resume a conversation by ID
-  -c, --continue                Continue most recent conversation
-  --max-turns <n>               Maximum agent turns
-  --output-format <format>      Output format: text, json, stream-json
-  --verbose                     Enable verbose logging
-  --system-prompt <prompt>      Custom system prompt
-  --allowed-tools <tools>       Comma-separated allowed tools
-  --disallowed-tools <tools>    Comma-separated disallowed tools
-  -h, --help                    Display help for command
-```
-
-### Usage Modes
-
-| Mode | Command | Description |
-|------|---------|-------------|
-| Interactive | `cdoing` | Launches a persistent chat session |
-| One-shot | `cdoing "list all files"` | Runs a single prompt and exits |
-| Resume | `cdoing -r <id> "follow up"` | Continue a previous conversation |
-| Print | `cdoing --print "explain"` | Non-interactive, clean output |
-| JSON | `cdoing --output-format json "query"` | Structured JSON output |
-
----
-
-## AI Providers
-
-| Provider | Flag | Env Variable | Models |
-|----------|------|-------------|--------|
-| Anthropic (default) | `--provider anthropic` | `ANTHROPIC_API_KEY` | Claude family |
-| OpenAI | `--provider openai` | `OPENAI_API_KEY` | GPT family |
-| Google | `--provider google` | `GOOGLE_API_KEY` | Gemini family |
-| Custom | `--provider custom --base-url <url>` | `--api-key <key>` | Any compatible API |
-
-| Ollama | `--provider ollama` | *(not required)* | LLaMA, Mistral, CodeLlama |
-| Custom / Proxy | `--provider custom --base-url <url>` | `--api-key <key>` or `apiKeyHelper` | Any OpenAI-compatible API |
-
-**API key resolution order:** `--api-key` flag → `apiKeyHelper` script → environment variable → `~/.cdoing/config.json` → OAuth token → interactive setup wizard.
-
----
-
-## Tools (12 Built-In)
+## Tools (17 Built-In)
 
 ### File Operations
 
 | Tool | Description | Permission |
 |------|-------------|:---:|
 | `file_read` | Read file contents (text, images, PDFs). Supports offset and line limits. | No |
-| `file_write` | Create or overwrite files. Auto-creates parent directories. | Yes |
-| `file_edit` | Find-and-replace editing with unified diff output. | Yes |
+| `file_write` | Create new files or complete rewrites. Auto-creates parent directories. | Yes |
+| `file_edit` | Multi-strategy find-and-replace (exact → trimmed → case-insensitive → whitespace-ignored). | Yes |
+| `multi_edit` | Batch multiple edits to one file atomically. Sequential application, reverse-order replacement. | Yes |
+| `file_delete` | Permission-controlled file/directory deletion. Configurable via `Delete` rules in settings. | Yes |
 
 ### Search & Discovery
 
@@ -463,7 +295,7 @@ Options:
 
 | Tool | Description | Permission |
 |------|-------------|:---:|
-| `shell_exec` | Run any shell command. Blocks dangerous patterns. Timeout: 120s. | Yes |
+| `shell_exec` | Run shell commands. Extracts paths and checks Read/Edit/Delete permissions. Flags destructive commands. | Yes |
 | `file_run` | Run scripts by extension (.js, .ts, .py, .rb, .sh, .go, etc.). Timeout: 30s. | Yes |
 | `code_verify` | Syntax and type checking for the current project. | No |
 
@@ -471,351 +303,201 @@ Options:
 
 | Tool | Description | Permission |
 |------|-------------|:---:|
-| `web_fetch` | Fetch and extract content from URLs. Strips HTML, supports JSON. | Yes |
+| `web_fetch` | Fetch and extract content from URLs. Domain-restricted by sandbox. | Yes |
 | `web_search` | Search the web via DuckDuckGo (no API key required). | Yes |
 
-### Agent Control
+### Agent Control & Introspection
 
 | Tool | Description | Permission |
 |------|-------------|:---:|
 | `sub_agent` | Spawn an independent sub-agent for parallel research tasks. | No |
 | `todo` | Track tasks with status (pending, in_progress, completed, blocked). | No |
-
-### Parallel Execution
-
-<!-- Learning note: Parallel execution is a key performance feature.
-     Read-only tools run concurrently via Promise.all, while write
-     tools run sequentially to avoid conflicts. -->
-
-Read-only tools (`file_read`, `glob_search`, `grep_search`, `web_fetch`, `web_search`, `sub_agent`) run in parallel via `Promise.all`. Mutating tools (`file_write`, `file_edit`, `shell_exec`) run sequentially. Results matched by `tool_call_id`.
+| `system_info` | LLM queries its own permissions, sandbox state, and available tools live. | No |
 
 ---
 
-## Permission Modes
+## Permission System
+
+### Permission Modes
 
 | Mode | Behavior |
 |------|----------|
-| `ask` (default) | Prompts before every tool that requires permission |
-| `auto-edit` | Auto-approves file writes/edits, prompts for shell commands |
-| `auto` | Auto-approves all tool calls |
+| `default` | Prompts before every tool that requires permission |
+| `acceptEdits` | Auto-approves file writes/edits, prompts for shell commands |
+| `plan` | Read-only — all write/exec/delete tools blocked |
+| `dontAsk` | Deny all unless explicitly allowed in settings |
+| `bypassPermissions` | Auto-approve everything (unsafe, user-opted-in) |
 
-When prompted for permission:
+### Settings-Based Rules
 
-| Key | Action |
-|-----|--------|
-| `y` / Enter | Allow this once |
-| `a` | Always allow globally (saved to `~/.cdoing/permissions.json`) |
-| `p` | Allow for this project only (saved to `.cdoing/permissions.json`) |
-| `n` | Deny |
+Configure in `.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "allow": ["Bash(git *)", "Bash(npm *)", "Edit(src/**)"],
+    "ask": ["Bash(git push *)", "Delete"],
+    "deny": ["Read(~/.ssh/**)", "Delete(.env*)", "Edit(//etc/**)"]
+  }
+}
+```
+
+**Rule categories:** `Bash(command)`, `Read(path)`, `Edit(path)`, `Delete(path)`, `WebFetch(domain:x)`, `Agent(name)`
+
+**Evaluation order:** Deny → Ask → Allow (deny always wins)
+
+**Settings precedence:** `.claude/settings.local.json` → `.claude/settings.json` → `~/.claude/settings.json`
+
+### Shell Command Permission Checks
+
+`shell_exec` extracts file paths from commands and checks them:
+
+| Command type | Examples | Permission check |
+|---|---|---|
+| Read commands | `cat`, `less`, `head`, `tail`, `grep`, `diff`, `sort` | Read deny rules |
+| Write commands | `cp`, `mv`, `chmod`, `sed -i`, `>`, `>>`, `tee` | Edit deny rules |
+| Delete commands | `rm`, `rmdir`, `unlink`, `shred`, `git clean` | Delete deny rules |
+
+### Sandbox
+
+Enable in `.claude/settings.json`:
+
+```json
+{
+  "sandbox": {
+    "enabled": true,
+    "mode": "auto-allow",
+    "filesystem": {
+      "allowWrite": ["~/Downloads", "//tmp"],
+      "denyWrite": ["//etc"],
+      "denyRead": ["~/.ssh", "~/.aws"]
+    },
+    "network": {
+      "allowedDomains": ["api.github.com", "registry.npmjs.org"],
+      "allowManagedDomainsOnly": false
+    },
+    "excludedCommands": ["docker"],
+    "allowUnsandboxedCommands": false
+  }
+}
+```
 
 ---
 
-## Slash Commands
+## Context Providers
 
-### Chat Management
+Use `@` triggers to attach context:
 
-| Command | Description |
+| Trigger | Description |
 |---------|-------------|
-| `/new` | Start a new conversation (new tab in VS Code) |
-| `/clear` | Clear the current conversation history |
-| `/history` | List saved conversations |
-| `/resume <id>` | Resume a previously saved conversation |
-| `/delete <id>` | Delete a saved conversation |
-| `/queue` | View/clear message queue |
-| `/compact` | Compress context window |
-
-### AI Control
-
-| Command | Description |
-|---------|-------------|
-| `/plan [request]` | Plan before executing (read-only analysis) |
-| `/effort <level>` | Set effort level: low, medium, high, max |
-| `/btw <question>` | Ask without adding to conversation history |
-
-### Configuration
-
-| Command | Description |
-|---------|-------------|
-| `/setup` | Interactive wizard — provider, model, API key or OAuth |
-| `/config` | Show current config |
-| `/config set <key> <value>` | Set a config value (provider, model, mode, api-key, base-url, api-key-helper) |
-| `/model <name>` | Switch model |
-| `/provider <name>` | Switch AI provider |
-| `/mode <mode>` | Change permission mode |
-| `/dir <path>` | Change working directory (CLI only) |
-| `/rules` | View/reload project rules |
-| `/mcp` | MCP server status and management |
-| `/context` | List available @ context providers |
-
-### Authentication
-
-| Command | Description |
-|---------|-------------|
-| `/setup` | Full setup wizard including auth |
-| `/login` | Open setup wizard to authenticate |
-| `/logout` | Clear stored OAuth tokens |
-| `/auth-status` | Show OAuth token status and stored API keys |
-
-### Info & System
-
-| Command | Description |
-|---------|-------------|
-| `/permissions` | View/clear stored permissions |
-| `/memory` | View/manage persistent memory |
-| `/hooks` | View configured hooks |
-| `/usage` | Token usage stats |
-| `/cost` | Cost breakdown |
-| `/tasks` | View task list |
-| `/doctor` | System health check (CLI only) |
-| `/help` or `?` | Show help |
-
-### Direct Shell Access (CLI)
-
-| Syntax | Description |
-|--------|-------------|
-| `!<command>` | Execute a shell command directly (e.g., `!git status`) |
+| `@terminal` | Last terminal command output |
+| `@tree [path] [depth]` | Workspace file tree |
+| `@url <url>` | Fetch and attach web page content |
+| `@codebase <query>` | Search entire codebase |
+| `@open` | All open editor files (VS Code only) |
+| `@problems` | Current file diagnostics/errors (VS Code only) |
+| `@clipboard` | Clipboard contents |
+| `@file <path>` | Include specific file |
 
 ---
 
 ## Agent Architecture
 
-<!-- Learning note: The architecture follows a layered design.
-     Each package has a single responsibility:
-     - core: tools, permissions, rules (no AI dependency)
-     - ai: agent loop, providers, context management
-     - cli: terminal UI
-     - vscode-extension: VS Code UI -->
-
 ```
 User Message
      │
      ▼
-┌──────────────────────────────────┐
-│  Agent Runner (agentic loop)      │
-│                                   │
-│  Context Providers → Enrich msg   │
-│  Rules + Effort → System prompt   │
-│                                   │
-│  stream() ──► Tool Calls          │
-│    ▲          │                   │
-│    │    ┌─────┴──────┐            │
-│    │    │ Parallel:   │           │
-│    │    │  file_read  │           │
-│    │    │  grep_search│           │
-│    │    │  sub_agent  │           │
-│    │    ├────────────┤            │
-│    │    │ Sequential: │           │
-│    │    │  file_edit  │           │
-│    │    │  shell_exec │           │
-│    │    ├────────────┤            │
-│    │    │ MCP Tools:  │           │
-│    │    │  jira_*     │           │
-│    │    │  postgres_* │           │
-│    │    └─────┬──────┘            │
-│    │          │                   │
-│    └──── Results ◄────────────────┘
-│                                   │
-│  + Retry with backoff             │
-│  + Context compression            │
-│  + Token tracking                 │
-│  + Pre/post hooks                 │
-│  + Plan mode (read-only)          │
-└──────────────────────────────────┘
+┌──────────────────────────────────────────┐
+│  Agent Runner (agentic loop)              │
+│                                           │
+│  Context Providers → Enrich message       │
+│  Rules + Effort → System prompt           │
+│                                           │
+│  stream() ──► Tool Calls                  │
+│    ▲          │                           │
+│    │    ┌─────┴──────────────────┐        │
+│    │    │ Permission Manager     │        │
+│    │    │  ├─ Settings rules     │        │
+│    │    │  ├─ Mode check         │        │
+│    │    │  └─ User prompt        │        │
+│    │    ├────────────────────────┤        │
+│    │    │ Sandbox Manager        │        │
+│    │    │  ├─ Filesystem checks  │        │
+│    │    │  ├─ Network checks     │        │
+│    │    │  └─ Shell path checks  │        │
+│    │    ├────────────────────────┤        │
+│    │    │ Tool Execution         │        │
+│    │    │  Parallel: file_read,  │        │
+│    │    │    grep, glob, web,    │        │
+│    │    │    sub_agent           │        │
+│    │    │  Sequential: shell,    │        │
+│    │    │    file_run            │        │
+│    │    │  Smart: file_edit/     │        │
+│    │    │    write (parallel if  │        │
+│    │    │    different files)    │        │
+│    │    └─────┬──────────────────┘        │
+│    │          │                           │
+│    └──── Results ◄────────────────────────┘
+│                                           │
+│  + Retry with backoff                     │
+│  + Context compression                    │
+│  + Token tracking & cost                  │
+│  + Pre/post hooks                         │
+│  + Plan mode (read-only)                  │
+└──────────────────────────────────────────┘
 ```
-
----
-
-## Configuration
-
-### Project Config
-
-Create `.cdoing/config.md` or `CDOING.md` in your project root:
-
-```markdown
-# Project Instructions
-This is a Node.js + TypeScript project.
-- Use ESM imports
-- Run `npm test` after changes
-```
-
-### Project Rules
-
-Create `.cdoing/rules/*.md` for glob-scoped coding standards:
-
-```markdown
----
-globs: ["src/api/**"]
-description: API endpoint conventions
----
-
-- All endpoints must validate input with Zod
-- Return proper HTTP status codes
-- Log errors with structured logging
-```
-
-### MCP Servers
-
-Configure in `.cdoing/mcp.json` or `~/.cdoing/mcp.json`:
-
-```json
-{
-  "servers": [
-    { "name": "github", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"] }
-  ]
-}
-```
-
-### Hooks
-
-`~/.cdoing/hooks.json` or `.cdoing/hooks.json`:
-
-```json
-{
-  "hooks": [
-    { "event": "post:file_write", "command": "prettier --write {{file_path}}" },
-    { "event": "post:file_edit", "command": "eslint --fix {{file_path}}" }
-  ]
-}
-```
-
-### Configuration Files
-
-| File | Scope | Purpose |
-|------|-------|---------|
-| `~/.cdoing/config.json` | Global | Default provider, model, API keys, apiKeyHelper, baseUrl |
-| `~/.cdoing/.oauth-tokens.enc` | Global | Encrypted OAuth tokens (fallback when keychain unavailable) |
-| `~/.cdoing/permissions.json` | Global | Globally allowed tool permissions |
-| `~/.cdoing/hooks.json` | Global | Global hooks |
-| `~/.cdoing/memory.json` | Global | Persistent memories |
-| `~/.cdoing/rules/*.md` | Global | Global coding rules |
-| `~/.cdoing/mcp.json` | Global | Global MCP server configs |
-| `~/.cdoing/conversations/` | Global | Saved conversations |
-| `.cdoing/config.md` or `CDOING.md` | Project | Project-specific instructions |
-| `.cdoing/permissions.json` | Project | Per-project permissions |
-| `.cdoing/hooks.json` | Project | Per-project hooks |
-| `.cdoing/rules/*.md` | Project | Per-project coding rules |
-| `.cdoing/mcp.json` | Project | Per-project MCP servers |
 
 ---
 
 ## Project Structure
 
-<!-- Learning note: The monorepo is organized by responsibility.
-     @cdoing/core has zero AI dependencies — it's pure tools and utilities.
-     @cdoing/ai handles LLM communication via LangChain.
-     The CLI and extension are thin UI layers on top. -->
-
 ```
 cdoing-agent/
-├── package.json                 # Monorepo root (Yarn workspaces + Turborepo)
-├── turbo.json                   # Build pipeline
-├── ROADMAP.md                   # Feature roadmap and comparison matrix
-├── assets/                      # Screenshots and images
 ├── packages/
-│   ├── core/                    # @cdoing/core — tools, permissions, hooks, context
+│   ├── core/                    # @cdoing/core — tools, permissions, sandbox, hooks
 │   │   └── src/
-│   │       ├── tools/           # 12 built-in tools
-│   │       ├── permissions/     # Permission manager with stored rules
+│   │       ├── tools/           # 17 built-in tools
+│   │       ├── permissions/     # Permission manager (5 modes, settings rules)
+│   │       ├── sandbox/         # Filesystem & network sandboxing
 │   │       ├── hooks/           # Pre/post tool execution hooks
-│   │       ├── context-providers/ # @terminal, @open, @url, @tree, @problems, @codebase
-│   │       ├── rules/           # Glob-scoped project rules system
+│   │       ├── context-providers/ # 8 @ mention providers
+│   │       ├── rules/           # Glob-scoped project rules
 │   │       ├── plan/            # Plan mode manager
 │   │       ├── mcp/             # MCP server manager
 │   │       ├── effort/          # Effort level control
-│   │       ├── agents/          # Multi-agent coordinator
-│   │       └── utils/           # Memory, project config, path safety
+│   │       └── utils/           # Path safety, search matching, memory
 │   ├── ai/                      # @cdoing/ai — agent runner, providers
 │   │   └── src/
-│   │       ├── agent-runner.ts  # Agentic loop with parallel tool execution
-│   │       ├── provider.ts      # LangChain: Anthropic, OpenAI, Google, custom
-│   │       ├── context-manager.ts # Token tracking, compression
-│   │       └── system-prompt.ts # System prompt builder
+│   │       ├── agent-runner.ts  # Agentic loop with parallel execution
+│   │       ├── provider.ts      # Multi-provider LLM support
+│   │       ├── context-manager.ts # Token tracking, compression, cost
+│   │       └── system-prompt.ts # System prompt with permission awareness
 │   ├── cli/                     # @cdoing/cli — terminal interface
-│   │   └── src/
-│   │       ├── index.ts         # CLI entry (commander)
-│   │       ├── chat.ts          # Interactive chat with context providers
-│   │       ├── callbacks.ts     # Streaming output formatting
-│   │       ├── history.ts       # Conversation save/resume
-│   │       └── config.ts        # Config & API key resolution
-│   └── vscode-extension/        # cdoing-vscode — VS Code extension
-│       ├── src/
-│       │   ├── extension.ts     # Extension entry — all commands & features
-│       │   ├── chat-panel-provider.ts # Multi-tab agent bridge
-│       │   ├── inline-edit.ts   # Cmd+I inline edit mode
-│       │   ├── inline-autocomplete.ts # Tab completion ghost text
-│       │   ├── webview-content.ts     # HTML shell with CSP
-│       │   └── webview/               # React app
-│       │       ├── components/        # ChatPanel, TabBar, InputArea, etc.
-│       │       ├── hooks/             # useChatState, useAutoScroll, useVsCode
-│       │       ├── utils/             # markdown renderer
-│       │       └── styles/            # CSS (VS Code theme vars)
-│       └── esbuild.config.js   # Builds extension host + webview bundles
+│   └── vscode-extension/        # VS Code extension (React webview)
 ```
+
+---
+
+## AI Providers
+
+| Provider | Models | Auth |
+|----------|--------|------|
+| Anthropic (default) | Claude Sonnet 4.6, Opus 4.6, Haiku 4.5 | API key or OAuth |
+| OpenAI | GPT-4o, GPT-4o mini, o3-mini | API key |
+| Google | Gemini 2.0 Flash, 1.5 Pro, 1.5 Flash | API key |
+| Ollama | LLaMA, Mistral, CodeLlama | Not required |
+| Custom | Any OpenAI-compatible API | Configurable |
 
 ---
 
 ## Development
 
 ```bash
-# Install dependencies
-yarn install
-
-# Build all packages
-yarn build
-
-# Run CLI
-yarn start
-
-# Dev mode — watch + run CLI
-yarn dev
-
-# VS Code extension
-cd packages/vscode-extension
-yarn dev          # Watch mode
-# Press F5 in VS Code
-
-# Type check
-npx tsc --noEmit  # from any package directory
+yarn install        # Install dependencies
+yarn build          # Build all packages
+yarn start          # Run CLI
+yarn dev            # Dev mode (watch + run)
 ```
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Runtime | Node.js 18+, TypeScript |
-| AI | LangChain (Anthropic, OpenAI, Google providers) |
-| CLI | readline, chalk, ora, commander |
-| VS Code Extension | React 19, esbuild, WebviewView + WebviewPanel |
-| Markdown | marked + highlight.js (extension), custom renderer (CLI) |
-| Build | Turborepo + Yarn workspaces |
-| Storage | Local filesystem (`~/.cdoing/`) |
-| MCP | Model Context Protocol (JSON-RPC over stdio) |
-
----
-
-## Keyboard Shortcuts
-
-### CLI
-
-| Key | Action |
-|-----|--------|
-| `?` | Show help |
-| `ESC` | Cancel current operation |
-| `Ctrl+C` (once) | Prompt to exit |
-| `Ctrl+C` (twice) | Force exit |
-| `Tab` / `↑↓` | Navigate slash command suggestions |
-
-### VS Code Extension
-
-| Key | Action |
-|-----|--------|
-| `Cmd+Shift+L` | Open chat panel beside editor |
-| `Cmd+I` / `Ctrl+I` | Inline edit — AI-powered code changes in place |
-| `Cmd+Shift+Enter` | Send selection to chat |
-| `Tab` | Accept autocomplete suggestion |
-| `Esc` | Dismiss autocomplete suggestion |
 
 ---
 

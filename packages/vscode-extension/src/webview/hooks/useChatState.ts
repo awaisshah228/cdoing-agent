@@ -42,6 +42,9 @@ export function useChatState() {
   const [showHistory, setShowHistory] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [extensionConfig, setExtensionConfig] = useState<ExtensionConfig | null>(null);
+  const [permissionRequest, setPermissionRequest] = useState<{
+    id: string; toolName: string; message: string; hasProject: boolean;
+  } | null>(null);
 
   const streamingRef = useRef<string | null>(null);
 
@@ -228,6 +231,12 @@ export function useChatState() {
     vscode.postMessage({ type: "cancelGeneration" });
   }, [vscode]);
 
+  const respondToPermission = useCallback((decision: string) => {
+    if (!permissionRequest) return;
+    vscode.postMessage({ type: "permissionResponse", id: permissionRequest.id, decision });
+    setPermissionRequest(null);
+  }, [vscode, permissionRequest]);
+
   // ── Message Handler ──────────────────────────────────
 
   useEffect(() => {
@@ -327,6 +336,9 @@ export function useChatState() {
         case "conversationList":
           setConversations((msg as any).conversations || []);
           break;
+        case "permissionRequest":
+          setPermissionRequest({ id: (msg as any).id, toolName: (msg as any).toolName, message: (msg as any).message, hasProject: (msg as any).hasProject });
+          break;
         case "conversationMessages": {
           // Restore messages from a resumed conversation into the UI
           const restored = (msg as any).messages as Array<{ role: string; content: string }>;
@@ -363,5 +375,6 @@ export function useChatState() {
     resumeConversation, deleteConversation,
     showSettings, extensionConfig, openSettings, closeSettings,
     saveSettings, openVscodeSettings, cancelGeneration,
+    permissionRequest, respondToPermission,
   };
 }

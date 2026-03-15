@@ -13,11 +13,26 @@ export { WebSearchTool } from "./tools/web-search";
 export { SubAgentTool } from "./tools/sub-agent";
 export type { SubAgentRunnerFactory } from "./tools/sub-agent";
 export { TodoTool } from "./tools/todo";
+export { SystemInfoTool } from "./tools/system-info";
+export { MultiEditTool } from "./tools/multi-edit";
+export { FileDeleteTool } from "./tools/file-delete";
+export { ListDirTool } from "./tools/list-dir";
+export { ViewDiffTool } from "./tools/view-diff";
+export { ViewRepoMapTool } from "./tools/view-repo-map";
+export { CodebaseSearchTool } from "./tools/codebase-search";
 export type { ToolDefinition, ToolResult, BaseTool } from "./tools/types";
+
+// Search matching utilities
+export { findSearchMatch, findAllSearchMatches, executeFindAndReplace, executeMultiFindAndReplace, isUnifiedDiff, applyUnifiedDiff } from "./utils/search-match";
 
 // Permissions
 export { PermissionManager, PermissionMode } from "./permissions";
 export type { PermissionRule, PermissionScope, PermissionPromptFn } from "./permissions";
+
+// Sandbox
+export { SandboxManager } from "./sandbox";
+export { defaultSandboxConfig } from "./sandbox";
+export type { SandboxConfig, SandboxMode, SandboxCheckResult, SandboxFilesystemConfig, SandboxNetworkConfig } from "./sandbox/types";
 
 // Hooks
 export { HookManager } from "./hooks";
@@ -43,6 +58,9 @@ export { ProblemsContextProvider } from "./context-providers/problems";
 export { CodebaseContextProvider } from "./context-providers/codebase";
 export { ClipboardContextProvider } from "./context-providers/clipboard";
 export { FileIncludeContextProvider } from "./context-providers/file-include";
+export { GitContextProvider } from "./context-providers/git";
+export { DiffContextProvider } from "./context-providers/diff";
+export { FolderContextProvider } from "./context-providers/folder";
 
 // Project Rules — hierarchical glob-scoped rules
 export { RulesManager } from "./rules/manager";
@@ -59,3 +77,8 @@ export type { McpServerConfig, McpTool } from "./mcp/manager";
 // Effort Level Control — adjusts analysis depth
 export { EffortManager } from "./effort";
 export type { EffortLevel, EffortConfig } from "./effort";
+
+// Codebase Indexing — FTS5 + embeddings
+export { CodebaseIndexer, IndexDatabase, chunkDocument } from "./indexing";
+export type { EmbeddingProvider } from "./indexing";
+export type { SearchResult, IndexingProgress, IndexStats, ChunkWithMeta } from "./indexing";

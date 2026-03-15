@@ -4,12 +4,13 @@
  */
 
 import type { BaseTool, ToolDefinition, ToolResult } from "./types";
+import type { SandboxManager } from "../sandbox";
 
 export class WebFetchTool implements BaseTool {
   definition: ToolDefinition = {
     name: "web_fetch",
     description:
-      "Fetch content from a URL. Returns the text content of the page. Useful for reading documentation, APIs, or web pages.",
+      "Fetch content from a URL. Returns the text content of the page. Useful for reading documentation, APIs, or web pages. Requires user permission. Network access is controlled by sandbox domain rules — requests to non-allowed domains may be blocked.",
     inputSchema: {
       type: "object",
       properties: {
@@ -28,6 +29,12 @@ export class WebFetchTool implements BaseTool {
     permissionMessage: (input) => `Fetch URL: ${input.url}`,
   };
 
+  private sandboxManager?: SandboxManager;
+
+  constructor(sandboxManager?: SandboxManager) {
+    this.sandboxManager = sandboxManager;
+  }
+
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
     const url = input.url as string;
     const maxLength = (input.max_length as number) || 10000;
@@ -37,6 +44,14 @@ export class WebFetchTool implements BaseTool {
       new URL(url);
     } catch {
       return { success: false, output: "", error: `Invalid URL: ${url}` };
+    }
+
+    // Sandbox network check
+    if (this.sandboxManager) {
+      const check = await this.sandboxManager.checkNetworkAccess(url);
+      if (!check.allowed) {
+        return { success: false, output: "", error: check.reason || "Sandbox: network access denied" };
+      }
     }
 
     try {

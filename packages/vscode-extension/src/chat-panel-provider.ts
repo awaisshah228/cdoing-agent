@@ -21,6 +21,14 @@ import {
   PermissionMode,
   HookManager,
   MemoryStore,
+  SandboxManager,
+  SystemInfoTool,
+  MultiEditTool,
+  FileDeleteTool,
+  ListDirTool,
+  ViewDiffTool,
+  ViewRepoMapTool,
+  CodebaseSearchTool,
   loadProjectConfig,
 } from "@cdoing/core";
 import {
@@ -62,6 +70,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
   private webviewReady = false;
   private pendingMessages: any[] = [];
+  private pendingPermissionResolvers = new Map<string, (decision: "allow" | "always" | "project" | "deny") => void>();
+  private permissionIdCounter = 0;
 
   private getTab(id?: string): TabState | undefined {
     return this.tabs.get(id || this.activeTabId || "");
@@ -143,6 +153,14 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           const tab = this.getTab();
           if (tab?.isProcessing) {
             tab.agent.cancel();
+          }
+          break;
+        }
+        case "permissionResponse": {
+          const resolver = this.pendingPermissionResolvers.get(message.id);
+          if (resolver) {
+            this.pendingPermissionResolvers.delete(message.id);
+            resolver(message.decision);
           }
           break;
         }
@@ -288,9 +306,13 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
     let permMode: PermissionMode;
     switch (permModeStr) {
-      case "auto": permMode = PermissionMode.AUTO; break;
-      case "auto-edit": permMode = PermissionMode.AUTO_EDIT; break;
-      default: permMode = PermissionMode.ASK;
+      case "bypassPermissions": permMode = PermissionMode.BYPASS; break;
+      case "auto":              permMode = PermissionMode.BYPASS; break;
+      case "acceptEdits":       permMode = PermissionMode.ACCEPT_EDITS; break;
+      case "auto-edit":         permMode = PermissionMode.ACCEPT_EDITS; break;
+      case "plan":              permMode = PermissionMode.PLAN; break;
+      case "dontAsk":           permMode = PermissionMode.DONT_ASK; break;
+      default:                  permMode = PermissionMode.DEFAULT;
     }
 
     return { modelConfig, permMode, provider, model };
@@ -314,33 +336,54 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       }
     }
 
-    // Tool registry
+    // Sandbox manager
+    const sandboxManager = new SandboxManager(workingDir, workingDir);
+    sandboxManager.setDomainPromptFn(async (domain: string) => {
+      const choice = await vscode.window.showInformationMessage(
+        `Sandbox: allow network access to "${domain}"?`,
+        "Allow", "Deny",
+      );
+      return choice === "Allow";
+    });
+
+    // Permission manager (created first so tools can reference it)
+    const sm = sandboxManager;
+    this.permissionManager = new PermissionManager(permMode, workingDir);
+    this.permissionManager.setSandboxManager(sandboxManager);
+    this.permissionManager.setPromptFn(async (toolName, message, hasProject) => {
+      const id = `perm-${++this.permissionIdCounter}-${Date.now()}`;
+      return new Promise<"allow" | "always" | "project" | "deny">((resolve) => {
+        this.pendingPermissionResolvers.set(id, resolve);
+        this.postMessage({
+          type: "permissionRequest",
+          id,
+          toolName,
+          message,
+          hasProject,
+        } as any);
+      });
+    });
+
+    // Tool registry (with sandbox + permission manager)
     this.toolRegistry = new ToolRegistry();
-    this.toolRegistry.register(new FileReadTool(workingDir));
-    this.toolRegistry.register(new FileWriteTool(workingDir));
-    this.toolRegistry.register(new FileEditTool(workingDir));
+    this.toolRegistry.register(new FileReadTool(workingDir, sm));
+    this.toolRegistry.register(new FileWriteTool(workingDir, sm));
+    this.toolRegistry.register(new FileEditTool(workingDir, sm));
+    this.toolRegistry.register(new MultiEditTool(workingDir, sm));
+    this.toolRegistry.register(new FileDeleteTool(workingDir, sm));
     this.toolRegistry.register(new GlobSearchTool(workingDir));
     this.toolRegistry.register(new GrepSearchTool(workingDir));
-    this.toolRegistry.register(new ShellExecTool(workingDir));
-    this.toolRegistry.register(new FileRunTool(workingDir));
-    this.toolRegistry.register(new WebFetchTool());
+    this.toolRegistry.register(new ListDirTool(workingDir, sm));
+    this.toolRegistry.register(new ViewDiffTool(workingDir));
+    this.toolRegistry.register(new ViewRepoMapTool(workingDir));
+    this.toolRegistry.register(new CodebaseSearchTool(workingDir));
+    this.toolRegistry.register(new ShellExecTool(workingDir, sm, this.permissionManager));
+    this.toolRegistry.register(new FileRunTool(workingDir, sm));
+    this.toolRegistry.register(new WebFetchTool(sm));
     this.toolRegistry.register(new WebSearchTool());
 
-    // Permission manager with VS Code UI prompt
-    this.permissionManager = new PermissionManager(permMode, workingDir);
-    this.permissionManager.setPromptFn(async (_toolName, message, hasProject) => {
-      const items = ["Allow Once", "Always Allow"];
-      if (hasProject) items.push("Allow for Project");
-      items.push("Deny");
-
-      const choice = await vscode.window.showInformationMessage(`⚡ ${message}`, ...items);
-
-      if (choice === "Always Allow") return "always";
-      if (choice === "Allow for Project") return "project";
-      if (choice === "Deny") return "deny";
-      if (choice === "Allow Once") return "allow";
-      return "deny";
-    });
+    // System info tool — gives the LLM live access to its permission/sandbox state
+    this.toolRegistry.register(new SystemInfoTool(this.permissionManager, this.toolRegistry, sm));
 
     // Hooks and memory
     this.hookManager = new HookManager(workingDir);
@@ -1051,10 +1094,14 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           break;
         }
         let newMode: PermissionMode;
-        switch (arg.toLowerCase()) {
-          case "auto": newMode = PermissionMode.AUTO; break;
-          case "auto-edit": newMode = PermissionMode.AUTO_EDIT; break;
-          default: newMode = PermissionMode.ASK;
+        switch (arg) {
+          case "bypassPermissions": newMode = PermissionMode.BYPASS; break;
+          case "auto":              newMode = PermissionMode.BYPASS; break;
+          case "acceptEdits":       newMode = PermissionMode.ACCEPT_EDITS; break;
+          case "auto-edit":         newMode = PermissionMode.ACCEPT_EDITS; break;
+          case "plan":              newMode = PermissionMode.PLAN; break;
+          case "dontAsk":           newMode = PermissionMode.DONT_ASK; break;
+          default:                  newMode = PermissionMode.DEFAULT;
         }
         this.permissionManager?.setMode(newMode);
         this.postMessage({ type: "systemMessage", text: `Mode: **${arg}**` });

@@ -1,43 +1,144 @@
 import { exec } from "child_process";
 import type { BaseTool, ToolDefinition, ToolResult } from "./types";
+import type { SandboxManager } from "../sandbox";
+import type { PermissionManager } from "../permissions";
+import { extractShellPaths } from "../utils/shell-paths";
+
+/** Absolute danger — always blocked regardless of permissions */
+const ALWAYS_BLOCKED = [
+  "rm -rf /",
+  "rm -rf ~",
+  "rm -rf /*",
+  "rm -rf ~/*",
+  "mkfs",
+  "dd if=",
+  ":(){",
+];
+
+/** Destructive patterns for elevated permission message */
+const DESTRUCTIVE_PATTERNS = [
+  /\brm\s/, /\brm$/, /\brmdir\s/, /\bdel\s/, /\brd\s/, /\bunlink\s/,
+  /\bshred\s/, /\bgit\s+clean\b/, /\bgit\s+reset\s+--hard\b/,
+];
+
 
 export class ShellExecTool implements BaseTool {
   definition: ToolDefinition = {
     name: "shell_exec",
     description:
-      "Execute a shell command and return its output. Use for builds, tests, git commands, etc.",
+      `Execute a shell command and return its output. Use for builds, tests, git commands, etc. Requires user permission before execution.
+
+All file paths in commands are checked against permission rules:
+- Read paths (cat, less, grep, etc.) are checked against Read deny rules.
+- Write paths (cp, mv, redirect >, tee, etc.) are checked against Edit deny rules.
+- Delete paths (rm, rmdir, unlink, etc.) are checked against Delete deny rules.
+- Destructive commands are flagged as high-risk in the permission prompt.
+
+Commands are also subject to sandbox restrictions.`,
     inputSchema: {
       type: "object",
       properties: {
         command: { type: "string", description: "The shell command to execute" },
         timeout: { type: "number", description: "Timeout in ms. Default: 120000" },
+        background: {
+          type: "boolean",
+          description: "Run in background. Returns immediately with PID. Use for servers/watchers. Default: false.",
+        },
+        dangerouslyDisableSandbox: {
+          type: "boolean",
+          description: "Set to true to run this command outside the sandbox. Requires permission approval.",
+        },
       },
       required: ["command"],
     },
     requiresPermission: true,
-    permissionMessage: (input) => `Run command: ${input.command}`,
+    permissionMessage: (input) => {
+      const cmd = String(input.command || "");
+      if (DESTRUCTIVE_PATTERNS.some((p) => p.test(cmd))) {
+        return `⚠ DESTRUCTIVE command: ${cmd}`;
+      }
+      return `Run command: ${cmd}`;
+    },
   };
 
   private workingDir: string;
-  constructor(workingDir: string) {
+  private sandboxManager?: SandboxManager;
+  private permissionManager?: PermissionManager;
+
+  constructor(workingDir: string, sandboxManager?: SandboxManager, permissionManager?: PermissionManager) {
     this.workingDir = workingDir;
+    this.sandboxManager = sandboxManager;
+    this.permissionManager = permissionManager;
   }
 
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
     const command = input.command as string;
     const timeout = (input.timeout as number) || 120000;
+    const dangerouslyDisableSandbox = (input.dangerouslyDisableSandbox as boolean) || false;
 
-    // Block dangerous commands
-    const blocked = ["rm -rf /", "rm -rf ~", "mkfs", "dd if=", ":(){"];
-    for (const pat of blocked) {
+    // Always-blocked patterns (catastrophic destruction)
+    for (const pat of ALWAYS_BLOCKED) {
       if (command.includes(pat))
         return { success: false, output: "", error: `Blocked dangerous pattern: ${pat}` };
     }
 
+    // ── Permission-based path checks ────────────────────────────────────────
+    if (this.permissionManager) {
+      const paths = extractShellPaths(command, this.workingDir);
+
+      // Check read paths against Read deny rules
+      for (const p of paths.read) {
+        const result = this.permissionManager.checkPathPermission(p, "Read");
+        if (result === "deny") {
+          return { success: false, output: "", error: `Permission denied: read access to "${p}" is blocked by settings rules` };
+        }
+      }
+
+      // Check write paths against Edit deny rules
+      for (const p of paths.write) {
+        const result = this.permissionManager.checkPathPermission(p, "Edit");
+        if (result === "deny") {
+          return { success: false, output: "", error: `Permission denied: write access to "${p}" is blocked by settings rules` };
+        }
+      }
+
+      // Check delete paths against Delete deny rules
+      for (const p of paths.delete) {
+        const result = this.permissionManager.checkPathPermission(p, "Delete");
+        if (result === "deny") {
+          return { success: false, output: "", error: `Permission denied: delete access to "${p}" is blocked by settings rules` };
+        }
+      }
+    }
+
+    // ── Sandbox checks ──────────────────────────────────────────────────────
+    if (this.sandboxManager) {
+      const check = this.sandboxManager.checkShellCommand(command, dangerouslyDisableSandbox);
+      if (!check.allowed) {
+        return { success: false, output: "", error: check.reason || "Sandbox: command blocked" };
+      }
+    }
+
+    // Use sandboxed env if available
+    const env = this.sandboxManager ? this.sandboxManager.getShellEnv() : { ...process.env };
+    const background = (input.background as boolean) || false;
+
+    // Background mode: spawn detached, return immediately with PID
+    if (background) {
+      const { spawn } = require("child_process") as typeof import("child_process");
+      const child = spawn("sh", ["-c", command], {
+        cwd: this.workingDir,
+        env,
+        detached: true,
+        stdio: "ignore",
+      });
+      child.unref();
+      return { success: true, output: `Started in background (PID: ${child.pid})` };
+    }
+
     return new Promise((resolve) => {
-      exec(command, { cwd: this.workingDir, timeout, maxBuffer: 10 * 1024 * 1024, env: { ...process.env } },
+      exec(command, { cwd: this.workingDir, timeout, maxBuffer: 10 * 1024 * 1024, env },
         (error, stdout, stderr) => {
-          // Always capture full output (stdout + stderr) regardless of success/failure
           const outputParts: string[] = [];
           if (stdout) outputParts.push(stdout.trimEnd());
           if (stderr) outputParts.push(`STDERR:\n${stderr.trimEnd()}`);

@@ -19,11 +19,20 @@ import React, { useState, useRef, useCallback, useEffect } from "react";
 import type { IncomingMessage, ContextAttachment } from "../types";
 import { useVsCode } from "../hooks/useVsCode";
 
+interface PermissionRequest {
+  id: string;
+  toolName: string;
+  message: string;
+  hasProject: boolean;
+}
+
 interface InputAreaProps {
   isProcessing: boolean;
   queueCount: number;
   onSend: (text: string, context?: ContextAttachment[]) => void;
   onCancel?: () => void;
+  permissionRequest?: PermissionRequest | null;
+  onPermissionResponse?: (decision: string) => void;
 }
 
 interface FileResult {
@@ -39,7 +48,7 @@ const LANG_ICONS: Record<string, string> = {
   cpp: "C++", c: "C", ruby: "RB", php: "PHP", swift: "SW",
 };
 
-export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, onSend, onCancel }) => {
+export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, onSend, onCancel, permissionRequest, onPermissionResponse }) => {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<ContextAttachment[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -211,6 +220,23 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
 
   return (
     <div className="input-area">
+      {/* Permission prompt */}
+      {permissionRequest && onPermissionResponse && (
+        <div className="permission-prompt">
+          <div className="permission-prompt-message">
+            <span className="permission-prompt-icon">&#9889;</span>
+            <span className="permission-prompt-text">{permissionRequest.message}</span>
+          </div>
+          <div className="permission-prompt-actions">
+            <button className="permission-btn permission-btn-allow" onClick={() => onPermissionResponse("allow")}>Allow Once</button>
+            <button className="permission-btn permission-btn-always" onClick={() => onPermissionResponse("always")}>Always Allow</button>
+            {permissionRequest.hasProject && (
+              <button className="permission-btn permission-btn-project" onClick={() => onPermissionResponse("project")}>Allow for Project</button>
+            )}
+            <button className="permission-btn permission-btn-deny" onClick={() => onPermissionResponse("deny")}>Deny</button>
+          </div>
+        </div>
+      )}
       <div className="input-box">
         {/* Context chips */}
         {attachments.length > 0 && (

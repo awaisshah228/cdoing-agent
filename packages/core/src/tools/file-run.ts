@@ -3,6 +3,7 @@ import * as path from "path";
 import { exec } from "child_process";
 import type { BaseTool, ToolDefinition, ToolResult } from "./types";
 import { safePath } from "../utils/path-safety";
+import type { SandboxManager } from "../sandbox";
 
 /** Map file extensions to the command that runs them */
 const RUNNERS: Record<string, string> = {
@@ -18,7 +19,7 @@ export class FileRunTool implements BaseTool {
   definition: ToolDefinition = {
     name: "file_run",
     description:
-      "Run a file. Auto-detects language from extension (node for .js, python3 for .py, etc). Use after writing a program to test it.",
+      "Run a file. Auto-detects language from extension (node for .js, python3 for .py, etc). Use after writing a program to test it. Requires user permission. Subject to sandbox restrictions.",
     inputSchema: {
       type: "object",
       properties: {
@@ -33,8 +34,11 @@ export class FileRunTool implements BaseTool {
   };
 
   private workingDir: string;
-  constructor(workingDir: string) {
+  private sandboxManager?: SandboxManager;
+
+  constructor(workingDir: string, sandboxManager?: SandboxManager) {
     this.workingDir = workingDir;
+    this.sandboxManager = sandboxManager;
   }
 
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
@@ -48,6 +52,14 @@ export class FileRunTool implements BaseTool {
     const args = (input.args as string) || "";
     const timeout = (input.timeout as number) || 30000;
 
+    // Sandbox read check
+    if (this.sandboxManager) {
+      const check = this.sandboxManager.checkFileRead(filePath);
+      if (!check.allowed) {
+        return { success: false, output: "", error: check.reason || "Sandbox: read access denied" };
+      }
+    }
+
     if (!fs.existsSync(filePath))
       return { success: false, output: "", error: `File not found: ${filePath}` };
 
@@ -58,8 +70,11 @@ export class FileRunTool implements BaseTool {
 
     const command = `${runner} "${filePath}"${args ? ` ${args}` : ""}`;
 
+    // Use sandboxed env if available
+    const env = this.sandboxManager ? this.sandboxManager.getShellEnv() : { ...process.env };
+
     return new Promise((resolve) => {
-      const child = exec(command, { cwd: this.workingDir, timeout, maxBuffer: 10 * 1024 * 1024, env: { ...process.env } },
+      const child = exec(command, { cwd: this.workingDir, timeout, maxBuffer: 10 * 1024 * 1024, env },
         (error, stdout, stderr) => {
           const outputParts: string[] = [];
           if (stdout) outputParts.push(stdout.trimEnd());
