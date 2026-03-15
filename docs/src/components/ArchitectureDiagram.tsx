@@ -197,20 +197,20 @@ export function OAuthFlowDiagram() {
 // ── 4. VS Code Extension Architecture ───────────────────
 
 const vscNodes: Node[] = [
-  { id: "v1", position: { x: 150, y: 0 },   data: { label: "extension.ts\nRegisters commands, creates providers" }, style: { ...styles.ui, width: 280 } },
-  { id: "v2", position: { x: 130, y: 120 }, data: { label: "chat-panel-provider.ts\nRuns agent, bridges webview ↔ agent" },  style: { ...styles.ai, width: 320 } },
-  { id: "v3", position: { x: 0, y: 260 },   data: { label: "Webview (React)\nChatPanel, InputArea\nSettingsPanel, ToolCallBubble" },    style: { ...styles.tool, width: 240 } },
-  { id: "v4", position: { x: 310, y: 260 }, data: { label: "@cdoing/ai\nAgentRunner" },                                   style: { ...styles.ai, width: 180 } },
-  { id: "v5", position: { x: 310, y: 380 }, data: { label: "@cdoing/core\nTools, Permissions, OAuth" },                    style: { ...styles.core, width: 200 } },
-  { id: "v6", position: { x: 0, y: 380 },   data: { label: "inline-edit.ts\ninline-autocomplete.ts" },                    style: { ...styles.action, width: 200 } },
+  { id: "v1", position: { x: 200, y: 0 },   data: { label: "extension.ts\nRegisters commands, creates providers" }, style: { ...styles.ui, width: 280 } },
+  { id: "v6", position: { x: 0, y: 140 },   data: { label: "inline-edit.ts\ninline-autocomplete.ts" },              style: { ...styles.action, width: 200 } },
+  { id: "v2", position: { x: 260, y: 140 },  data: { label: "chat-panel-provider.ts\nRuns agent, bridges webview ↔ agent" },  style: { ...styles.ai, width: 320 } },
+  { id: "v3", position: { x: 160, y: 290 },  data: { label: "Webview (React)\nChatPanel, InputArea\nSettingsPanel, ToolCallBubble" },    style: { ...styles.tool, width: 240 } },
+  { id: "v4", position: { x: 460, y: 290 },  data: { label: "@cdoing/ai\nAgentRunner" },                            style: { ...styles.ai, width: 180 } },
+  { id: "v5", position: { x: 460, y: 420 },  data: { label: "@cdoing/core\nTools, Permissions, OAuth" },             style: { ...styles.core, width: 200 } },
 ];
 
 const vscEdges: Edge[] = [
   { id: "ve1", source: "v1", target: "v2", type: "avoidNodes", data: { strokeColor: "#6366f1" } },
+  { id: "ve5", source: "v1", target: "v6", type: "avoidNodes", data: { strokeColor: "#6366f1", strokeDasharray: "5 5" } },
   { id: "ve2", source: "v2", target: "v3", type: "avoidNodes", data: { strokeColor: "#8b5cf6" } },
   { id: "ve3", source: "v2", target: "v4", type: "avoidNodes", data: { strokeColor: "#f59e0b" } },
   { id: "ve4", source: "v4", target: "v5", type: "avoidNodes", data: { strokeColor: "#22c55e" } },
-  { id: "ve5", source: "v1", target: "v6", type: "avoidNodes", data: { strokeColor: "#6366f1", strokeDasharray: "5 5" } },
 ];
 
 export function VscodeArchDiagram() {
