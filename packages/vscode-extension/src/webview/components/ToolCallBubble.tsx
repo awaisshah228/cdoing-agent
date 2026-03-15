@@ -26,6 +26,7 @@ const TOOL_CONFIG: Record<string, { label: string; icon: string }> = {
   file_edit: { label: "Edit", icon: "🔧" },
   multi_edit: { label: "MultiEdit", icon: "🔧" },
   file_delete: { label: "Delete", icon: "🗑️" },
+  ast_edit: { label: "AST Edit", icon: "🌳" },
   glob_search: { label: "Search files", icon: "🔍" },
   grep_search: { label: "Search code", icon: "🔎" },
   codebase_search: { label: "Codebase search", icon: "🔎" },
@@ -37,6 +38,7 @@ const TOOL_CONFIG: Record<string, { label: string; icon: string }> = {
   todo: { label: "Todo", icon: "📋" },
   list_dir: { label: "List dir", icon: "📁" },
   view_diff: { label: "Diff", icon: "📊" },
+  view_repo_map: { label: "Repo map", icon: "🗺️" },
   code_verify: { label: "Verify", icon: "✅" },
   system_info: { label: "System info", icon: "ℹ️" },
 };
@@ -111,8 +113,26 @@ function getToolDescription(name: string, input: string, description?: string): 
       const path = shortPath(String(p.path || ""));
       return path ? `List ${path}` : "List directory";
     }
-    default:
-      return name;
+    case "ast_edit": {
+      const path = shortPath(String(p.file_path || p.path || ""));
+      const ops = Array.isArray(p.operations) ? p.operations.length : 0;
+      if (path && ops) return `AST edit ${path} (${ops} op${ops > 1 ? "s" : ""})`;
+      return path ? `AST edit ${path}` : "AST edit";
+    }
+    case "view_repo_map": {
+      const path = shortPath(String(p.path || ""));
+      return path ? `Repo map ${path}` : "Repo map";
+    }
+    default: {
+      // Fallback: try to build a description from common input fields
+      const fp = String(p.file_path || p.path || "");
+      const query = String(p.query || p.pattern || p.command || "");
+      if (fp && query) return `${name} ${shortPath(fp)}: ${trim(query, 30)}`;
+      if (fp) return `${name} ${shortPath(fp)}`;
+      if (query) return `${name}: ${trim(query, 40)}`;
+      const config = TOOL_CONFIG[name];
+      return config ? config.label : name.replace(/_/g, " ");
+    }
   }
 }
 
@@ -202,6 +222,27 @@ function renderToolInput(name: string, parsed: Record<string, unknown>, onOpenFi
       const task = String(parsed.task || parsed.prompt || "");
       return <pre className="tool-io-block">{trimLines(task, 4)}</pre>;
     }
+    case "ast_edit": {
+      const path = String(parsed.file_path || parsed.path || "");
+      const ops = Array.isArray(parsed.operations) ? parsed.operations as Array<Record<string, unknown>> : [];
+      return (
+        <div className="tool-io-block">
+          {path && <span className="tool-file-link" onClick={(e) => onOpenFile(path, e)}>{path}</span>}
+          {ops.length > 0 && (
+            <div className="tool-io-diff-preview">
+              {ops.map((op, i) => (
+                <div key={i} className="tool-input-row">
+                  <span className="tool-io-label">{String(op.action || "?")} </span>
+                  <span>{String(op.node_type || "")} </span>
+                  <code className="tool-io-inline-code">{String(op.name || "")}</code>
+                  {op.new_name ? <span> → <code className="tool-io-inline-code">{String(op.new_name)}</code></span> : null}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
     default:
       return <DefaultInputRenderer parsed={parsed} onOpenFile={onOpenFile} />;
   }
@@ -226,7 +267,8 @@ function renderToolOutput(name: string, output: string, isError?: boolean, onOpe
     }
     case "file_write":
     case "file_edit":
-    case "multi_edit": {
+    case "multi_edit":
+    case "ast_edit": {
       if (hasDiff(output)) {
         return <DiffRenderer output={output} onOpenFile={onOpenFile} />;
       }
