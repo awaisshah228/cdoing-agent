@@ -34,7 +34,7 @@ export interface CustomProviderConfig {
 }
 
 const DEFAULT_MODELS: Record<string, string> = {
-  [ModelProvider.ANTHROPIC]: "claude-sonnet-4-20250514",
+  [ModelProvider.ANTHROPIC]: "claude-sonnet-4-6",
   [ModelProvider.OPENAI]: "gpt-4o",
   [ModelProvider.GOOGLE]: "gemini-2.0-flash",
   [ModelProvider.OLLAMA]: "llama3.1",
@@ -81,6 +81,7 @@ export function createModel(config: Partial<ModelConfig> = {}) {
         anthropicApiKey: config.apiKey || process.env.ANTHROPIC_API_KEY,
         temperature,
         maxTokens,
+        topP: undefined,
       });
 
     case ModelProvider.OPENAI:

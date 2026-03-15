@@ -96,6 +96,7 @@ export class ChatInterface {
   private messageQueue: string[] = [];
   private isProcessing = false;
   private currentAbortController: AbortController | null = null;
+  private keypressHandler: ((_char: string, key: readline.Key) => void) | null = null;
 
   // ── New Feature Managers ──────────────────────────────
   // Each manager handles a specific feature domain, keeping this class focused.
@@ -244,6 +245,15 @@ export class ChatInterface {
   ];
 
   private createReadline(): void {
+    // Remove old keypress listener and close old rl before re-creating
+    if (this.keypressHandler) {
+      process.stdin.removeListener("keypress", this.keypressHandler);
+      this.keypressHandler = null;
+    }
+    if (this.rl) {
+      this.rl.close();
+    }
+
     this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
@@ -259,7 +269,7 @@ export class ChatInterface {
     }
 
     // Handle keypress events including ESC and arrow keys for suggestions
-    process.stdin.on("keypress", (_char, key) => {
+    this.keypressHandler = (_char, key) => {
       if (key) {
         // ESC key to cancel current processing
         if (key.name === "escape" && this.isProcessing) {
@@ -310,7 +320,8 @@ export class ChatInterface {
         const line = (this.rl as unknown as { line: string }).line || "";
         this.renderSuggestions(line);
       });
-    });
+    };
+    process.stdin.on("keypress", this.keypressHandler);
   }
 
   /** Cancel current operation with ESC */
