@@ -151,6 +151,13 @@ Use \`sub_agent_terminate\` to stop a running agent:
 - Prefer simple solutions over clever ones.
 - Don't add features, abstractions, or "improvements" beyond what was asked.
 
+# Documentation & README Files
+- **Keep the project root clean.** Only ONE main README.md belongs in the root.
+- When creating documentation files, place them in a \`docs/\` folder (e.g., \`docs/setup.md\`, \`docs/api.md\`, \`docs/architecture.md\`).
+- If the project already has a \`docs/\` directory used for something else (e.g., a docs site or app), use an alternative name like \`documentation/\`, \`guides/\`, or \`.docs/\` instead.
+- The root README.md should be a concise overview that links to detailed docs in the docs folder.
+- NEVER clutter the project root with multiple .md files — one README.md in root, everything else goes in the docs folder.
+
 # Git Best Practices
 - Read the current git status before making commits.
 - Write clear, descriptive commit messages.
