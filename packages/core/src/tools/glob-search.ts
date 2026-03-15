@@ -7,7 +7,7 @@ export class GlobSearchTool implements BaseTool {
   definition: ToolDefinition = {
     name: "glob_search",
     description:
-      "Search for files matching a glob pattern. Returns a list of matching file paths sorted by modification time. Use patterns like '**/*.ts', 'src/**/*.js', '*.json'. Respects .gitignore.",
+      "Search for files matching a glob pattern. Returns matching file paths sorted by modification time. Use patterns like '**/*.ts', 'src/**/*.js', '*.json'. Respects .gitignore. The search always starts from the project working directory — do NOT pass directory unless you specifically need a subdirectory (e.g. 'src/components'). Never pass '/' or an absolute path.",
     inputSchema: {
       type: "object",
       properties: {
@@ -17,7 +17,7 @@ export class GlobSearchTool implements BaseTool {
         },
         directory: {
           type: "string",
-          description: "Directory to search in. Defaults to the working directory.",
+          description: "Optional subdirectory to narrow the search (e.g. 'src/components'). Omit to search the entire project. Never use '/' or absolute paths.",
         },
       },
       required: ["pattern"],
@@ -33,10 +33,18 @@ export class GlobSearchTool implements BaseTool {
 
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
     const pattern = input.pattern as string;
-    const directory = (input.directory as string) || this.workingDir;
-    const searchDir = path.isAbsolute(directory)
-      ? directory
-      : path.resolve(this.workingDir, directory);
+    const rawDir = (input.directory as string | undefined) || "";
+    // Clamp to workingDir: reject "/" or paths outside the project
+    let searchDir: string;
+    if (!rawDir || rawDir === "/") {
+      searchDir = this.workingDir;
+    } else {
+      const resolved = path.isAbsolute(rawDir)
+        ? rawDir
+        : path.resolve(this.workingDir, rawDir);
+      // Don't allow searching outside the working directory
+      searchDir = resolved.startsWith(this.workingDir) ? resolved : this.workingDir;
+    }
 
     try {
       const ignorePatterns = loadIgnorePatterns(this.workingDir);

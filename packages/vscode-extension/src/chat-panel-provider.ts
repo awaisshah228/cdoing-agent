@@ -364,6 +364,15 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
   private getWorkingDir(): string {
     const folders = vscode.workspace.workspaceFolders;
+
+    // Prefer the workspace folder that contains the active file (most specific)
+    const activeFile = vscode.window.activeTextEditor?.document.uri;
+    if (activeFile && folders) {
+      const containing = vscode.workspace.getWorkspaceFolder(activeFile);
+      if (containing) return containing.uri.fsPath;
+    }
+
+    // Fall back to the first workspace folder, then process.cwd()
     return folders?.[0]?.uri.fsPath || process.cwd();
   }
 
