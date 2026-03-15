@@ -109,7 +109,7 @@ body {
 
 /* Hamburger button - hidden on desktop */
 .hamburger {
-  display: none;
+  display: none !important;
   flex-direction: column;
   justify-content: center;
   gap: 5px;
@@ -579,27 +579,27 @@ body {
 /* ── Responsive: Tablet (768px) ──────────────────────────── */
 @media (max-width: 768px) {
   .sidebar {
-    transform: translateX(-100%);
+    transform: translateX(-100%) !important;
   }
 
   .sidebar-open {
-    transform: translateX(0);
+    transform: translateX(0) !important;
   }
 
   .sidebar-overlay {
-    display: block;
-    position: fixed;
+    display: block !important;
+    position: fixed !important;
     inset: 0;
     background: rgba(0, 0, 0, 0.5);
     z-index: 35;
   }
 
   .hamburger {
-    display: flex;
+    display: flex !important;
   }
 
   .header-nav {
-    display: none;
+    display: none !important;
   }
 
   .main-content {

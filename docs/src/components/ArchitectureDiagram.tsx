@@ -19,7 +19,6 @@ import "@xyflow/react/dist/style.css";
 import { useAvoidNodesRouterFromWorker } from "avoid-nodes-edge";
 import { AvoidNodesEdge } from "avoid-nodes-edge/edge";
 import { DiagramNode, GroupNode } from "@/components/DiagramNode";
-import { resolveCollisions } from "@/utils/resolve-collisions";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const edgeTypes: EdgeTypes = { avoidNodes: AvoidNodesEdge as any };
@@ -57,15 +56,11 @@ function DiagramFlow({ nodes: initNodes, edges: initEdges, height }: {
 }) {
   const [nodes, setNodes] = useState<Node[]>(initNodes);
 
-  const { updateRoutingOnNodesChange, resetRouting } = useAvoidNodesRouterFromWorker(
+  const { updateRoutingOnNodesChange } = useAvoidNodesRouterFromWorker(
     nodes,
     initEdges,
     { edgeRounding: 12, edgeToNodeSpacing: 25, edgeToEdgeSpacing: 20, autoBestSideConnection: true, shouldSplitEdgesNearHandle: true },
   );
-
-  const deferredReset = useCallback(() => {
-    requestAnimationFrame(() => resetRouting());
-  }, [resetRouting]);
 
   const onNodesChange = useCallback(
     (changes: NodeChange<Node>[]) => {
@@ -75,34 +70,20 @@ function DiagramFlow({ nodes: initNodes, edges: initEdges, height }: {
     [updateRoutingOnNodesChange],
   );
 
-  const onNodeDragStop = useCallback(
-    (_event: React.MouseEvent, _draggedNode: Node, draggedNodes: Node[]) => {
-      setNodes((nds) => {
-        const posMap = new Map(draggedNodes.map((n) => [n.id, n.position]));
-        const updated = nds.map((n) => {
-          const pos = posMap.get(n.id);
-          return pos ? { ...n, position: pos } : n;
-        });
-        return resolveCollisions(updated, { margin: 20, maxIterations: 50 });
-      });
-      deferredReset();
-    },
-    [deferredReset],
-  );
-
   return (
     <div className="flow-diagram" style={{ height }}>
       <ReactFlow
         nodes={nodes}
         edges={initEdges}
         onNodesChange={onNodesChange}
-        onNodeDragStop={onNodeDragStop}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         defaultEdgeOptions={{ type: "avoidNodes" }}
         fitView
         fitViewOptions={{ padding: 0.3 }}
+        nodesDraggable={false}
         nodesConnectable={false}
+        edgesFocusable={false}
         proOptions={{ hideAttribution: true }}
         selectNodesOnDrag={false}
       >
@@ -151,7 +132,9 @@ function SimpleDiagram({ nodes: initNodes, edges, height }: { nodes: Node[]; edg
         onNodesChange={onNodesChange}
         fitView
         fitViewOptions={{ padding: 0.3 }}
+        nodesDraggable={false}
         nodesConnectable={false}
+        edgesFocusable={false}
         proOptions={{ hideAttribution: true }}
         selectNodesOnDrag={false}
       >
