@@ -14,7 +14,7 @@ AI-powered coding assistant — **CLI + VS Code Extension**. Multi-provider (Ant
 
 An intelligent coding agent that reads, writes, searches, and runs commands in your codebase — controlled through natural language. Think Claude Code, but open source and multi-provider.
 
-**CLI** — terminal-based interactive chat with streaming, slash commands, conversation history, message queuing, plan mode, effort control, context providers (@terminal, @tree, @url, @codebase), and auto-complete.
+**CLI** — terminal-based interactive chat with streaming, slash commands, conversation history, message queuing, plan mode, effort control, context providers (@terminal, @tree, @url, @codebase, @git, @diff, @clipboard, @file), and auto-complete.
 
 **VS Code Extension** — sidebar chat panel, editor panel (beside code), multi-tab conversations, inline edit (Cmd+I), inline autocomplete (Tab completion), clickable file paths, inline diff preview, image support, syntax-highlighted code blocks with copy button.
 
@@ -39,133 +39,150 @@ On first run with no API key configured, the CLI launches an interactive setup w
 
 ---
 
+## Implementation Status
+
+### What's Implemented
+
+| Component | Status | Details |
+|-----------|--------|---------|
+| **Tools** | 20/20 | All tools fully implemented including background shell mode |
+| **Permissions** | Complete | 5 modes, settings rules, path checking |
+| **Sandbox** | Complete | Filesystem + network + shell environment sandboxing |
+| **Context Providers** | 10/10 | terminal, tree, url, codebase, open, problems, clipboard, file, git, diff |
+| **Hooks** | Complete | Pre/post tool execution, templating, timeouts |
+| **Rules** | Complete | Glob-scoped rules from `.cdoing/rules/*.md` |
+| **Indexing** | Complete | SQLite FTS5 with BM25 ranking, code-aware chunking |
+| **MCP Support** | Complete | Server discovery, JSON-RPC 2.0 over stdio, tool routing |
+| **OAuth** | Complete | PKCE flow, platform-specific secure storage (Keychain/libsecret/Credential Manager) |
+| **Agent Runner** | Complete | Full agentic loop, streaming, parallel tool execution, retry with backoff |
+| **LLM Providers** | Complete | Anthropic, OpenAI, Google, Ollama, custom OpenAI-compatible |
+| **Context Manager** | Complete | Token counting, FIFO pruning at 75%, cost tracking |
+| **System Prompt** | Complete | Layered builder with rules + permission awareness |
+| **CLI** | Complete | Ink React TUI, streaming, history, setup wizard, slash commands |
+| **VS Code Extension** | Complete | Chat panel, inline edit, inline autocomplete, React webview |
+| **Docs Site** | Complete | Next.js with 11 pages, responsive, interactive architecture diagrams |
+
+### What's Missing / In Progress
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| **Tests** | Not started | TypeScript compiler (`tsc`) used for validation; no test suite |
+| **Accurate token counting** | Not started | Currently uses ~4 chars/token estimate; needs tiktoken/llama tokenizer |
+| **Embedding model wiring** | Partial | Interface + storage implemented, not wired to CLI/extension config |
+| **Advanced edit strategies** | Not started | Jaro-Winkler fuzzy matching, unified diff patches, streaming diff, lazy apply |
+| **Tree-sitter AST** | Not started | Using regex heuristics for code chunking; tree-sitter would improve accuracy |
+| **Docs context provider** | Not started | `@docs <url>` for documentation retrieval |
+| **Database context provider** | Not started | `@db` for schema/query context |
+
+---
+
 ## Comparison with Continue.dev
 
 ### Tools
 
-| Area | Cdoing Agent (17 tools) | Continue (19 tools) | Status |
+| Area | Cdoing Agent (20 tools) | Continue (19 tools) | Status |
 |---|---|---|---|
-| File read | `file_read` (full file + offset/limit + images + PDFs) | `read_file` + `read_file_range` | ✅ Complete |
-| File write | `file_write` (create/overwrite) | `create_new_file` | ✅ Complete |
-| File edit | `file_edit` (multi-strategy match: exact → trimmed → case-insensitive → whitespace-ignored) | `single_find_and_replace` | ✅ Enhanced |
-| Multi edit | `multi_edit` (atomic batch edits) | `multi_edit` | ✅ Complete |
-| File delete | `file_delete` (permission-controlled, safe deletion) | *(via shell)* | ✅ We have extra |
-| Glob search | `glob_search` (.gitignore aware) | `file_glob_search` | ✅ Complete |
-| Grep search | `grep_search` (regex, .gitignore aware) | `grep_search` (ripgrep + trigrams) | ✅ Complete |
-| Shell exec | `shell_exec` (path permission checks, destructive detection) | `run_terminal_command` (+ background mode) | ⚠️ Missing: background mode |
-| File run | `file_run` (auto-detect 14 languages) | — | ✅ We have extra |
-| Code verify | `code_verify` (syntax/type check) | — | ✅ We have extra |
-| Web fetch | `web_fetch` (HTML → text, JSON) | `fetch_url_content` | ✅ Complete |
-| Web search | `web_search` (DuckDuckGo) | `search_web` | ✅ Complete |
-| Sub-agent | `sub_agent` (parallel research) | — | ✅ We have extra |
-| Todo | `todo` (task tracking) | — | ✅ We have extra |
-| System info | `system_info` (live permission/sandbox state) | — | ✅ We have extra |
-| **Missing** | — | `ls` (directory listing) | 🔴 To implement |
-| **Missing** | — | `view_diff` (git diff) | 🔴 To implement |
-| **Missing** | — | `view_repo_map` (structural overview) | 🔴 To implement |
-| **Missing** | — | `codebase` (semantic RAG search) | 🔴 Major gap |
+| File read | `file_read` (full file + offset/limit + images + PDFs) | `read_file` + `read_file_range` | Done |
+| File write | `file_write` (create/overwrite) | `create_new_file` | Done |
+| File edit | `file_edit` (multi-strategy match: exact → trimmed → case-insensitive → whitespace-ignored) | `single_find_and_replace` | Done |
+| Multi edit | `multi_edit` (atomic batch edits) | `multi_edit` | Done |
+| File delete | `file_delete` (permission-controlled, safe deletion) | *(via shell)* | Extra |
+| Glob search | `glob_search` (.gitignore aware) | `file_glob_search` | Done |
+| Grep search | `grep_search` (regex, .gitignore aware) | `grep_search` (ripgrep + trigrams) | Done |
+| Shell exec | `shell_exec` (path permission checks, destructive detection, background mode) | `run_terminal_command` | Done |
+| File run | `file_run` (auto-detect 14 languages) | — | Extra |
+| Code verify | `code_verify` (syntax/type check) | — | Extra |
+| Web fetch | `web_fetch` (HTML → text, JSON) | `fetch_url_content` | Done |
+| Web search | `web_search` (DuckDuckGo) | `search_web` | Done |
+| Sub-agent | `sub_agent` (parallel research) | — | Extra |
+| Todo | `todo` (task tracking) | — | Extra |
+| System info | `system_info` (live permission/sandbox state) | — | Extra |
+| List dir | `list_dir` (.gitignore aware, recursive, depth control) | `ls` | Done |
+| View diff | `view_diff` (working, staged, between commits/branches) | `view_diff` | Done |
+| View repo map | `view_repo_map` (structural overview, language detection) | `view_repo_map` | Done |
+| Codebase search | `codebase_search` (FTS5 indexed + optional embeddings) | `codebase` (vector RAG) | Done |
+| — | — | `read_currently_open_file` | Not needed (handled by `@open` context) |
 
 ### Permission & Security
 
 | Feature | Cdoing Agent | Continue |
 |---|---|---|
 | Permission modes | 5 modes (default, acceptEdits, plan, dontAsk, bypass) | Tool policies (allow, deny, allowWithPermission) |
-| Settings-based rules | ✅ Allow/Ask/Deny with path/command matching | ✅ Similar |
-| Sandbox (filesystem) | ✅ allowWrite/denyWrite/denyRead with path prefixes | ✅ OS-level (Seatbelt/bubblewrap) |
-| Sandbox (network) | ✅ Domain allowlist + session approval | ✅ Similar |
-| Shell path checking | ✅ Extracts paths from commands, checks Read/Edit/Delete rules | ❌ Not implemented |
-| Delete protection | ✅ Dedicated `file_delete` tool with `Delete` permission category | ❌ Via shell only |
-| System introspection | ✅ `system_info` tool — LLM queries own permissions live | ❌ Not available |
+| Settings-based rules | Allow/Ask/Deny with path/command matching | Similar |
+| Sandbox (filesystem) | allowWrite/denyWrite/denyRead with path prefixes | OS-level (Seatbelt/bubblewrap) |
+| Sandbox (network) | Domain allowlist + session approval | Similar |
+| Shell path checking | Extracts paths from commands, checks Read/Edit/Delete rules | Not implemented |
+| Delete protection | Dedicated `file_delete` tool with `Delete` permission category | Via shell only |
+| System introspection | `system_info` tool — LLM queries own permissions live | Not available |
 
-### Context Management
+### Indexing & Retrieval
 
-| Feature | Cdoing Agent | Continue | Gap |
-|---|---|---|---|
-| Token counting | ~4 chars/token estimate | Tiktoken (OpenAI) / Llama tokenizer | 🟡 Less accurate |
-| Context pruning | Summarize old messages at 75% limit | FIFO prune from top, preserve system + last turn | ✅ Different, both work |
-| Output budgeting | Dynamic per-tool char budget | Similar | ✅ Same |
-| Cost tracking | Per-turn with model pricing tables | Similar | ✅ Same |
-| Tool output truncation | 30k chars, preserve tail | Similar | ✅ Same |
+| Feature | Cdoing Agent | Continue |
+|---|---|---|
+| **Full-text search** | SQLite FTS5 + BM25 + trigram tokenizer | SQLite FTS5 + BM25 + trigrams |
+| **Code chunking** | Code-aware (function/class boundaries for 7+ languages) + markdown + basic | Adaptive code-aware (384 tokens) |
+| **Incremental indexing** | SHA-256 content hashing, only re-indexes changed files | Similar |
+| **Vector embeddings** | Pluggable interface + SQLite storage (not wired to config yet) | LanceDB + configurable models |
+| **Code structure** | Regex heuristics | Tree-sitter AST (15+ languages) |
+| **Cross-branch cache** | Not implemented | Content-addressed dedup |
+| **Recently edited** | Not implemented | LRU cache feeds into retrieval |
 
 ### Context Providers
 
 | Provider | Cdoing Agent | Continue |
 |---|---|---|
-| Terminal | `@terminal` ✅ | ✅ |
-| Open files | `@open` ✅ | ✅ OpenFiles |
-| URL | `@url` ✅ | ✅ URL |
-| Tree | `@tree` ✅ | ✅ FileTree |
-| Problems | `@problems` ✅ | ✅ Problems |
-| Codebase | `@codebase` ✅ (text search + ranking) | ✅ (vector embeddings + RAG) |
-| Clipboard | `@clipboard` ✅ | ✅ |
-| File include | `@file` ✅ | ✅ File |
-| **Missing** | — | Git (commit, issues, MRs) |
+| Terminal | `@terminal` | Terminal |
+| Open files | `@open` | OpenFiles |
+| URL | `@url` | URL |
+| Tree | `@tree` | FileTree |
+| Problems | `@problems` | Problems |
+| Codebase | `@codebase` (FTS5 indexed search) | Codebase (vector RAG) |
+| Clipboard | `@clipboard` | Clipboard |
+| File include | `@file` | File |
+| Git | `@git` (branch, status, commits, blame, log) | Git |
+| Diff | `@diff` (working, staged, vs branch) | DiffContext |
 | **Missing** | — | Jira, Discord, Database |
 | **Missing** | — | Docs (HTTP), Greptile |
-| **Missing** | — | RepoMap, Folder, DiffContext |
 | **Missing** | — | DebugLocals |
-
-### Indexing & Retrieval — Major Gap
-
-| Feature | Cdoing Agent | Continue |
-|---|---|---|
-| **Codebase indexing** | ❌ None | ✅ 4 index types |
-| **Vector embeddings** | ❌ None | ✅ LanceDB + configurable models |
-| **Full-text search** | ❌ Runtime ripgrep only | ✅ SQLite FTS5 + BM25 + trigrams |
-| **Code structure** | ❌ None | ✅ Tree-sitter AST (15+ languages) |
-| **Chunking** | ❌ None | ✅ Adaptive code-aware (384 tokens) |
-| **RAG pipeline** | ❌ None | ✅ 2 pipelines, 4 retrieval sources |
-| **Cross-branch cache** | ❌ None | ✅ Content-addressed dedup |
-| **Recently edited** | ❌ None | ✅ LRU cache feeds into retrieval |
 
 ### Edit Tool Sophistication
 
 | Feature | Cdoing Agent | Continue |
 |---|---|---|
-| Exact match | ✅ | ✅ |
-| Trimmed match | ✅ | ✅ |
-| Case-insensitive match | ✅ | ✅ |
-| Whitespace-ignored match | ✅ (position mapping back to original) | ✅ |
-| Fuzzy match (Jaro-Winkler) | ❌ | ✅ (disabled but implemented) |
-| Multi-edit atomic batch | ✅ | ✅ |
-| Reverse-order replacement | ✅ (preserves positions) | ✅ |
-| Lazy apply (LLM-assisted) | ❌ | ✅ (3 strategies: deterministic, unified diff, streaming) |
-| Tree-sitter AST editing | ❌ | ✅ |
-| Streaming diff | ❌ | ✅ |
+| Exact match | Done | Done |
+| Trimmed match | Done | Done |
+| Case-insensitive match | Done | Done |
+| Whitespace-ignored match | Done (position mapping back to original) | Done |
+| Fuzzy match (Jaro-Winkler) | Not implemented | Implemented (disabled) |
+| Multi-edit atomic batch | Done | Done |
+| Reverse-order replacement | Done (preserves positions) | Done |
+| Lazy apply (LLM-assisted) | Not implemented | 3 strategies: deterministic, unified diff, streaming |
+| Tree-sitter AST editing | Not implemented | Done |
+| Streaming diff | Not implemented | Done |
 
 ---
 
-## Roadmap — What To Implement Next
+## Roadmap — What's Left
 
-### Phase 1: Missing Tools (Quick Wins)
+### Phase 1: Missing Tools (Quick Wins) — DONE
 
-- [ ] **`ls` tool** — list directory contents with optional recursive mode
-- [ ] **`view_diff` tool** — show git diff (working changes, staged, between commits)
-- [ ] **`view_repo_map` tool** — generate structural overview of the repository
-- [ ] **Background shell mode** — `shell_exec` with `background: true` for servers/watchers
+- [x] **`list_dir` tool** — directory listing with recursive mode and depth control
+- [x] **`view_diff` tool** — git diff (working, staged, between commits/branches)
+- [x] **`view_repo_map` tool** — structural overview with language detection
+- [x] **Background shell mode** — `shell_exec` with `background: true` for servers/watchers
 
-### Phase 2: Codebase Indexing (High Impact)
+### Phase 2: Codebase Indexing — DONE
 
-- [ ] **SQLite FTS5 index** — full-text search with BM25 ranking + trigram tokenization
-  - Index on first use, incremental updates on file change
-  - Path-weighted search (10x boost for filename matches)
-  - Store in `~/.cdoing/index.sqlite`
-- [ ] **Code chunking** — split files into meaningful chunks (384 tokens default)
-  - Code-aware chunking using simple heuristic (function/class boundaries)
-  - Basic chunker fallback for non-code files
-  - Skip files >1MB
-- [ ] **Upgrade `@codebase` provider** — use FTS index instead of runtime scan
+- [x] **SQLite FTS5 index** — full-text search with BM25 ranking + trigram tokenization
+- [x] **Code chunking** — code-aware chunking (function/class boundaries for 7+ languages)
+- [x] **Upgrade `@codebase` provider** — uses FTS index with incremental updates
 
-### Phase 3: Vector Embeddings & RAG (Major Upgrade)
+### Phase 3: Vector Embeddings & RAG — PARTIAL
 
-- [ ] **Embedding model support** — configurable (OpenAI, local models via Ollama)
-- [ ] **Vector storage** — LanceDB or SQLite with vector extension
-- [ ] **RAG retrieval pipeline** — combine:
-  - Recently edited files (25%)
-  - Full-text search (25%)
-  - Vector embeddings (50%)
-- [ ] **`codebase` search tool** — semantic search exposed as an LLM tool
-- [ ] **Content-addressed caching** — hash file content to skip re-indexing across branches
+- [x] **Embedding provider interface** — pluggable with any embedding model
+- [x] **Vector storage** — SQLite with JSON vectors + cosine similarity
+- [ ] **Wire to CLI/extension config** — let users configure embedding model via setup wizard
+- [ ] **Content-addressed caching** — hash-based dedup across branches
 
 ### Phase 4: Advanced Edit Strategies
 
@@ -174,11 +191,10 @@ On first run with no API key configured, the CLI launches an interactive setup w
 - [ ] **Streaming diff** — real-time diff generation as LLM streams code
 - [ ] **Lazy apply** — LLM uses `// ... existing code ...` placeholders, system fills in
 
-### Phase 5: More Context Providers
+### Phase 5: More Context Providers — PARTIAL
 
-- [ ] **Git context** — `@git` for commit history, blame, branch info
-- [ ] **Diff context** — `@diff` for current working changes
-- [ ] **Folder context** — `@folder` for directory-scoped context
+- [x] **Git context** — `@git` for commit history, blame, branch info
+- [x] **Diff context** — `@diff` for current working changes
 - [ ] **Docs context** — `@docs <url>` for documentation retrieval
 - [ ] **Database context** — `@db` for schema/query context
 
@@ -261,7 +277,7 @@ code packages/vscode-extension
 | Click `</>` icon in activity bar | Opens chat in sidebar |
 | `Cmd+Shift+L` | Opens chat as editor panel beside your code |
 | `Cmd+I` / `Ctrl+I` | Inline edit — select code, type instruction, see diff |
-| Click 💬 on file title bar | Opens chat with file context pre-filled |
+| Click chat on file title bar | Opens chat with file context pre-filled |
 | Right-click selected code | Explain, Refactor, Fix, Inline Edit, Send to Chat |
 
 ### Multi-Tab, Image Support, Inline Autocomplete
@@ -272,7 +288,7 @@ code packages/vscode-extension
 
 ---
 
-## Tools (17 Built-In)
+## Tools (20 Built-In)
 
 ### File Operations
 
@@ -290,12 +306,16 @@ code packages/vscode-extension
 |------|-------------|:---:|
 | `glob_search` | Find files by glob pattern (e.g., `**/*.ts`). Respects `.gitignore`. | No |
 | `grep_search` | Search file contents with regex. Case-insensitive and file-filter options. | No |
+| `list_dir` | List directory contents with .gitignore respect, recursive mode, depth control. | No |
+| `view_diff` | Show git diff — working changes, staged, or between commits/branches. | No |
+| `view_repo_map` | Structural overview: languages, config files, entry points, git info. | No |
+| `codebase_search` | FTS5 indexed search with BM25 ranking. Lazy index on first use, incremental updates. | No |
 
 ### Code Execution
 
 | Tool | Description | Permission |
 |------|-------------|:---:|
-| `shell_exec` | Run shell commands. Extracts paths and checks Read/Edit/Delete permissions. Flags destructive commands. | Yes |
+| `shell_exec` | Run shell commands. Extracts paths and checks Read/Edit/Delete permissions. Background mode for servers/watchers. | Yes |
 | `file_run` | Run scripts by extension (.js, .ts, .py, .rb, .sh, .go, etc.). Timeout: 30s. | Yes |
 | `code_verify` | Syntax and type checking for the current project. | No |
 
@@ -393,11 +413,13 @@ Use `@` triggers to attach context:
 | `@terminal` | Last terminal command output |
 | `@tree [path] [depth]` | Workspace file tree |
 | `@url <url>` | Fetch and attach web page content |
-| `@codebase <query>` | Search entire codebase |
+| `@codebase <query>` | FTS5 indexed codebase search |
 | `@open` | All open editor files (VS Code only) |
 | `@problems` | Current file diagnostics/errors (VS Code only) |
 | `@clipboard` | Clipboard contents |
 | `@file <path>` | Include specific file |
+| `@git` | Branch, status, commits, blame, log |
+| `@diff` | Working changes, staged, or vs branch |
 
 ---
 
@@ -456,11 +478,12 @@ cdoing-agent/
 ├── packages/
 │   ├── core/                    # @cdoing/core — tools, permissions, sandbox, hooks
 │   │   └── src/
-│   │       ├── tools/           # 17 built-in tools
+│   │       ├── tools/           # 20 built-in tools
 │   │       ├── permissions/     # Permission manager (5 modes, settings rules)
 │   │       ├── sandbox/         # Filesystem & network sandboxing
 │   │       ├── hooks/           # Pre/post tool execution hooks
-│   │       ├── context-providers/ # 8 @ mention providers
+│   │       ├── context-providers/ # 10 @ mention providers
+│   │       ├── indexing/        # SQLite FTS5 codebase indexing
 │   │       ├── rules/           # Glob-scoped project rules
 │   │       ├── plan/            # Plan mode manager
 │   │       ├── mcp/             # MCP server manager
@@ -474,6 +497,7 @@ cdoing-agent/
 │   │       └── system-prompt.ts # System prompt with permission awareness
 │   ├── cli/                     # @cdoing/cli — terminal interface
 │   └── vscode-extension/        # VS Code extension (React webview)
+├── docs/                        # Next.js documentation site
 ```
 
 ---
