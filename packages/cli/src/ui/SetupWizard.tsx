@@ -3,10 +3,10 @@
  * Triggered by /setup.  Arrow keys navigate, Enter selects, Esc cancels.
  */
 
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { Box, Text, useInput } from "ink";
 import { loadConfig, saveConfig } from "../config";
-import { oauthLogin, saveOAuthTokens } from "../oauth";
+import { generateOAuthUrl, exchangeOAuthCode } from "../oauth";
 
 // ── Static data ───────────────────────────────────────────────────────────────
 
@@ -52,7 +52,14 @@ const KEY_URLS: Record<string, string> = {
   google:    "https://aistudio.google.com/apikey",
 };
 
-type Step = "provider" | "model" | "auth-method" | "apikey" | "oauth-waiting" | "done";
+type Step =
+  | "provider"
+  | "model"
+  | "auth-method"
+  | "apikey"
+  | "oauth-paste"
+  | "oauth-exchanging"
+  | "done";
 
 // ── Menu sub-component ────────────────────────────────────────────────────────
 
@@ -109,33 +116,33 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
   onCancel,
 }) => {
   const initProviderIdx = Math.max(0, PROVIDERS.findIndex(p => p.value === currentProvider));
-  const [step, setStep]                 = useState<Step>("provider");
-  const [providerIdx, setProviderIdx]   = useState(initProviderIdx);
-  const [modelIdx, setModelIdx]         = useState(0);
-  const [authIdx, setAuthIdx]           = useState(0);
+  const [step, setStep]                     = useState<Step>("provider");
+  const [providerIdx, setProviderIdx]       = useState(initProviderIdx);
+  const [modelIdx, setModelIdx]             = useState(0);
+  const [authIdx, setAuthIdx]               = useState(0);
   const [chosenProvider, setChosenProvider] = useState(currentProvider);
-  const [chosenModel, setChosenModel]   = useState(currentModel);
-  const [apiKeyInput, setApiKeyInput]   = useState("");
-  const [showKey, setShowKey]           = useState(false);
-  const [oauthStatus, setOauthStatus]   = useState<"waiting" | "success" | "error">("waiting");
-  const [oauthError, setOauthError]     = useState("");
+  const [chosenModel, setChosenModel]       = useState(currentModel);
+  // API key step
+  const [apiKeyInput, setApiKeyInput]       = useState("");
+  const [showKey, setShowKey]               = useState(false);
+  // OAuth paste step
+  const [oauthUrl, setOauthUrl]             = useState("");
+  const [oauthVerifier, setOauthVerifier]   = useState("");
+  const [oauthCodeInput, setOauthCodeInput] = useState("");
+  const [showCode, setShowCode]             = useState(false);
+  const [oauthError, setOauthError]         = useState("");
+  // prevent double-fire of exchange
+  const exchangingRef                       = useRef(false);
 
-  // Kick off OAuth login when we enter that step
+  // When we enter oauth-paste, generate URL and open browser
   useEffect(() => {
-    if (step !== "oauth-waiting") return;
-    oauthLogin()
-      .then((tokens) => {
-        saveOAuthTokens(tokens);
-        _save(chosenProvider, chosenModel, tokens.access_token);
-        setOauthStatus("success");
-        setTimeout(() => {
-          onDone({ provider: chosenProvider, model: chosenModel, apiKey: tokens.access_token });
-        }, 800);
-      })
-      .catch((err: Error) => {
-        setOauthStatus("error");
-        setOauthError(err.message);
-      });
+    if (step !== "oauth-paste") return;
+    const { url, codeVerifier } = generateOAuthUrl();
+    setOauthUrl(url);
+    setOauthVerifier(codeVerifier);
+    setOauthCodeInput("");
+    setOauthError("");
+    openBrowser(url);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
 
@@ -150,8 +157,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
         const p = PROVIDERS[providerIdx].value;
         setChosenProvider(p);
         const models = MODELS[p] || [];
-        const mi = Math.max(0, models.findIndex(m => m.value === currentModel));
-        setModelIdx(mi);
+        setModelIdx(Math.max(0, models.findIndex(m => m.value === currentModel)));
         setStep("model");
         return;
       }
@@ -184,8 +190,8 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
       if (key.downArrow) { setAuthIdx(i => Math.min(AUTH_METHODS.length - 1, i + 1)); return; }
       if (key.return) {
         if (AUTH_METHODS[authIdx].value === "oauth") {
-          setOauthStatus("waiting");
-          setStep("oauth-waiting");
+          exchangingRef.current = false;
+          setStep("oauth-paste");
         } else {
           setStep("apikey");
         }
@@ -207,27 +213,43 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
       if (char && !key.ctrl && !key.meta) { setApiKeyInput(k => k + char); return; }
     }
 
-    // ── OAuth waiting — only ESC (re-cancel) or retry after error ────────
-    if (step === "oauth-waiting" && oauthStatus === "error") {
+    // ── OAuth paste — user types/pastes the code from the redirect URL ────
+    if (step === "oauth-paste") {
       if (key.return) {
-        // Retry
-        setOauthStatus("waiting");
-        setStep("auth-method");
-        setTimeout(() => setStep("oauth-waiting"), 0);
+        const code = oauthCodeInput.trim();
+        if (!code) return;
+        if (exchangingRef.current) return;
+        exchangingRef.current = true;
+        setStep("oauth-exchanging");
+        exchangeOAuthCode(code, oauthVerifier)
+          .then((tokens) => {
+            _save(chosenProvider, chosenModel, tokens.access_token);
+            setTimeout(() => {
+              onDone({ provider: chosenProvider, model: chosenModel, apiKey: tokens.access_token });
+            }, 600);
+          })
+          .catch((err: Error) => {
+            exchangingRef.current = false;
+            setOauthError(err.message);
+            setStep("oauth-paste");
+          });
+        return;
       }
+      if (key.backspace || key.delete) { setOauthCodeInput(k => k.slice(0, -1)); return; }
+      if (key.ctrl && char === "s")    { setShowCode(v => !v); return; }
+      if (char && !key.ctrl && !key.meta) { setOauthCodeInput(k => k + char); return; }
     }
-  }, [step, providerIdx, modelIdx, authIdx, chosenProvider, chosenModel, apiKeyInput, oauthStatus, onCancel, onDone]));
-
-  // ── Step counter helper ───────────────────────────────────────────────────
-
-  const totalSteps = chosenProvider === "anthropic" ? 4 : chosenProvider === "ollama" ? 2 : 3;
+  }, [step, providerIdx, modelIdx, authIdx, chosenProvider, chosenModel,
+      apiKeyInput, oauthCodeInput, oauthVerifier, onCancel, onDone]));
 
   // ── Renders ───────────────────────────────────────────────────────────────
+
+  const totalSteps = chosenProvider === "anthropic" ? 4 : chosenProvider === "ollama" ? 2 : 3;
 
   if (step === "provider") {
     return (
       <Box flexDirection="column" paddingY={1}>
-        <Text color="cyan" bold>{"  ⚙  Setup Wizard  (1/" + totalSteps + " — Provider)"}</Text>
+        <Text color="cyan" bold>{`  ⚙  Setup Wizard  (1/${totalSteps} — Provider)`}</Text>
         <Menu title={"  Choose a provider"} items={PROVIDERS} selectedIdx={providerIdx} />
       </Box>
     );
@@ -237,7 +259,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
     const models = MODELS[chosenProvider] || [];
     return (
       <Box flexDirection="column" paddingY={1}>
-        <Text color="cyan" bold>{"  ⚙  Setup Wizard  (2/" + totalSteps + " — Model)"}</Text>
+        <Text color="cyan" bold>{`  ⚙  Setup Wizard  (2/${totalSteps} — Model)`}</Text>
         <Menu title={`  Choose a model for ${chosenProvider}`} items={models} selectedIdx={modelIdx} />
       </Box>
     );
@@ -275,32 +297,39 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
     );
   }
 
-  if (step === "oauth-waiting") {
-    if (oauthStatus === "success") {
-      return (
-        <Box flexDirection="column" paddingY={1} paddingLeft={2}>
-          <Text color="green" bold>{"  ✓ OAuth login successful!"}</Text>
-          <Text dimColor>{"  Tokens saved to keychain. Returning to chat…"}</Text>
-        </Box>
-      );
-    }
-    if (oauthStatus === "error") {
-      return (
-        <Box flexDirection="column" paddingY={1} paddingLeft={2}>
-          <Text color="red" bold>{"  ✗ OAuth login failed"}</Text>
-          <Text color="white">{`  ${oauthError}`}</Text>
-          <Text dimColor>{"  Press Enter to retry  ·  Esc to cancel"}</Text>
-        </Box>
-      );
-    }
+  if (step === "oauth-paste") {
+    const maskedCode = showCode ? oauthCodeInput : oauthCodeInput.replace(/./g, "●");
     return (
       <Box flexDirection="column" paddingY={1} paddingLeft={2}>
         <Text color="cyan" bold>{"  ⚙  Setup Wizard  (4/4 — OAuth)"}</Text>
         <Text dimColor>{"─".repeat(50)}</Text>
-        <Text color="white">{"  Opening browser for Claude OAuth login…"}</Text>
-        <Text dimColor>{"  If browser doesn't open, check your terminal for a URL."}</Text>
+        <Text color="white">{"  1. Browser opening to Claude login…"}</Text>
+        <Text color="white">{"  2. Approve access → you'll be redirected to a URL"}</Text>
+        <Text color="white">{"  3. Copy the 'code' value from that URL and paste below"}</Text>
+        {oauthUrl
+          ? <Text dimColor>{`\n  URL: ${oauthUrl.substring(0, 80)}…`}</Text>
+          : null}
+        {oauthError
+          ? <Text color="red">{`\n  ✗ ${oauthError}`}</Text>
+          : null}
         <Text>{" "}</Text>
-        <Text dimColor>{"  Waiting for authorization (timeout: 2 min)  ·  Esc cancel"}</Text>
+        <Box>
+          <Text color="green">{"  Code: "}</Text>
+          <Text color="white">{maskedCode || " "}</Text>
+          <Text color="green">{"▊"}</Text>
+        </Box>
+        <Text>{" "}</Text>
+        <Text dimColor>{"  Paste code then Enter  ·  Ctrl+S toggle visible  ·  Esc cancel"}</Text>
+      </Box>
+    );
+  }
+
+  if (step === "oauth-exchanging") {
+    return (
+      <Box flexDirection="column" paddingY={1} paddingLeft={2}>
+        <Text color="cyan" bold>{"  ⚙  Setup Wizard  (4/4 — OAuth)"}</Text>
+        <Text dimColor>{"─".repeat(50)}</Text>
+        <Text color="yellow">{"  Exchanging code for tokens…"}</Text>
       </Box>
     );
   }
@@ -308,7 +337,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
   return null;
 };
 
-// ── Helper ────────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function _save(provider: string, model: string, apiKey: string | undefined) {
   const config = loadConfig();
@@ -319,4 +348,12 @@ function _save(provider: string, model: string, apiKey: string | undefined) {
     config.apiKeys[provider] = apiKey;
   }
   saveConfig(config);
+}
+
+function openBrowser(url: string): void {
+  const { exec } = require("child_process") as typeof import("child_process");
+  const cmd = process.platform === "darwin" ? `open "${url}"`
+    : process.platform === "win32" ? `start "" "${url}"`
+    : `xdg-open "${url}"`;
+  exec(cmd, () => {});
 }
