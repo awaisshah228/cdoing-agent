@@ -17,6 +17,7 @@ import "@xyflow/react/dist/style.css";
 
 import { useAvoidNodesRouterFromWorker } from "avoid-nodes-edge";
 import { AvoidNodesEdge } from "avoid-nodes-edge/edge";
+import { resolveCollisions } from "@/utils/resolve-collisions";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const edgeTypes: EdgeTypes = { avoidNodes: AvoidNodesEdge as any };
@@ -52,11 +53,15 @@ function DiagramFlow({ nodes: initNodes, edges: initEdges, height }: {
 }) {
   const [nodes, setNodes] = useState<Node[]>(initNodes);
 
-  const { updateRoutingOnNodesChange } = useAvoidNodesRouterFromWorker(
+  const { updateRoutingOnNodesChange, resetRouting } = useAvoidNodesRouterFromWorker(
     nodes,
     initEdges,
     { edgeRounding: 50, edgeToNodeSpacing: 20, edgeToEdgeSpacing: 15, autoBestSideConnection: true },
   );
+
+  const deferredReset = useCallback(() => {
+    requestAnimationFrame(() => resetRouting());
+  }, [resetRouting]);
 
   const onNodesChange = useCallback(
     (changes: NodeChange<Node>[]) => {
@@ -66,12 +71,26 @@ function DiagramFlow({ nodes: initNodes, edges: initEdges, height }: {
     [updateRoutingOnNodesChange],
   );
 
+  const onNodeDragStop = useCallback(
+    (_event: React.MouseEvent, draggedNode: Node) => {
+      setNodes((nds) => {
+        const updated = nds.map((n) =>
+          n.id === draggedNode.id ? { ...n, position: draggedNode.position } : n,
+        );
+        return resolveCollisions(updated, { margin: 20, maxIterations: 50 });
+      });
+      deferredReset();
+    },
+    [deferredReset],
+  );
+
   return (
     <div className="flow-diagram" style={{ height }}>
       <ReactFlow
         nodes={nodes}
         edges={initEdges}
         onNodesChange={onNodesChange}
+        onNodeDragStop={onNodeDragStop}
         edgeTypes={edgeTypes}
         defaultEdgeOptions={{ type: "avoidNodes" }}
         fitView
