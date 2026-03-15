@@ -30,6 +30,7 @@ import {
   ViewRepoMapTool,
   CodebaseSearchTool,
   ASTEditTool,
+  NotebookEditTool,
   loadProjectConfig,
 } from "@cdoing/core";
 import {
@@ -482,6 +483,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     this.toolRegistry.register(new MultiEditTool(workingDir, sm));
     this.toolRegistry.register(new FileDeleteTool(workingDir, sm));
     this.toolRegistry.register(new ASTEditTool(workingDir, sm));
+    this.toolRegistry.register(new NotebookEditTool(workingDir, sm));
     this.toolRegistry.register(new GlobSearchTool(workingDir));
     this.toolRegistry.register(new GrepSearchTool(workingDir));
     this.toolRegistry.register(new ListDirTool(workingDir, sm));

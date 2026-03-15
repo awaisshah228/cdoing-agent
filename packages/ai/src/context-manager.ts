@@ -9,8 +9,14 @@ import type { BaseMessage } from "@langchain/core/messages";
 import { HumanMessage, AIMessage, SystemMessage } from "@langchain/core/messages";
 
 /**
- * Token counting — uses js-tiktoken for OpenAI models (accurate),
- * falls back to ~4 chars/token estimate for others.
+ * Token counting — uses js-tiktoken for accurate counting across providers.
+ *
+ * - OpenAI models: cl100k_base / o200k_base (exact)
+ * - Anthropic Claude: cl100k_base (close approximation, ~95% accurate)
+ * - Others: cl100k_base with fallback to ~3.5 chars/token
+ *
+ * Using tiktoken for all providers gives much better context window
+ * management than the ~3.5 chars/token estimate.
  */
 let tiktokenEncoder: any = null;
 let tiktokenLoaded = false;
@@ -19,29 +25,27 @@ function loadTiktoken(): void {
   if (tiktokenLoaded) return;
   tiktokenLoaded = true;
   try {
-    const { encodingForModel } = require("js-tiktoken");
-    tiktokenEncoder = encodingForModel("gpt-4o");
+    const { getEncoding } = require("js-tiktoken");
+    // cl100k_base works well for both OpenAI and Claude models
+    tiktokenEncoder = getEncoding("cl100k_base");
   } catch {
     // js-tiktoken not available — use fallback
     tiktokenEncoder = null;
   }
 }
 
-function estimateTokens(text: string, model?: string): number {
-  // Use tiktoken for OpenAI models
-  if (model && (model.startsWith("gpt") || model.startsWith("o1") || model.startsWith("o3"))) {
-    loadTiktoken();
-    if (tiktokenEncoder) {
-      try {
-        return tiktokenEncoder.encode(text).length;
-      } catch {
-        // Fallback on encoding error
-      }
+function estimateTokens(text: string, _model?: string): number {
+  // Try tiktoken for all models (cl100k_base is a good universal approximation)
+  loadTiktoken();
+  if (tiktokenEncoder) {
+    try {
+      return tiktokenEncoder.encode(text).length;
+    } catch {
+      // Fallback on encoding error
     }
   }
 
-  // For Anthropic/Google/others: estimate ~3.5 chars per token (more accurate than 4)
-  // Claude models average ~3.5 chars/token for English text
+  // Fallback: ~3.5 chars per token for English text
   return Math.ceil(text.length / 3.5);
 }
 

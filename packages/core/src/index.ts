@@ -21,6 +21,7 @@ export { ViewDiffTool } from "./tools/view-diff";
 export { ViewRepoMapTool } from "./tools/view-repo-map";
 export { CodebaseSearchTool } from "./tools/codebase-search";
 export { ASTEditTool } from "./tools/ast-edit";
+export { NotebookEditTool } from "./tools/notebook-edit";
 export type { ToolDefinition, ToolResult, BaseTool } from "./tools/types";
 
 // Search matching utilities
@@ -70,6 +71,7 @@ export { FileIncludeContextProvider } from "./context-providers/file-include";
 export { GitContextProvider } from "./context-providers/git";
 export { DiffContextProvider } from "./context-providers/diff";
 export { FolderContextProvider } from "./context-providers/folder";
+export { DocsContextProvider } from "./context-providers/docs";
 
 // Project Rules — hierarchical glob-scoped rules
 export { RulesManager } from "./rules/manager";
@@ -102,6 +104,7 @@ export {
 export type { OAuthTokens } from "./oauth";
 
 // Codebase Indexing — FTS5 + embeddings
-export { CodebaseIndexer, IndexDatabase, chunkDocument } from "./indexing";
+export { CodebaseIndexer, IndexDatabase, chunkDocument, RecentEditsCache } from "./indexing";
+export type { CachedEdit } from "./indexing";
 export type { EmbeddingProvider } from "./indexing";
 export type { SearchResult, IndexingProgress, IndexStats, ChunkWithMeta } from "./indexing";

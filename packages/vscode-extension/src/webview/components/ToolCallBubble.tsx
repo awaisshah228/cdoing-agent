@@ -27,6 +27,7 @@ const TOOL_CONFIG: Record<string, { label: string; icon: string }> = {
   multi_edit: { label: "MultiEdit", icon: "🔧" },
   file_delete: { label: "Delete", icon: "🗑️" },
   ast_edit: { label: "AST Edit", icon: "🌳" },
+  notebook_edit: { label: "Notebook", icon: "📓" },
   glob_search: { label: "Search files", icon: "🔍" },
   grep_search: { label: "Search code", icon: "🔎" },
   codebase_search: { label: "Codebase search", icon: "🔎" },

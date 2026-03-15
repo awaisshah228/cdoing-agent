@@ -51,6 +51,7 @@ const TOOL_ICONS: Record<string, string> = {
   multi_edit:      "🔧",
   file_delete:     "🗑️",
   ast_edit:        "🌳",
+  notebook_edit:   "📓",
   glob_search:     "🔍",
   grep_search:     "🔎",
   codebase_search: "🔎",

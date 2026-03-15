@@ -26,6 +26,7 @@ import {
   ViewRepoMapTool,
   CodebaseSearchTool,
   ASTEditTool,
+  NotebookEditTool,
   PermissionManager,
 } from "@cdoing/core";
 import type { SubAgentRunnerFactory } from "@cdoing/core";
@@ -59,6 +60,7 @@ export function createToolRegistry(
   registry.register(new MultiEditTool(workingDir, sm));
   registry.register(new FileDeleteTool(workingDir, sm));
   registry.register(new ASTEditTool(workingDir, sm));
+  registry.register(new NotebookEditTool(workingDir, sm));
 
   // Search & discovery tools
   registry.register(new GlobSearchTool(workingDir));

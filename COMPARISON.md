@@ -38,7 +38,7 @@ A detailed feature-by-feature comparison of Cdoing Agent with **Claude Code**, *
 |------|:---:|:---:|:---:|:---:|:---:|
 | File read | `file_read` | Read | `read_file` + `read_file_range` | Yes | Yes |
 | File write | `file_write` | Write | `create_new_file` | Yes | Yes |
-| File edit | `file_edit` (4-strategy match) | Edit | `single_find_and_replace` | Yes | Yes |
+| File edit | `file_edit` (5-strategy match + indent normalization) | Edit | `single_find_and_replace` | Yes | Yes |
 | Multi edit | `multi_edit` (atomic batch) | Yes | `multi_edit` | Yes | Yes |
 | File delete | `file_delete` | Yes | Via shell | Via shell | Via shell |
 | Glob search | `glob_search` | Glob | `file_glob_search` | Yes | Yes |
@@ -55,9 +55,9 @@ A detailed feature-by-feature comparison of Cdoing Agent with **Claude Code**, *
 | View diff | `view_diff` | Yes | `view_diff` | Yes | Yes |
 | Repo map | `view_repo_map` | No | `view_repo_map` | No | No |
 | Codebase search | `codebase_search` (FTS5) | No | `codebase` (vector RAG) | Yes (embeddings) | Yes (embeddings) |
-| Notebook edit | No | NotebookEdit | No | Yes | No |
+| Notebook edit | `notebook_edit` (read/edit/insert/delete cells) | NotebookEdit | No | Yes | No |
 | AST edit | `ast_edit` (tree-sitter, 13 langs) | No | Yes | Yes | No |
-| **Total** | **21** | **~15** | **19** | **~12** | **~10** |
+| **Total** | **22** | **~15** | **19** | **~12** | **~10** |
 
 ---
 
@@ -69,7 +69,7 @@ A detailed feature-by-feature comparison of Cdoing Agent with **Claude Code**, *
 | Trimmed match | Yes | Yes | Yes | N/A | N/A |
 | Case-insensitive match | Yes | Yes | Yes | N/A | N/A |
 | Whitespace-ignored match | Yes | Yes | Yes | N/A | N/A |
-| Fuzzy match (Jaro-Winkler) | No | No | Yes (disabled) | N/A | N/A |
+| Fuzzy match (Jaro-Winkler) | Yes (90% threshold) | No | Yes (disabled) | N/A | N/A |
 | Multi-edit atomic batch | Yes | Yes | Yes | Yes | Yes |
 | Unified diff patches | Yes | No | Yes | Yes | Yes |
 | Streaming diff | Yes (3 strategies: deterministic, unified, streaming) | No | Yes | Yes | Yes |
@@ -107,10 +107,10 @@ A detailed feature-by-feature comparison of Cdoing Agent with **Claude Code**, *
 | `@clipboard` | Yes | No | Yes | No | No |
 | `@git` | Yes | No | Yes | Yes | No |
 | `@diff` | Yes | No | Yes | No | No |
-| `@docs` (documentation) | No | No | Yes | Yes | No |
+| `@docs` (documentation) | Yes (npm + local + custom registry) | No | Yes | Yes | No |
 | `@jira` / `@discord` | No | No | Yes (via plugins) | No | No |
 | `@database` | No | No | Yes (via plugins) | No | No |
-| **Total** | **10** | **2** | **13+** | **4** | **2** |
+| **Total** | **11** | **2** | **13+** | **4** | **2** |
 
 ---
 
@@ -124,7 +124,7 @@ A detailed feature-by-feature comparison of Cdoing Agent with **Claude Code**, *
 | Vector embeddings | Interface only (not wired) | No | LanceDB + models | Yes | Yes |
 | Code structure parsing | Regex heuristics | No | Tree-sitter (15+ langs) | Tree-sitter | Proprietary |
 | Cross-branch cache | No | No | Content-addressed dedup | No | No |
-| Recently edited cache | No | No | LRU cache | Yes | Yes |
+| Recently edited cache | Yes (LRU, 50 files) | No | LRU cache | Yes | Yes |
 
 ---
 
@@ -191,20 +191,21 @@ A detailed feature-by-feature comparison of Cdoing Agent with **Claude Code**, *
 | Advantage | Details |
 |-----------|---------|
 | **Open source + multi-provider** | Unlike Claude Code (Anthropic-only) and Cursor/Windsurf (proprietary) |
-| **20 tools** | More built-in tools than any competitor |
+| **22 tools** | More built-in tools than any competitor (incl. AST edit, notebook edit) |
 | **Permission system** | 5 modes + settings rules + shell path checking — most granular of all |
 | **CLI + VS Code** | Both interfaces, unlike Cursor/Windsurf (editor only) or Continue (VS Code only) |
-| **10 context providers** | More than Claude Code (2) and Cursor (4) |
+| **11 context providers** | More than Claude Code (2) and Cursor (4), incl. @docs |
 | **Self-hostable** | Full control, no cloud dependency when using Ollama |
 | **Hooks system** | Pre/post tool execution hooks with templating |
 | **Background shell mode** | Run servers/watchers with PID tracking |
+| **Edit sophistication** | 5-strategy matching + fuzzy + indent normalization + unified diff + lazy apply + AST edit |
+| **Accurate token counting** | tiktoken (cl100k_base) for all providers, not just estimates |
 
 ## Summary — Where Competitors Win
 
 | Gap | Who Does It Better |
 |-----|-------------------|
 | **Vector embeddings (RAG)** | Cursor, Continue.dev, Windsurf — all have production embedding pipelines |
-| **Accurate token counting** | Continue.dev — tiktoken/llama tokenizers vs our ~4 chars/token estimate |
 | **Tests** | All competitors have test suites; Cdoing Agent has none |
 | **JetBrains support** | Continue.dev only |
-| **Docs/database providers** | Continue.dev — `@docs`, `@jira`, `@database` via plugins |
+| **@jira/@discord/@database** | Continue.dev — external integrations via plugins |

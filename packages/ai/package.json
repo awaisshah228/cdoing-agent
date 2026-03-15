@@ -14,7 +14,8 @@
     "@langchain/anthropic": "^0.3.14",
     "@langchain/openai": "^0.4.4",
     "@langchain/google-genai": "^0.2.3",
-    "@cdoing/core": "*"
+    "@cdoing/core": "*",
+    "js-tiktoken": "^1.0.15"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",
