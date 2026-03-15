@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DependencyGraph } from "@/components/DiagramWrapper";
 
 export default function Home() {
   return (
@@ -147,28 +148,7 @@ export default function Home() {
 
       <h2 className="doc-h2">Quick Architecture Overview</h2>
 
-      <div className="arch-diagram">{`
-  ┌─────────────────────────────────────────────────────┐
-  │                   User Interfaces                    │
-  │  ┌──────────────────┐   ┌────────────────────────┐  │
-  │  │   CLI (Terminal)  │   │  VS Code Extension     │  │
-  │  │  @cdoing/cli      │   │  cdoing-vscode         │  │
-  │  └────────┬─────────┘   └──────────┬─────────────┘  │
-  │           │                        │                 │
-  │           └────────┬───────────────┘                 │
-  │                    ▼                                 │
-  │  ┌─────────────────────────────────────────────┐    │
-  │  │             AI Package (@cdoing/ai)          │    │
-  │  │  Agent Runner │ Providers │ Context Manager  │    │
-  │  └──────────────────────┬──────────────────────┘    │
-  │                         ▼                            │
-  │  ┌─────────────────────────────────────────────┐    │
-  │  │           Core Package (@cdoing/core)        │    │
-  │  │  21 Tools │ Permissions │ Sandbox │ Indexing │    │
-  │  │  Context Providers │ Hooks │ Rules │ MCP     │    │
-  │  └─────────────────────────────────────────────┘    │
-  └─────────────────────────────────────────────────────┘
-      `}</div>
+      <DependencyGraph />
     </div>
   );
 }

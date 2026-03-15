@@ -1,3 +1,5 @@
+import { VscodeArchDiagram } from "@/components/DiagramWrapper";
+
 export default function VscodeExtension() {
   return (
     <div>
@@ -186,32 +188,7 @@ export default function VscodeExtension() {
 
       <h2 className="doc-h2">Architecture</h2>
 
-      <div className="arch-diagram">{`
-  ┌─────────────────────────────────────────────┐
-  │                VS Code Host                  │
-  │                                              │
-  │  ┌────────────────────────────────────────┐  │
-  │  │  extension.ts                          │  │
-  │  │  • Registers commands                  │  │
-  │  │  • Creates chat panel provider         │  │
-  │  │  • Handles inline edit/autocomplete    │  │
-  │  └────────────────┬───────────────────────┘  │
-  │                   │                          │
-  │  ┌────────────────▼───────────────────────┐  │
-  │  │  chat-panel-provider.ts                │  │
-  │  │  • Creates webview (React app)         │  │
-  │  │  • Runs agent (from @cdoing/ai)        │  │
-  │  │  • Bridges webview ↔ agent messages    │  │
-  │  └────────────────┬───────────────────────┘  │
-  │                   │                          │
-  │  ┌────────────────▼───────────────────────┐  │
-  │  │  Webview (React)                       │  │
-  │  │  • ChatPanel.tsx (messages, streaming) │  │
-  │  │  • InputArea.tsx (compose + send)      │  │
-  │  │  • SettingsPanel.tsx (configuration)   │  │
-  │  └────────────────────────────────────────┘  │
-  └─────────────────────────────────────────────┘
-      `}</div>
+      <VscodeArchDiagram />
 
       <h2 className="doc-h2">Development</h2>
 

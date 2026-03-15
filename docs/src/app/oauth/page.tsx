@@ -1,4 +1,4 @@
-import { OAuthFlowDiagram } from "@/components/ArchitectureDiagram";
+import { OAuthFlowDiagram } from "@/components/DiagramWrapper";
 
 export default function OAuthPage() {
   return (
@@ -102,8 +102,8 @@ export default function OAuthPage() {
         <div className="step-content">
           <div className="step-title">Paste the code</div>
           <div className="step-desc">
-            VS Code shows an input box — paste the authorization code from your
-            browser. Status changes to &quot;Logged in&quot;.
+            VS Code shows an input box — paste the authorization code. Status
+            changes to &quot;Logged in&quot;.
           </div>
         </div>
       </div>
@@ -118,60 +118,22 @@ export default function OAuthPage() {
       <h2 className="doc-h2">Token Storage</h2>
 
       <table className="doc-table">
-        <thead>
-          <tr>
-            <th>Platform</th>
-            <th>Storage</th>
-          </tr>
-        </thead>
+        <thead><tr><th>Platform</th><th>Storage</th></tr></thead>
         <tbody>
-          <tr>
-            <td>macOS</td>
-            <td>
-              Keychain via{" "}
-              <span className="inline-code">security</span> CLI
-            </td>
-          </tr>
-          <tr>
-            <td>Linux</td>
-            <td>
-              libsecret via{" "}
-              <span className="inline-code">secret-tool</span>
-            </td>
-          </tr>
-          <tr>
-            <td>Windows</td>
-            <td>
-              Credential Manager via{" "}
-              <span className="inline-code">cmdkey</span>
-            </td>
-          </tr>
-          <tr>
-            <td>Fallback</td>
-            <td>
-              AES-256-CBC encrypted file at{" "}
-              <span className="inline-code">
-                ~/.cdoing/.oauth-tokens.enc
-              </span>
-            </td>
-          </tr>
+          <tr><td>macOS</td><td>Keychain via <span className="inline-code">security</span> CLI</td></tr>
+          <tr><td>Linux</td><td>libsecret via <span className="inline-code">secret-tool</span></td></tr>
+          <tr><td>Windows</td><td>Credential Manager via <span className="inline-code">cmdkey</span></td></tr>
+          <tr><td>Fallback</td><td>AES-256-CBC encrypted file at <span className="inline-code">~/.cdoing/.oauth-tokens.enc</span></td></tr>
         </tbody>
       </table>
 
       <p className="doc-p">
         Both CLI and VS Code extension use the same keychain service (
         <span className="inline-code">cdoing-agent</span>) via the shared{" "}
-        <span className="inline-code">@cdoing/core</span> OAuth module. Log in
-        from either one and the token is available everywhere.
+        <span className="inline-code">@cdoing/core</span> OAuth module.
       </p>
 
       <h2 className="doc-h2">Architecture — Shared Module</h2>
-
-      <p className="doc-p">
-        All OAuth logic lives in{" "}
-        <span className="inline-code">@cdoing/core</span>. Both CLI and
-        extension import from it — zero code duplication:
-      </p>
 
       <div className="code-block">{`@cdoing/core (packages/core/src/oauth.ts)
 ├── Credential storage (Keychain / libsecret / cmdkey)
@@ -185,123 +147,28 @@ export default function OAuthPage() {
 @cdoing/cli → re-exports core + adds CLI UI (readline, chalk)
 @cdoing/vscode → re-exports core + adds VS Code UI (input box)`}</div>
 
-      <h2 className="doc-h2">Key Resolution Order</h2>
-
-      <p className="doc-p">
-        When authenticating with Anthropic, cdoing checks in this order:
-      </p>
-
-      <div className="code-block">{`1. --api-key flag (CLI argument)
-2. apiKeyHelper script (from config.json)
-3. Environment variable (ANTHROPIC_API_KEY)
-4. Stored key in ~/.cdoing/config.json
-5. OAuth token (auto-detected, auto-refreshed)
-6. Interactive setup wizard (CLI only)`}</div>
-
       <h2 className="doc-h2">Troubleshooting</h2>
 
       <table className="doc-table">
-        <thead>
-          <tr>
-            <th>Error</th>
-            <th>Cause & Fix</th>
-          </tr>
-        </thead>
+        <thead><tr><th>Error</th><th>Cause & Fix</th></tr></thead>
         <tbody>
-          <tr>
-            <td>500 Internal Server Error</td>
-            <td>
-              Wrong model — OAuth only supports{" "}
-              <span className="inline-code">claude-haiku-4-5-20251001</span>.
-              The system auto-selects it, but check your config.
-            </td>
-          </tr>
-          <tr>
-            <td>400 Credit balance too low</td>
-            <td>
-              Extension is using an API key instead of OAuth. Clear the API key
-              in settings and ensure OAuth tokens exist.
-            </td>
-          </tr>
-          <tr>
-            <td>401 Invalid API key</td>
-            <td>
-              Token sent as x-api-key instead of Bearer. Re-run{" "}
-              <span className="inline-code">/setup</span> or{" "}
-              <span className="inline-code">cdoing --login</span>.
-            </td>
-          </tr>
-          <tr>
-            <td>Extension stuck on &quot;Thinking...&quot;</td>
-            <td>
-              Rebuild extension after core changes:{" "}
-              <span className="inline-code">
-                cd packages/vscode-extension && npm run build
-              </span>
-              , then reload VS Code.
-            </td>
-          </tr>
-          <tr>
-            <td>Token expired</td>
-            <td>
-              Auto-refresh should handle this. If it fails, re-login via{" "}
-              <span className="inline-code">/setup</span> or the extension
-              settings.
-            </td>
-          </tr>
+          <tr><td>500 Internal Server Error</td><td>Wrong model — OAuth only supports <span className="inline-code">claude-haiku-4-5-20251001</span></td></tr>
+          <tr><td>400 Credit balance too low</td><td>Extension using API key instead of OAuth. Clear API key in settings.</td></tr>
+          <tr><td>401 Invalid API key</td><td>Token sent as x-api-key instead of Bearer. Re-run <span className="inline-code">/setup</span>.</td></tr>
+          <tr><td>Extension stuck</td><td>Rebuild: <span className="inline-code">cd packages/vscode-extension && npm run build</span>, then reload VS Code.</td></tr>
         </tbody>
       </table>
 
       <h2 className="doc-h2">OAuth Endpoints</h2>
 
       <table className="doc-table">
-        <thead>
-          <tr>
-            <th>Purpose</th>
-            <th>URL</th>
-          </tr>
-        </thead>
+        <thead><tr><th>Purpose</th><th>URL</th></tr></thead>
         <tbody>
-          <tr>
-            <td>Authorization</td>
-            <td>
-              <span className="inline-code">
-                https://claude.ai/oauth/authorize
-              </span>
-            </td>
-          </tr>
-          <tr>
-            <td>Token exchange</td>
-            <td>
-              <span className="inline-code">
-                https://console.anthropic.com/v1/oauth/token
-              </span>
-            </td>
-          </tr>
-          <tr>
-            <td>Redirect URI</td>
-            <td>
-              <span className="inline-code">
-                https://console.anthropic.com/oauth/code/callback
-              </span>
-            </td>
-          </tr>
-          <tr>
-            <td>Client ID</td>
-            <td>
-              <span className="inline-code">
-                9d1c250a-e61b-44d9-88ed-5944d1962f5e
-              </span>
-            </td>
-          </tr>
-          <tr>
-            <td>Scopes</td>
-            <td>
-              <span className="inline-code">
-                org:create_api_key user:profile user:inference
-              </span>
-            </td>
-          </tr>
+          <tr><td>Authorization</td><td><span className="inline-code">https://claude.ai/oauth/authorize</span></td></tr>
+          <tr><td>Token exchange</td><td><span className="inline-code">https://console.anthropic.com/v1/oauth/token</span></td></tr>
+          <tr><td>Redirect URI</td><td><span className="inline-code">https://console.anthropic.com/oauth/code/callback</span></td></tr>
+          <tr><td>Client ID</td><td><span className="inline-code">9d1c250a-e61b-44d9-88ed-5944d1962f5e</span></td></tr>
+          <tr><td>Scopes</td><td><span className="inline-code">org:create_api_key user:profile user:inference</span></td></tr>
         </tbody>
       </table>
     </div>

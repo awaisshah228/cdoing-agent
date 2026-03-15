@@ -1,4 +1,4 @@
-import { DependencyGraph, AgenticLoopDiagram } from "@/components/ArchitectureDiagram";
+import { DependencyGraph, AgenticLoopDiagram } from "@/components/DiagramWrapper";
 
 export default function Architecture() {
   return (
@@ -145,45 +145,33 @@ export default function Architecture() {
         All OAuth logic (PKCE, credential storage, token refresh) lives in{" "}
         <span className="inline-code">@cdoing/core</span>. Both CLI and VS Code
         extension import from core — zero duplication. Tokens are stored in the
-        OS credential manager (Keychain on macOS, libsecret on Linux, cmdkey on
-        Windows) and shared between all consumers.
+        OS credential manager and shared between all consumers.
       </p>
 
       <h3 className="doc-h3">2. Raw JSON Schema for Tool Binding</h3>
       <p className="doc-p">
         Tools are bound to the LLM using raw JSON Schema definitions rather than
         Zod or other schema libraries. This keeps the core package dependency-free
-        from validation libraries and ensures maximum compatibility across LLM
-        providers.
+        from validation libraries and ensures maximum compatibility across providers.
       </p>
 
       <h3 className="doc-h3">3. SQLite for Indexing (No External DB)</h3>
       <p className="doc-p">
         The codebase indexer uses SQLite with FTS5 for full-text search and stores
-        vector embeddings as JSON. This eliminates the need for an external vector
-        database like Pinecone or Weaviate, keeping the system self-contained.
+        vector embeddings as JSON. No external vector database needed.
       </p>
 
       <h3 className="doc-h3">4. LangChain for Provider Abstraction</h3>
       <p className="doc-p">
         The AI package uses <span className="inline-code">@langchain/core</span>{" "}
-        as a thin abstraction layer over multiple LLM providers. This allows
-        switching between Anthropic, OpenAI, Google, and Ollama with minimal code
-        changes. OAuth uses a custom fetch interceptor to strip invalid fields.
+        as a thin abstraction layer over multiple LLM providers.
       </p>
 
       <h3 className="doc-h3">5. Permissions as a First-Class Concern</h3>
       <p className="doc-p">
         Every tool execution passes through the permission engine before running.
-        The 3-tier deny/ask/allow rule system with settings hierarchy ensures
-        security without sacrificing usability.
-      </p>
-
-      <h3 className="doc-h3">6. Incremental Indexing with Content Hashing</h3>
-      <p className="doc-p">
-        The indexer uses SHA-256 content hashing to detect changes. Only modified
-        files are re-chunked and re-indexed, making subsequent indexing runs fast
-        even on large codebases.
+        The 3-tier deny/ask/allow rule system ensures security without sacrificing
+        usability.
       </p>
 
       <h2 className="doc-h2">Technology Stack</h2>
@@ -196,38 +184,14 @@ export default function Architecture() {
           </tr>
         </thead>
         <tbody>
-          <tr>
-            <td>Language</td>
-            <td>TypeScript (ES2022, CommonJS output)</td>
-          </tr>
-          <tr>
-            <td>Monorepo</td>
-            <td>Yarn Workspaces + Turbo</td>
-          </tr>
-          <tr>
-            <td>LLM Abstraction</td>
-            <td>LangChain (@langchain/core, @langchain/anthropic, etc.)</td>
-          </tr>
-          <tr>
-            <td>Database</td>
-            <td>SQLite (better-sqlite3) with FTS5</td>
-          </tr>
-          <tr>
-            <td>CLI Framework</td>
-            <td>Commander + Ink (React for terminals)</td>
-          </tr>
-          <tr>
-            <td>VS Code UI</td>
-            <td>React + esbuild (webview)</td>
-          </tr>
-          <tr>
-            <td>Auth</td>
-            <td>OAuth 2.0 PKCE (shared via @cdoing/core)</td>
-          </tr>
-          <tr>
-            <td>File Matching</td>
-            <td>glob + minimatch</td>
-          </tr>
+          <tr><td>Language</td><td>TypeScript (ES2022, CommonJS output)</td></tr>
+          <tr><td>Monorepo</td><td>Yarn Workspaces + Turbo</td></tr>
+          <tr><td>LLM Abstraction</td><td>LangChain (@langchain/core, @langchain/anthropic, etc.)</td></tr>
+          <tr><td>Database</td><td>SQLite (better-sqlite3) with FTS5</td></tr>
+          <tr><td>CLI Framework</td><td>Commander + Ink (React for terminals)</td></tr>
+          <tr><td>VS Code UI</td><td>React + esbuild (webview)</td></tr>
+          <tr><td>Auth</td><td>OAuth 2.0 PKCE (shared via @cdoing/core)</td></tr>
+          <tr><td>Diagrams</td><td>React Flow + avoid-nodes-edge</td></tr>
         </tbody>
       </table>
     </div>

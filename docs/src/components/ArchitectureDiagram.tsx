@@ -1,316 +1,199 @@
 "use client";
 
+import { useState, useCallback } from "react";
 import {
   ReactFlow,
-  Node,
-  Edge,
+  ReactFlowProvider,
+  applyNodeChanges,
   Background,
   BackgroundVariant,
-  Position,
-  ConnectionLineType,
+  type Node,
+  type Edge,
+  type EdgeTypes,
+  type NodeChange,
 } from "@xyflow/react";
+// @ts-ignore - CSS import
 import "@xyflow/react/dist/style.css";
 
-// ── Custom Node Styles ──────────────────────────────────
+import { useAvoidNodesRouterFromWorker } from "avoid-nodes-edge";
+import { AvoidNodesEdge } from "avoid-nodes-edge/edge";
 
-const baseNodeStyle = {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const edgeTypes: EdgeTypes = { avoidNodes: AvoidNodesEdge as any };
+
+// ── Shared Node Styles ──────────────────────────────────
+
+const baseStyle = {
   borderRadius: 12,
   fontSize: 13,
   fontFamily: "var(--font-mono), monospace",
-  padding: "0",
-  border: "1px solid #333",
-  color: "#fafafa",
+  padding: "12px 16px",
   textAlign: "center" as const,
+  color: "#fafafa",
+  whiteSpace: "pre-line" as const,
 };
 
-const nodeStyles = {
-  ui: { ...baseNodeStyle, background: "#1e1b4b", borderColor: "#6366f1" },
-  ai: { ...baseNodeStyle, background: "#1c1917", borderColor: "#f59e0b" },
-  core: { ...baseNodeStyle, background: "#052e16", borderColor: "#22c55e" },
-  tool: { ...baseNodeStyle, background: "#1a1a2e", borderColor: "#8b5cf6", fontSize: 11 },
-  action: { ...baseNodeStyle, background: "#1a1a1a", borderColor: "#555", fontSize: 11 },
-  user: { ...baseNodeStyle, background: "#0c0c0c", borderColor: "#6366f1", fontSize: 12 },
-  decision: { ...baseNodeStyle, background: "#27171a", borderColor: "#ef4444", fontSize: 11 },
+const styles = {
+  ui:       { ...baseStyle, background: "#1e1b4b", border: "1px solid #6366f1" },
+  ai:       { ...baseStyle, background: "#1c1917", border: "1px solid #f59e0b" },
+  core:     { ...baseStyle, background: "#052e16", border: "1px solid #22c55e" },
+  tool:     { ...baseStyle, background: "#1a1a2e", border: "1px solid #8b5cf6" },
+  action:   { ...baseStyle, background: "#1a1a1a", border: "1px solid #555", fontSize: 11 },
+  user:     { ...baseStyle, background: "#0c0c0c", border: "1px solid #6366f1" },
+  decision: { ...baseStyle, background: "#27171a", border: "1px solid #ef4444", fontSize: 11 },
 };
 
-// ── Package Dependency Diagram ──────────────────────────
+// ── Reusable Flow Wrapper ───────────────────────────────
+
+function DiagramFlow({ nodes: initNodes, edges: initEdges, height }: {
+  nodes: Node[];
+  edges: Edge[];
+  height: number;
+}) {
+  const [nodes, setNodes] = useState<Node[]>(initNodes);
+
+  const { updateRoutingOnNodesChange } = useAvoidNodesRouterFromWorker(
+    nodes,
+    initEdges,
+    { edgeRounding: 50, edgeToNodeSpacing: 20, edgeToEdgeSpacing: 15, autoBestSideConnection: true },
+  );
+
+  const onNodesChange = useCallback(
+    (changes: NodeChange<Node>[]) => {
+      setNodes((nds) => applyNodeChanges(changes, nds));
+      updateRoutingOnNodesChange(changes);
+    },
+    [updateRoutingOnNodesChange],
+  );
+
+  return (
+    <div className="flow-diagram" style={{ height }}>
+      <ReactFlow
+        nodes={nodes}
+        edges={initEdges}
+        onNodesChange={onNodesChange}
+        edgeTypes={edgeTypes}
+        defaultEdgeOptions={{ type: "avoidNodes" }}
+        fitView
+        fitViewOptions={{ padding: 0.3 }}
+        nodesConnectable={false}
+        proOptions={{ hideAttribution: true }}
+      >
+        <Background variant={BackgroundVariant.Dots} color="#333" gap={20} size={1} />
+      </ReactFlow>
+    </div>
+  );
+}
+
+function WrappedDiagram(props: { nodes: Node[]; edges: Edge[]; height: number }) {
+  return (
+    <ReactFlowProvider>
+      <DiagramFlow {...props} />
+    </ReactFlowProvider>
+  );
+}
+
+// ── 1. Package Dependency Graph ─────────────────────────
 
 const depNodes: Node[] = [
-  {
-    id: "cli",
-    data: { label: "@cdoing/cli\nTerminal UI" },
-    position: { x: 50, y: 0 },
-    style: { ...nodeStyles.ui, width: 180, height: 60 },
-    sourcePosition: Position.Bottom,
-    targetPosition: Position.Top,
-  },
-  {
-    id: "vscode",
-    data: { label: "cdoing-vscode\nVS Code Extension" },
-    position: { x: 300, y: 0 },
-    style: { ...nodeStyles.ui, width: 200, height: 60 },
-    sourcePosition: Position.Bottom,
-    targetPosition: Position.Top,
-  },
-  {
-    id: "ai",
-    data: { label: "@cdoing/ai\nAgent Runner + LLM Providers" },
-    position: { x: 150, y: 120 },
-    style: { ...nodeStyles.ai, width: 240, height: 60 },
-    sourcePosition: Position.Bottom,
-    targetPosition: Position.Top,
-  },
-  {
-    id: "core",
-    data: { label: "@cdoing/core\nTools, Permissions, Sandbox, OAuth" },
-    position: { x: 130, y: 240 },
-    style: { ...nodeStyles.core, width: 280, height: 60 },
-    sourcePosition: Position.Bottom,
-    targetPosition: Position.Top,
-  },
+  { id: "cli",  position: { x: 50, y: 0 },   data: { label: "@cdoing/cli\nTerminal UI" },               style: { ...styles.ui, width: 180 } },
+  { id: "vsc",  position: { x: 300, y: 0 },   data: { label: "cdoing-vscode\nVS Code Extension" },      style: { ...styles.ui, width: 200 } },
+  { id: "ai",   position: { x: 150, y: 140 }, data: { label: "@cdoing/ai\nAgent Runner + Providers" },   style: { ...styles.ai, width: 240 } },
+  { id: "core", position: { x: 130, y: 280 }, data: { label: "@cdoing/core\nTools, Permissions, OAuth" }, style: { ...styles.core, width: 280 } },
 ];
 
 const depEdges: Edge[] = [
-  { id: "cli-ai", source: "cli", target: "ai", animated: true, style: { stroke: "#6366f1" } },
-  { id: "vscode-ai", source: "vscode", target: "ai", animated: true, style: { stroke: "#6366f1" } },
-  { id: "ai-core", source: "ai", target: "core", animated: true, style: { stroke: "#f59e0b" } },
-  { id: "cli-core", source: "cli", target: "core", style: { stroke: "#6366f144", strokeDasharray: "5 5" } },
-  { id: "vscode-core", source: "vscode", target: "core", style: { stroke: "#6366f144", strokeDasharray: "5 5" } },
+  { id: "e1", source: "cli", target: "ai",   type: "avoidNodes", data: { strokeColor: "#6366f1" } },
+  { id: "e2", source: "vsc", target: "ai",   type: "avoidNodes", data: { strokeColor: "#6366f1" } },
+  { id: "e3", source: "ai",  target: "core", type: "avoidNodes", data: { strokeColor: "#f59e0b" } },
+  { id: "e4", source: "cli", target: "core", type: "avoidNodes", data: { strokeColor: "#6366f1", strokeDasharray: "5 5" } },
+  { id: "e5", source: "vsc", target: "core", type: "avoidNodes", data: { strokeColor: "#6366f1", strokeDasharray: "5 5" } },
 ];
 
-// ── Agentic Loop Diagram ────────────────────────────────
+export function DependencyGraph() {
+  return <WrappedDiagram nodes={depNodes} edges={depEdges} height={400} />;
+}
+
+// ── 2. Agentic Loop Diagram ─────────────────────────────
 
 const loopNodes: Node[] = [
-  {
-    id: "user",
-    data: { label: "User Message" },
-    position: { x: 220, y: 0 },
-    style: { ...nodeStyles.user, width: 160, height: 40 },
-    sourcePosition: Position.Bottom,
-  },
-  {
-    id: "prompt",
-    data: { label: "System Prompt Builder\npermissions + tools + context" },
-    position: { x: 160, y: 80 },
-    style: { ...nodeStyles.action, width: 280, height: 55 },
-    sourcePosition: Position.Bottom,
-    targetPosition: Position.Top,
-  },
-  {
-    id: "llm",
-    data: { label: "LLM Provider\nAnthropic / OpenAI / Google / Ollama" },
-    position: { x: 160, y: 180 },
-    style: { ...nodeStyles.ai, width: 280, height: 55 },
-    sourcePosition: Position.Bottom,
-    targetPosition: Position.Top,
-  },
-  {
-    id: "text",
-    data: { label: "Text Response" },
-    position: { x: 60, y: 290 },
-    style: { ...nodeStyles.core, width: 130, height: 38 },
-    sourcePosition: Position.Bottom,
-    targetPosition: Position.Top,
-  },
-  {
-    id: "tools",
-    data: { label: "Tool Calls" },
-    position: { x: 310, y: 290 },
-    style: { ...nodeStyles.tool, width: 130, height: 38 },
-    sourcePosition: Position.Bottom,
-    targetPosition: Position.Top,
-  },
-  {
-    id: "return",
-    data: { label: "Return to User" },
-    position: { x: 40, y: 380 },
-    style: { ...nodeStyles.user, width: 140, height: 38 },
-    targetPosition: Position.Top,
-  },
-  {
-    id: "hooks",
-    data: { label: "Pre-Hooks" },
-    position: { x: 310, y: 370 },
-    style: { ...nodeStyles.action, width: 120, height: 36 },
-    sourcePosition: Position.Bottom,
-    targetPosition: Position.Top,
-  },
-  {
-    id: "perm",
-    data: { label: "Permission Check" },
-    position: { x: 290, y: 440 },
-    style: { ...nodeStyles.decision, width: 150, height: 40 },
-    sourcePosition: Position.Bottom,
-    targetPosition: Position.Top,
-  },
-  {
-    id: "exec",
-    data: { label: "Tool Execution" },
-    position: { x: 230, y: 520 },
-    style: { ...nodeStyles.tool, width: 130, height: 38 },
-    sourcePosition: Position.Bottom,
-    targetPosition: Position.Top,
-  },
-  {
-    id: "denied",
-    data: { label: "Denied" },
-    position: { x: 410, y: 520 },
-    style: { ...nodeStyles.decision, width: 80, height: 34 },
-    targetPosition: Position.Top,
-  },
-  {
-    id: "posthooks",
-    data: { label: "Post-Hooks" },
-    position: { x: 240, y: 600 },
-    style: { ...nodeStyles.action, width: 120, height: 36 },
-    sourcePosition: Position.Bottom,
-    targetPosition: Position.Top,
-  },
-  {
-    id: "feedback",
-    data: { label: "Feed result back to LLM (loop)" },
-    position: { x: 180, y: 680 },
-    style: { ...nodeStyles.ai, width: 240, height: 40 },
-    sourcePosition: Position.Right,
-    targetPosition: Position.Top,
-  },
+  { id: "user",    position: { x: 220, y: 0 },   data: { label: "User Message" },                            style: { ...styles.user, width: 160 } },
+  { id: "prompt",  position: { x: 160, y: 90 },  data: { label: "System Prompt Builder\npermissions + tools + context" }, style: { ...styles.action, width: 280 } },
+  { id: "llm",     position: { x: 160, y: 200 }, data: { label: "LLM Provider\nAnthropic / OpenAI / Google" }, style: { ...styles.ai, width: 280 } },
+  { id: "text",    position: { x: 50, y: 320 },  data: { label: "Text Response" },                           style: { ...styles.core, width: 140 } },
+  { id: "tools",   position: { x: 380, y: 320 }, data: { label: "Tool Calls" },                              style: { ...styles.tool, width: 130 } },
+  { id: "return",  position: { x: 30, y: 430 },  data: { label: "Return to User" },                          style: { ...styles.user, width: 150 } },
+  { id: "hooks",   position: { x: 370, y: 420 }, data: { label: "Pre-Hooks" },                               style: { ...styles.action, width: 120 } },
+  { id: "perm",    position: { x: 350, y: 510 }, data: { label: "Permission Check" },                        style: { ...styles.decision, width: 160 } },
+  { id: "exec",    position: { x: 280, y: 610 }, data: { label: "Tool Execution" },                          style: { ...styles.tool, width: 140 } },
+  { id: "denied",  position: { x: 480, y: 610 }, data: { label: "Denied" },                                  style: { ...styles.decision, width: 90 } },
+  { id: "post",    position: { x: 290, y: 710 }, data: { label: "Post-Hooks" },                              style: { ...styles.action, width: 120 } },
+  { id: "loop",    position: { x: 200, y: 810 }, data: { label: "Feed result back\nto LLM (loop)" },         style: { ...styles.ai, width: 200 } },
 ];
 
 const loopEdges: Edge[] = [
-  { id: "e1", source: "user", target: "prompt", style: { stroke: "#6366f1" } },
-  { id: "e2", source: "prompt", target: "llm", style: { stroke: "#6366f1" }, animated: true },
-  { id: "e3", source: "llm", target: "text", style: { stroke: "#22c55e" } },
-  { id: "e4", source: "llm", target: "tools", style: { stroke: "#8b5cf6" } },
-  { id: "e5", source: "text", target: "return", style: { stroke: "#22c55e" } },
-  { id: "e6", source: "tools", target: "hooks", style: { stroke: "#8b5cf6" }, animated: true },
-  { id: "e7", source: "hooks", target: "perm", style: { stroke: "#8b5cf6" } },
-  { id: "e8", source: "perm", target: "exec", style: { stroke: "#22c55e" }, label: "Yes", labelStyle: { fill: "#22c55e", fontSize: 10 } },
-  { id: "e9", source: "perm", target: "denied", style: { stroke: "#ef4444" }, label: "No", labelStyle: { fill: "#ef4444", fontSize: 10 } },
-  { id: "e10", source: "exec", target: "posthooks", style: { stroke: "#8b5cf6" } },
-  { id: "e11", source: "posthooks", target: "feedback", style: { stroke: "#f59e0b" }, animated: true },
-  {
-    id: "e12",
-    source: "feedback",
-    target: "llm",
-    type: "smoothstep",
-    style: { stroke: "#f59e0b", strokeDasharray: "5 5" },
-    animated: true,
-  },
+  { id: "l1", source: "user",   target: "prompt",  type: "avoidNodes", data: { strokeColor: "#6366f1" } },
+  { id: "l2", source: "prompt", target: "llm",     type: "avoidNodes", data: { strokeColor: "#6366f1" } },
+  { id: "l3", source: "llm",    target: "text",    type: "avoidNodes", data: { strokeColor: "#22c55e" } },
+  { id: "l4", source: "llm",    target: "tools",   type: "avoidNodes", data: { strokeColor: "#8b5cf6" } },
+  { id: "l5", source: "text",   target: "return",  type: "avoidNodes", data: { strokeColor: "#22c55e" } },
+  { id: "l6", source: "tools",  target: "hooks",   type: "avoidNodes", data: { strokeColor: "#8b5cf6" } },
+  { id: "l7", source: "hooks",  target: "perm",    type: "avoidNodes", data: { strokeColor: "#8b5cf6" } },
+  { id: "l8", source: "perm",   target: "exec",    type: "avoidNodes", data: { strokeColor: "#22c55e" } },
+  { id: "l9", source: "perm",   target: "denied",  type: "avoidNodes", data: { strokeColor: "#ef4444" } },
+  { id: "l10", source: "exec",  target: "post",    type: "avoidNodes", data: { strokeColor: "#8b5cf6" } },
+  { id: "l11", source: "post",  target: "loop",    type: "avoidNodes", data: { strokeColor: "#f59e0b" } },
+  { id: "l12", source: "loop",  target: "llm",     type: "avoidNodes", data: { strokeColor: "#f59e0b", strokeDasharray: "5 5" } },
 ];
 
-// ── OAuth Flow Diagram ──────────────────────────────────
+export function AgenticLoopDiagram() {
+  return <WrappedDiagram nodes={loopNodes} edges={loopEdges} height={920} />;
+}
+
+// ── 3. OAuth Flow Diagram ───────────────────────────────
 
 const oauthNodes: Node[] = [
-  {
-    id: "o-user",
-    data: { label: "User runs\n/setup or --login" },
-    position: { x: 0, y: 0 },
-    style: { ...nodeStyles.user, width: 160, height: 50 },
-    sourcePosition: Position.Right,
-  },
-  {
-    id: "o-pkce",
-    data: { label: "Generate PKCE\ncode verifier + challenge" },
-    position: { x: 220, y: 0 },
-    style: { ...nodeStyles.core, width: 200, height: 50 },
-    sourcePosition: Position.Right,
-    targetPosition: Position.Left,
-  },
-  {
-    id: "o-browser",
-    data: { label: "Open browser\nclaude.ai/oauth/authorize" },
-    position: { x: 480, y: 0 },
-    style: { ...nodeStyles.ai, width: 200, height: 50 },
-    sourcePosition: Position.Bottom,
-    targetPosition: Position.Left,
-  },
-  {
-    id: "o-approve",
-    data: { label: "User approves\ngets redirect with code" },
-    position: { x: 480, y: 100 },
-    style: { ...nodeStyles.user, width: 200, height: 50 },
-    sourcePosition: Position.Left,
-    targetPosition: Position.Top,
-  },
-  {
-    id: "o-exchange",
-    data: { label: "Exchange code\nfor access + refresh token" },
-    position: { x: 220, y: 100 },
-    style: { ...nodeStyles.tool, width: 200, height: 50 },
-    sourcePosition: Position.Left,
-    targetPosition: Position.Right,
-  },
-  {
-    id: "o-store",
-    data: { label: "Store in OS Keychain\n(macOS / Linux / Windows)" },
-    position: { x: 0, y: 100 },
-    style: { ...nodeStyles.core, width: 180, height: 50 },
-    sourcePosition: Position.Bottom,
-    targetPosition: Position.Right,
-  },
-  {
-    id: "o-use",
-    data: { label: "CLI + VS Code Extension\nuse same token" },
-    position: { x: 80, y: 200 },
-    style: { ...nodeStyles.ui, width: 220, height: 50 },
-    targetPosition: Position.Top,
-  },
+  { id: "o1", position: { x: 0, y: 0 },   data: { label: "User runs\n/setup or --login" },           style: { ...styles.user, width: 170 } },
+  { id: "o2", position: { x: 240, y: 0 },  data: { label: "Generate PKCE\nverifier + challenge" },   style: { ...styles.core, width: 200 } },
+  { id: "o3", position: { x: 510, y: 0 },  data: { label: "Open browser\nclaude.ai/oauth" },         style: { ...styles.ai, width: 180 } },
+  { id: "o4", position: { x: 510, y: 120 }, data: { label: "User approves\ngets redirect code" },    style: { ...styles.user, width: 180 } },
+  { id: "o5", position: { x: 240, y: 120 }, data: { label: "Exchange code\nfor tokens" },             style: { ...styles.tool, width: 200 } },
+  { id: "o6", position: { x: 0, y: 120 },  data: { label: "Store in\nOS Keychain" },                 style: { ...styles.core, width: 170 } },
+  { id: "o7", position: { x: 100, y: 240 }, data: { label: "CLI + VS Code\nuse same token" },        style: { ...styles.ui, width: 200 } },
 ];
 
 const oauthEdges: Edge[] = [
-  { id: "oe1", source: "o-user", target: "o-pkce", animated: true, style: { stroke: "#6366f1" } },
-  { id: "oe2", source: "o-pkce", target: "o-browser", animated: true, style: { stroke: "#22c55e" } },
-  { id: "oe3", source: "o-browser", target: "o-approve", style: { stroke: "#f59e0b" } },
-  { id: "oe4", source: "o-approve", target: "o-exchange", animated: true, style: { stroke: "#8b5cf6" } },
-  { id: "oe5", source: "o-exchange", target: "o-store", animated: true, style: { stroke: "#22c55e" } },
-  { id: "oe6", source: "o-store", target: "o-use", style: { stroke: "#6366f1" } },
+  { id: "oe1", source: "o1", target: "o2", type: "avoidNodes", data: { strokeColor: "#6366f1" } },
+  { id: "oe2", source: "o2", target: "o3", type: "avoidNodes", data: { strokeColor: "#22c55e" } },
+  { id: "oe3", source: "o3", target: "o4", type: "avoidNodes", data: { strokeColor: "#f59e0b" } },
+  { id: "oe4", source: "o4", target: "o5", type: "avoidNodes", data: { strokeColor: "#8b5cf6" } },
+  { id: "oe5", source: "o5", target: "o6", type: "avoidNodes", data: { strokeColor: "#22c55e" } },
+  { id: "oe6", source: "o6", target: "o7", type: "avoidNodes", data: { strokeColor: "#6366f1" } },
 ];
 
-// ── Shared Flow Props ───────────────────────────────────
-
-const flowDefaults = {
-  nodesDraggable: false,
-  nodesConnectable: false,
-  elementsSelectable: false,
-  panOnDrag: false,
-  zoomOnScroll: false,
-  zoomOnPinch: false,
-  zoomOnDoubleClick: false,
-  preventScrolling: false,
-  connectionLineType: ConnectionLineType.SmoothStep,
-  fitView: true,
-  fitViewOptions: { padding: 0.3 },
-  proOptions: { hideAttribution: true },
-};
-
-// ── Exported Components ─────────────────────────────────
-
-export function DependencyGraph() {
-  return (
-    <div className="flow-diagram" style={{ height: 360 }}>
-      <ReactFlow nodes={depNodes} edges={depEdges} {...flowDefaults}>
-        <Background variant={BackgroundVariant.Dots} color="#333" gap={20} size={1} />
-      </ReactFlow>
-    </div>
-  );
-}
-
-export function AgenticLoopDiagram() {
-  return (
-    <div className="flow-diagram" style={{ height: 780 }}>
-      <ReactFlow nodes={loopNodes} edges={loopEdges} {...flowDefaults}>
-        <Background variant={BackgroundVariant.Dots} color="#333" gap={20} size={1} />
-      </ReactFlow>
-    </div>
-  );
-}
-
 export function OAuthFlowDiagram() {
-  return (
-    <div className="flow-diagram" style={{ height: 320 }}>
-      <ReactFlow nodes={oauthNodes} edges={oauthEdges} {...flowDefaults}>
-        <Background variant={BackgroundVariant.Dots} color="#333" gap={20} size={1} />
-      </ReactFlow>
-    </div>
-  );
+  return <WrappedDiagram nodes={oauthNodes} edges={oauthEdges} height={360} />;
+}
+
+// ── 4. VS Code Extension Architecture ───────────────────
+
+const vscNodes: Node[] = [
+  { id: "v1", position: { x: 150, y: 0 },   data: { label: "extension.ts\nRegisters commands, creates providers" }, style: { ...styles.ui, width: 280 } },
+  { id: "v2", position: { x: 130, y: 120 }, data: { label: "chat-panel-provider.ts\nRuns agent, bridges webview ↔ agent" },  style: { ...styles.ai, width: 320 } },
+  { id: "v3", position: { x: 0, y: 260 },   data: { label: "Webview (React)\nChatPanel, InputArea\nSettingsPanel, ToolCallBubble" },    style: { ...styles.tool, width: 240 } },
+  { id: "v4", position: { x: 310, y: 260 }, data: { label: "@cdoing/ai\nAgentRunner" },                                   style: { ...styles.ai, width: 180 } },
+  { id: "v5", position: { x: 310, y: 380 }, data: { label: "@cdoing/core\nTools, Permissions, OAuth" },                    style: { ...styles.core, width: 200 } },
+  { id: "v6", position: { x: 0, y: 380 },   data: { label: "inline-edit.ts\ninline-autocomplete.ts" },                    style: { ...styles.action, width: 200 } },
+];
+
+const vscEdges: Edge[] = [
+  { id: "ve1", source: "v1", target: "v2", type: "avoidNodes", data: { strokeColor: "#6366f1" } },
+  { id: "ve2", source: "v2", target: "v3", type: "avoidNodes", data: { strokeColor: "#8b5cf6" } },
+  { id: "ve3", source: "v2", target: "v4", type: "avoidNodes", data: { strokeColor: "#f59e0b" } },
+  { id: "ve4", source: "v4", target: "v5", type: "avoidNodes", data: { strokeColor: "#22c55e" } },
+  { id: "ve5", source: "v1", target: "v6", type: "avoidNodes", data: { strokeColor: "#6366f1", strokeDasharray: "5 5" } },
+];
+
+export function VscodeArchDiagram() {
+  return <WrappedDiagram nodes={vscNodes} edges={vscEdges} height={500} />;
 }
