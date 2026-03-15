@@ -1,6 +1,11 @@
 /**
  * SetupWizard — interactive in-TUI wizard for provider / model / API key / OAuth.
  * Triggered by /setup.  Arrow keys navigate, Enter selects, Esc cancels.
+ *
+ * Flow:
+ *  Anthropic  →  1. Provider  2. Auth method  3. Model (filtered)  4. API key or OAuth
+ *  Others     →  1. Provider  2. Model  3. API key
+ *  Ollama     →  1. Provider  2. Model  (no key needed)
  */
 
 import React, { useState, useCallback, useEffect, useRef } from "react";
@@ -17,7 +22,13 @@ const PROVIDERS = [
   { value: "ollama",    label: "Ollama (local)",      hint: "llama3.1, mistral, codellama" },
 ];
 
-const MODELS: Record<string, { value: string; label: string; hint: string }[]> = {
+const AUTH_METHODS = [
+  { value: "apikey", label: "API key",  hint: "all models available · console.anthropic.com" },
+  { value: "oauth",  label: "OAuth",    hint: "Claude Pro/Max · opens browser" },
+];
+
+// All models per provider
+const ALL_MODELS: Record<string, { value: string; label: string; hint: string }[]> = {
   anthropic: [
     { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", hint: "recommended · fast & smart" },
     { value: "claude-opus-4-6",   label: "Claude Opus 4.6",   hint: "most capable" },
@@ -41,9 +52,9 @@ const MODELS: Record<string, { value: string; label: string; hint: string }[]> =
   ],
 };
 
-const AUTH_METHODS = [
-  { value: "apikey", label: "API key",  hint: "paste from console.anthropic.com" },
-  { value: "oauth",  label: "OAuth",    hint: "Claude Pro/Max — opens browser" },
+// OAuth only supports Haiku currently
+const OAUTH_MODELS = [
+  { value: "claude-haiku-4-5", label: "Claude Haiku 4.5", hint: "only model supported with OAuth" },
 ];
 
 const KEY_URLS: Record<string, string> = {
@@ -54,8 +65,8 @@ const KEY_URLS: Record<string, string> = {
 
 type Step =
   | "provider"
-  | "model"
   | "auth-method"
+  | "model"
   | "apikey"
   | "oauth-paste"
   | "oauth-exchanging"
@@ -105,7 +116,7 @@ function Menu<T extends { value: string; label: string; hint?: string }>({
 export interface SetupWizardProps {
   currentProvider: string;
   currentModel: string;
-  onDone: (result: { provider: string; model: string; apiKey?: string }) => void;
+  onDone: (result: { provider: string; model: string; apiKey?: string; oauthToken?: string }) => void;
   onCancel: () => void;
 }
 
@@ -116,25 +127,26 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
   onCancel,
 }) => {
   const initProviderIdx = Math.max(0, PROVIDERS.findIndex(p => p.value === currentProvider));
-  const [step, setStep]                     = useState<Step>("provider");
-  const [providerIdx, setProviderIdx]       = useState(initProviderIdx);
-  const [modelIdx, setModelIdx]             = useState(0);
-  const [authIdx, setAuthIdx]               = useState(0);
-  const [chosenProvider, setChosenProvider] = useState(currentProvider);
-  const [chosenModel, setChosenModel]       = useState(currentModel);
-  // API key step
-  const [apiKeyInput, setApiKeyInput]       = useState("");
-  const [showKey, setShowKey]               = useState(false);
-  // OAuth paste step
-  const [oauthUrl, setOauthUrl]             = useState("");
-  const [oauthVerifier, setOauthVerifier]   = useState("");
-  const [oauthCodeInput, setOauthCodeInput] = useState("");
-  const [showCode, setShowCode]             = useState(false);
-  const [oauthError, setOauthError]         = useState("");
-  // prevent double-fire of exchange
-  const exchangingRef                       = useRef(false);
 
-  // When we enter oauth-paste, generate URL and open browser
+  const [step, setStep]                       = useState<Step>("provider");
+  const [providerIdx, setProviderIdx]         = useState(initProviderIdx);
+  const [authIdx, setAuthIdx]                 = useState(0);
+  const [modelIdx, setModelIdx]               = useState(0);
+  const [chosenProvider, setChosenProvider]   = useState(currentProvider);
+  const [chosenAuthMethod, setChosenAuthMethod] = useState<"apikey" | "oauth">("apikey");
+  const [chosenModel, setChosenModel]         = useState(currentModel);
+  // API key step
+  const [apiKeyInput, setApiKeyInput]         = useState("");
+  const [showKey, setShowKey]                 = useState(false);
+  // OAuth paste step
+  const [oauthUrl, setOauthUrl]               = useState("");
+  const [oauthVerifier, setOauthVerifier]     = useState("");
+  const [oauthCodeInput, setOauthCodeInput]   = useState("");
+  const [showCode, setShowCode]               = useState(false);
+  const [oauthError, setOauthError]           = useState("");
+  const exchangingRef                         = useRef(false);
+
+  // Generate OAuth URL and open browser when entering oauth-paste step
   useEffect(() => {
     if (step !== "oauth-paste") return;
     const { url, codeVerifier } = generateOAuthUrl();
@@ -146,26 +158,53 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
 
+  // Returns the model list for the current provider + auth selection
+  const getModels = useCallback((provider: string, authMethod: "apikey" | "oauth") => {
+    if (provider === "anthropic" && authMethod === "oauth") return OAUTH_MODELS;
+    return ALL_MODELS[provider] || [];
+  }, []);
+
   useInput(useCallback((char, key) => {
     if (key.escape) { onCancel(); return; }
 
-    // ── Provider ──────────────────────────────────────────────────────────
+    // ── 1. Provider ───────────────────────────────────────────────────────
     if (step === "provider") {
       if (key.upArrow)   { setProviderIdx(i => Math.max(0, i - 1)); return; }
       if (key.downArrow) { setProviderIdx(i => Math.min(PROVIDERS.length - 1, i + 1)); return; }
       if (key.return) {
         const p = PROVIDERS[providerIdx].value;
         setChosenProvider(p);
-        const models = MODELS[p] || [];
+        setAuthIdx(0);
+        if (p === "anthropic") {
+          setStep("auth-method");
+        } else {
+          // Non-Anthropic: skip auth-method, go straight to model
+          const models = ALL_MODELS[p] || [];
+          setModelIdx(Math.max(0, models.findIndex(m => m.value === currentModel)));
+          setStep("model");
+        }
+        return;
+      }
+    }
+
+    // ── 2. Auth method (Anthropic only) ───────────────────────────────────
+    if (step === "auth-method") {
+      if (key.upArrow)   { setAuthIdx(i => Math.max(0, i - 1)); return; }
+      if (key.downArrow) { setAuthIdx(i => Math.min(AUTH_METHODS.length - 1, i + 1)); return; }
+      if (key.return) {
+        const auth = AUTH_METHODS[authIdx].value as "apikey" | "oauth";
+        setChosenAuthMethod(auth);
+        const models = getModels("anthropic", auth);
+        // Pre-select current model if available, else 0
         setModelIdx(Math.max(0, models.findIndex(m => m.value === currentModel)));
         setStep("model");
         return;
       }
     }
 
-    // ── Model ─────────────────────────────────────────────────────────────
+    // ── 3. Model ──────────────────────────────────────────────────────────
     if (step === "model") {
-      const models = MODELS[chosenProvider] || [];
+      const models = getModels(chosenProvider, chosenAuthMethod);
       if (key.upArrow)   { setModelIdx(i => Math.max(0, i - 1)); return; }
       if (key.downArrow) { setModelIdx(i => Math.min(models.length - 1, i + 1)); return; }
       if (key.return) {
@@ -175,21 +214,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
           _save(chosenProvider, m, undefined);
           onDone({ provider: chosenProvider, model: m });
           setStep("done");
-        } else if (chosenProvider === "anthropic") {
-          setStep("auth-method");
-        } else {
-          setStep("apikey");
-        }
-        return;
-      }
-    }
-
-    // ── Auth method (Anthropic only) ──────────────────────────────────────
-    if (step === "auth-method") {
-      if (key.upArrow)   { setAuthIdx(i => Math.max(0, i - 1)); return; }
-      if (key.downArrow) { setAuthIdx(i => Math.min(AUTH_METHODS.length - 1, i + 1)); return; }
-      if (key.return) {
-        if (AUTH_METHODS[authIdx].value === "oauth") {
+        } else if (chosenAuthMethod === "oauth") {
           exchangingRef.current = false;
           setStep("oauth-paste");
         } else {
@@ -199,7 +224,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
       }
     }
 
-    // ── API key entry ─────────────────────────────────────────────────────
+    // ── 4a. API key entry ─────────────────────────────────────────────────
     if (step === "apikey") {
       if (key.return) {
         const trimmed = apiKeyInput.trim();
@@ -213,19 +238,18 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
       if (char && !key.ctrl && !key.meta) { setApiKeyInput(k => k + char); return; }
     }
 
-    // ── OAuth paste — user types/pastes the code from the redirect URL ────
+    // ── 4b. OAuth paste ───────────────────────────────────────────────────
     if (step === "oauth-paste") {
       if (key.return) {
         const code = oauthCodeInput.trim();
-        if (!code) return;
-        if (exchangingRef.current) return;
+        if (!code || exchangingRef.current) return;
         exchangingRef.current = true;
         setStep("oauth-exchanging");
         exchangeOAuthCode(code, oauthVerifier)
           .then((tokens) => {
-            _save(chosenProvider, chosenModel, tokens.access_token);
+            _saveOAuth(chosenProvider, chosenModel);
             setTimeout(() => {
-              onDone({ provider: chosenProvider, model: chosenModel, apiKey: tokens.access_token });
+              onDone({ provider: chosenProvider, model: chosenModel, oauthToken: tokens.access_token });
             }, 600);
           })
           .catch((err: Error) => {
@@ -239,28 +263,32 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
       if (key.ctrl && char === "s")    { setShowCode(v => !v); return; }
       if (char && !key.ctrl && !key.meta) { setOauthCodeInput(k => k + char); return; }
     }
-  }, [step, providerIdx, modelIdx, authIdx, chosenProvider, chosenModel,
-      apiKeyInput, oauthCodeInput, oauthVerifier, onCancel, onDone]));
+  }, [step, providerIdx, authIdx, modelIdx, chosenProvider, chosenAuthMethod,
+      chosenModel, apiKeyInput, oauthCodeInput, oauthVerifier,
+      getModels, onCancel, onDone]));
+
+  // ── Step label helpers ────────────────────────────────────────────────────
+
+  // Total steps: Anthropic=4, Ollama=2, others=3
+  const total = chosenProvider === "anthropic" ? 4 : chosenProvider === "ollama" ? 2 : 3;
+  // Step number depends on flow
+  const stepNum: Record<Step, string> = {
+    "provider":          `1/${total}`,
+    "auth-method":       "2/4",
+    "model":             chosenProvider === "anthropic" ? "3/4" : chosenProvider === "ollama" ? "2/2" : "2/3",
+    "apikey":            chosenProvider === "anthropic" ? "4/4" : "3/3",
+    "oauth-paste":       "4/4",
+    "oauth-exchanging":  "4/4",
+    "done":              "",
+  };
 
   // ── Renders ───────────────────────────────────────────────────────────────
-
-  const totalSteps = chosenProvider === "anthropic" ? 4 : chosenProvider === "ollama" ? 2 : 3;
 
   if (step === "provider") {
     return (
       <Box flexDirection="column" paddingY={1}>
-        <Text color="cyan" bold>{`  ⚙  Setup Wizard  (1/${totalSteps} — Provider)`}</Text>
+        <Text color="cyan" bold>{`  ⚙  Setup Wizard  (${stepNum.provider} — Provider)`}</Text>
         <Menu title={"  Choose a provider"} items={PROVIDERS} selectedIdx={providerIdx} />
-      </Box>
-    );
-  }
-
-  if (step === "model") {
-    const models = MODELS[chosenProvider] || [];
-    return (
-      <Box flexDirection="column" paddingY={1}>
-        <Text color="cyan" bold>{`  ⚙  Setup Wizard  (2/${totalSteps} — Model)`}</Text>
-        <Menu title={`  Choose a model for ${chosenProvider}`} items={models} selectedIdx={modelIdx} />
       </Box>
     );
   }
@@ -268,8 +296,21 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
   if (step === "auth-method") {
     return (
       <Box flexDirection="column" paddingY={1}>
-        <Text color="cyan" bold>{"  ⚙  Setup Wizard  (3/4 — Authentication)"}</Text>
+        <Text color="cyan" bold>{`  ⚙  Setup Wizard  (${stepNum["auth-method"]} — Authentication)`}</Text>
         <Menu title={"  How do you want to authenticate?"} items={AUTH_METHODS} selectedIdx={authIdx} />
+      </Box>
+    );
+  }
+
+  if (step === "model") {
+    const models = getModels(chosenProvider, chosenAuthMethod);
+    const title = chosenProvider === "anthropic" && chosenAuthMethod === "oauth"
+      ? "  Choose a model  (OAuth supports Haiku only)"
+      : `  Choose a model for ${chosenProvider}`;
+    return (
+      <Box flexDirection="column" paddingY={1}>
+        <Text color="cyan" bold>{`  ⚙  Setup Wizard  (${stepNum.model} — Model)`}</Text>
+        <Menu title={title} items={models} selectedIdx={modelIdx} />
       </Box>
     );
   }
@@ -277,10 +318,9 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
   if (step === "apikey") {
     const masked = showKey ? apiKeyInput : apiKeyInput.replace(/./g, "●");
     const url = KEY_URLS[chosenProvider];
-    const stepNum = chosenProvider === "anthropic" ? "4/4" : "3/3";
     return (
       <Box flexDirection="column" paddingY={1} paddingLeft={2}>
-        <Text color="cyan" bold>{`  ⚙  Setup Wizard  (${stepNum} — API Key)`}</Text>
+        <Text color="cyan" bold>{`  ⚙  Setup Wizard  (${stepNum.apikey} — API Key)`}</Text>
         <Text dimColor>{"─".repeat(50)}</Text>
         <Text color="white">{`  Provider: ${chosenProvider}   Model: ${chosenModel}`}</Text>
         {url ? <Text dimColor>{`  Get a key: ${url}`}</Text> : null}
@@ -291,7 +331,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
           <Text color="green">{"▊"}</Text>
         </Box>
         <Text>{" "}</Text>
-        <Text dimColor>{"  Enter key then Enter  ·  Ctrl+S toggle visible  ·  Enter alone to skip"}</Text>
+        <Text dimColor>{"  Paste key then Enter  ·  Ctrl+S toggle visible  ·  Enter alone to skip"}</Text>
         <Text dimColor>{"  Esc cancel"}</Text>
       </Box>
     );
@@ -301,14 +341,14 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
     const maskedCode = showCode ? oauthCodeInput : oauthCodeInput.replace(/./g, "●");
     return (
       <Box flexDirection="column" paddingY={1} paddingLeft={2}>
-        <Text color="cyan" bold>{"  ⚙  Setup Wizard  (4/4 — OAuth)"}</Text>
+        <Text color="cyan" bold>{`  ⚙  Setup Wizard  (${stepNum["oauth-paste"]} — OAuth)`}</Text>
         <Text dimColor>{"─".repeat(50)}</Text>
         <Text color="white">{"  1. Browser opening to Claude login…"}</Text>
-        <Text color="white">{"  2. Approve access → you'll be redirected to a URL"}</Text>
-        <Text color="white">{"  3. Copy the 'code' value from that URL and paste below"}</Text>
         {oauthUrl
-          ? <Text dimColor>{`\n  URL: ${oauthUrl.substring(0, 80)}…`}</Text>
+          ? <Text dimColor>{`     If it didn't open: ${oauthUrl.substring(0, 72)}…`}</Text>
           : null}
+        <Text color="white">{"  2. Approve → you'll land on a page with a code in the URL"}</Text>
+        <Text color="white">{"  3. Copy the code= value from the URL and paste below"}</Text>
         {oauthError
           ? <Text color="red">{`\n  ✗ ${oauthError}`}</Text>
           : null}
@@ -327,7 +367,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
   if (step === "oauth-exchanging") {
     return (
       <Box flexDirection="column" paddingY={1} paddingLeft={2}>
-        <Text color="cyan" bold>{"  ⚙  Setup Wizard  (4/4 — OAuth)"}</Text>
+        <Text color="cyan" bold>{`  ⚙  Setup Wizard  (${stepNum["oauth-exchanging"]} — OAuth)`}</Text>
         <Text dimColor>{"─".repeat(50)}</Text>
         <Text color="yellow">{"  Exchanging code for tokens…"}</Text>
       </Box>
@@ -347,6 +387,14 @@ function _save(provider: string, model: string, apiKey: string | undefined) {
     config.apiKeys = config.apiKeys || {};
     config.apiKeys[provider] = apiKey;
   }
+  saveConfig(config);
+}
+
+/** OAuth: save provider/model only — token is already in keychain via exchangeOAuthCode */
+function _saveOAuth(provider: string, model: string) {
+  const config = loadConfig();
+  config.provider = provider;
+  config.model = model || undefined;
   saveConfig(config);
 }
 

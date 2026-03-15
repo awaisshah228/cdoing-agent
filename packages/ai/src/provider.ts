@@ -5,6 +5,7 @@
  * or any custom OpenAI-compatible endpoint (Ollama, Groq, Together, etc.)
  */
 
+import Anthropic from "@anthropic-ai/sdk";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { ChatOpenAI } from "@langchain/openai";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
@@ -21,6 +22,8 @@ export interface ModelConfig {
   provider: ModelProvider | string;
   model: string;
   apiKey?: string;
+  /** OAuth access token — used with Bearer auth + Anthropic beta headers */
+  oauthToken?: string;
   temperature?: number;
   maxTokens?: number;
   baseURL?: string;
@@ -75,17 +78,59 @@ export function createModel(config: Partial<ModelConfig> = {}) {
   const maxTokens = config.maxTokens ?? 8096;
 
   switch (provider) {
-    case ModelProvider.ANTHROPIC:
+    case ModelProvider.ANTHROPIC: {
+      // OAuth token: use Bearer auth with Anthropic beta headers (not x-api-key)
+      if (config.oauthToken) {
+        const oauthToken = config.oauthToken;
+        const arch = process.arch === "arm64" ? "arm64" : "x64";
+        const osPlatform = process.platform === "darwin" ? "Darwin"
+          : process.platform === "win32" ? "Windows" : "Linux";
+        return new ChatAnthropic({
+          model: modelName,
+          anthropicApiKey: "unused",
+          temperature,
+          maxTokens,
+          createClient: () => new Anthropic({
+            apiKey: null as unknown as string,
+            authToken: oauthToken,
+            dangerouslyAllowBrowser: true,
+            defaultHeaders: {
+              "anthropic-beta": "oauth-2025-04-20,interleaved-thinking-2025-05-14",
+              "user-agent": "claude-cli/2.1.7 (external, cli)",
+              "x-app": "cli",
+              "anthropic-dangerous-direct-browser-access": "true",
+              "x-stainless-arch": arch,
+              "x-stainless-lang": "js",
+              "x-stainless-os": osPlatform,
+              "x-stainless-package-version": "0.70.0",
+              "x-stainless-runtime": "node",
+              "x-stainless-runtime-version": process.version,
+            },
+            maxRetries: 0,
+            // Strip top_p: -1 and temperature — OAuth API rejects LangChain defaults
+            fetch: async (url: string | URL | Request, init?: RequestInit) => {
+              if (init?.body && typeof init.body === "string") {
+                try {
+                  const body = JSON.parse(init.body);
+                  if (body.top_p === -1) delete body.top_p;
+                  if ("temperature" in body) delete body.temperature;
+                  init = { ...init, body: JSON.stringify(body) };
+                } catch {}
+              }
+              return fetch(url as string, init);
+            },
+          }),
+        } as ConstructorParameters<typeof ChatAnthropic>[0]);
+      }
       return new ChatAnthropic({
         model: modelName,
         anthropicApiKey: config.apiKey || process.env.ANTHROPIC_API_KEY,
         temperature,
         maxTokens,
-        // LangChain defaults topP to -1 (sentinel) and always sends it.
-        // Override with undefined so JSON.stringify omits it from the request.
         topP: undefined,
         invocationKwargs: { top_p: undefined },
       } as ConstructorParameters<typeof ChatAnthropic>[0]);
+    }
 
     case ModelProvider.OPENAI:
       return new ChatOpenAI({

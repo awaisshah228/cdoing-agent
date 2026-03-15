@@ -577,9 +577,11 @@ export function useChat(opts: UseChatOptions) {
               if (key === "provider")  { modelConfigRef.current.provider = val; rebuildAgent(); }
               if (key === "model")     { modelConfigRef.current.model    = val; rebuildAgent(); }
               if (key === "mode")      opts.permissionManager.setMode(parsePermissionMode(val) as PermissionMode);
-              if (key === "api-key")   { modelConfigRef.current.apiKey  = val; rebuildAgent(); }
-              if (key === "base-url")  { modelConfigRef.current.baseURL = val; rebuildAgent(); }
-              return `Saved: ${key} = ${key === "api-key" ? val.slice(0, 8) + "..." : val}`;
+              if (key === "api-key")     { modelConfigRef.current.apiKey      = val; modelConfigRef.current.oauthToken = undefined; rebuildAgent(); }
+              if (key === "oauth-token") { modelConfigRef.current.oauthToken  = val; modelConfigRef.current.apiKey     = undefined; rebuildAgent(); }
+              if (key === "base-url")    { modelConfigRef.current.baseURL     = val; rebuildAgent(); }
+              const masked = (key === "api-key" || key === "oauth-token") ? val.slice(0, 8) + "..." : val;
+              return `Saved: ${key} = ${masked}`;
             }
             return res.error || "Error saving config";
           }

@@ -275,12 +275,14 @@ export const App: React.FC<AppProps> = ({
         <SetupWizard
           currentProvider={String(modelConfig.provider || "anthropic")}
           currentModel={String(modelConfig.model || "")}
-          onDone={({ provider, model, apiKey }) => {
+          onDone={({ provider, model, apiKey, oauthToken }) => {
             setShowSetupWizard(false);
             handleSlashCommand(`/provider ${provider}`);
             if (model) handleSlashCommand(`/model ${model}`);
             if (apiKey) handleSlashCommand(`/config set api-key ${apiKey}`);
-            addSystemMessage(`✓ Setup saved — provider: ${provider}  model: ${model || "default"}`);
+            if (oauthToken) handleSlashCommand(`/config set oauth-token ${oauthToken}`);
+            const authNote = oauthToken ? "OAuth ✓" : apiKey ? "API key ✓" : "no key";
+            addSystemMessage(`✓ Setup saved — provider: ${provider}  model: ${model || "default"}  auth: ${authNote}`);
           }}
           onCancel={() => {
             setShowSetupWizard(false);

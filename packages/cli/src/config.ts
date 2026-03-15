@@ -28,6 +28,7 @@ export interface CLIOptions {
   provider: string;
   baseUrl?: string;
   apiKey?: string;
+  oauthToken?: string;
   mode: string;
   dir: string;
   login?: boolean;
@@ -58,6 +59,7 @@ export function buildModelConfig(options: CLIOptions): Partial<ModelConfig> {
     model: options.model,
     baseURL: options.baseUrl,
     apiKey: options.apiKey,
+    oauthToken: options.oauthToken,
   };
 }
 
@@ -303,7 +305,7 @@ export async function resolveApiKey(options: CLIOptions): Promise<void> {
   if (provider === "anthropic") {
     const oauthToken = await resolveOAuthToken();
     if (oauthToken) {
-      options.apiKey = oauthToken;
+      options.oauthToken = oauthToken;
       return;
     }
   }
@@ -336,7 +338,7 @@ export async function resolveApiKey(options: CLIOptions): Promise<void> {
   }
   if (provider2 === "anthropic") {
     const oauthToken = await resolveOAuthToken();
-    if (oauthToken) { options.apiKey = oauthToken; return; }
+    if (oauthToken) { options.oauthToken = oauthToken; return; }
   }
 
   // Model selection
