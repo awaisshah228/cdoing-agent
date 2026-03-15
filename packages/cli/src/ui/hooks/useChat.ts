@@ -32,7 +32,7 @@
  *                                                    setStreamingContent / setMessages
  */
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useMemo } from "react";
 import * as path from "path";
 import * as fs from "fs";
 import chalk from "chalk";
@@ -155,6 +155,22 @@ export function useChat(opts: UseChatOptions) {
 
   /** Whether the /ls session browser overlay is open */
   const [showSessionBrowser, setShowSessionBrowser] = useState(false);
+
+  /** Bumped whenever modelConfigRef is mutated — forces a re-render so StatusBar reflects changes */
+  const [_configVersion, _bumpConfigVersion] = useState(0);
+
+  /** Snapshot of the live model config — recalculated whenever _configVersion bumps */
+  const liveModelConfig = useMemo(
+    () => ({ ...modelConfigRef.current }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [_configVersion],
+  );
+
+  /** Rebuild agent and trigger a re-render so UI (StatusBar, etc.) shows updated config */
+  const rebuildAndRefresh = useCallback(() => {
+    rebuildAndRefresh();
+    _bumpConfigVersion((v) => v + 1);
+  }, [rebuildAgent]);
 
   // ── 3. Mutable refs — data that changes without triggering a re-render ───
 
@@ -570,17 +586,25 @@ export function useChat(opts: UseChatOptions) {
             const key = sp[0];
             const val = sp.slice(1).join(" ");
             if (!key || !val)
-              return "Usage: /config set <key> <value>\nKeys: provider, model, mode, api-key, base-url";
+              return "Usage: /config set <key> <value>\nKeys: provider, model, mode, api-key, base-url, oauth-token";
+
+            // oauth-token is stored in keychain (not config.json) — handle separately
+            if (key === "oauth-token") {
+              modelConfigRef.current.oauthToken = val;
+              modelConfigRef.current.apiKey     = undefined;
+              rebuildAndRefresh();
+              return `OAuth token set (${val.slice(0, 8)}...)`;
+            }
+
             const res = updateStoredConfig(key, val);
             if (res.success) {
               // Mutate the ref and rebuild so changes take effect immediately
-              if (key === "provider")  { modelConfigRef.current.provider = val; rebuildAgent(); }
-              if (key === "model")     { modelConfigRef.current.model    = val; rebuildAgent(); }
+              if (key === "provider")  { modelConfigRef.current.provider = val; rebuildAndRefresh(); }
+              if (key === "model")     { modelConfigRef.current.model    = val; rebuildAndRefresh(); }
               if (key === "mode")      opts.permissionManager.setMode(parsePermissionMode(val) as PermissionMode);
-              if (key === "api-key")     { modelConfigRef.current.apiKey      = val; modelConfigRef.current.oauthToken = undefined; rebuildAgent(); }
-              if (key === "oauth-token") { modelConfigRef.current.oauthToken  = val; modelConfigRef.current.apiKey     = undefined; rebuildAgent(); }
-              if (key === "base-url")    { modelConfigRef.current.baseURL     = val; rebuildAgent(); }
-              const masked = (key === "api-key" || key === "oauth-token") ? val.slice(0, 8) + "..." : val;
+              if (key === "api-key")   { modelConfigRef.current.apiKey = val; modelConfigRef.current.oauthToken = undefined; rebuildAndRefresh(); }
+              if (key === "base-url")  { modelConfigRef.current.baseURL = val; rebuildAndRefresh(); }
+              const masked = key === "api-key" ? val.slice(0, 8) + "..." : val;
               return `Saved: ${key} = ${masked}`;
             }
             return res.error || "Error saving config";
@@ -612,12 +636,12 @@ export function useChat(opts: UseChatOptions) {
           }
           if (arg === "default") {
             modelConfigRef.current.model = undefined;
-            rebuildAgent();
+            rebuildAndRefresh();
             const def = getDefaultModel(String(modelConfigRef.current.provider || "anthropic")) || "provider default";
             return `Model reset to default: ${def}`;
           }
           modelConfigRef.current.model = arg;
-          rebuildAgent();
+          rebuildAndRefresh();
           return `Model switched to: ${arg}`;
         }
 
@@ -634,12 +658,12 @@ export function useChat(opts: UseChatOptions) {
             modelConfigRef.current.provider = "anthropic";
             modelConfigRef.current.model    = undefined;
             modelConfigRef.current.apiKey   = undefined;
-            rebuildAgent();
+            rebuildAndRefresh();
             return `Reset to default: anthropic / ${getDefaultModel("anthropic")}`;
           }
           modelConfigRef.current.provider = arg.toLowerCase();
           modelConfigRef.current.model    = undefined;
-          rebuildAgent();
+          rebuildAndRefresh();
           return `Provider switched to: ${arg}\nTip: use /model to pick a model`;
         }
 
@@ -663,7 +687,7 @@ export function useChat(opts: UseChatOptions) {
           toolRegistryRef.current         = createToolRegistry(newDir);
           opts.permissionManager.setProjectDir(newDir);
           opts.hookManager.setWorkingDir(newDir);
-          rebuildAgent();
+          rebuildAndRefresh();
           return `Working directory: ${newDir}`;
         }
 
@@ -766,7 +790,7 @@ export function useChat(opts: UseChatOptions) {
           if (!arg)
             return `Current effort: ${effortManagerRef.current.getLevel()}\nUsage: /effort <low|medium|high|max>`;
           effortManagerRef.current.setLevel(arg as EffortLevel);
-          rebuildAgent();
+          rebuildAndRefresh();
           return `Effort level: ${arg}`;
         }
 
@@ -882,8 +906,8 @@ export function useChat(opts: UseChatOptions) {
     // Returns all saved conversations (used by SessionBrowser)
     conversations: listConversations,
 
-    // Current model config (read by StatusBar)
-    modelConfig: modelConfigRef.current,
+    // Current model config (read by StatusBar) — live snapshot, updates on every config change
+    modelConfig: liveModelConfig,
 
     // Actions
     sendMessage,

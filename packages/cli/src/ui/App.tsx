@@ -115,6 +115,7 @@ export const App: React.FC<AppProps> = ({
     handleSlashCommand,
     cancelCurrent,
     addSystemMessage,
+    modelConfig: liveModelConfig,
   } = useChat({
     modelConfig,
     toolRegistry,
@@ -273,8 +274,8 @@ export const App: React.FC<AppProps> = ({
     return (
       <Box flexDirection="column">
         <SetupWizard
-          currentProvider={String(modelConfig.provider || "anthropic")}
-          currentModel={String(modelConfig.model || "")}
+          currentProvider={String(liveModelConfig.provider || "anthropic")}
+          currentModel={String(liveModelConfig.model || "")}
           onDone={({ provider, model, apiKey, oauthToken }) => {
             setShowSetupWizard(false);
             handleSlashCommand(`/provider ${provider}`);
@@ -365,8 +366,8 @@ export const App: React.FC<AppProps> = ({
       />
 
       <StatusBar
-        provider={String(modelConfig.provider || "anthropic")}
-        model={String(modelConfig.model || "")}
+        provider={String(liveModelConfig.provider || "anthropic")}
+        model={String(liveModelConfig.model || "")}
         mode={permissionManager.getMode()}
         workingDir={workingDir}
         isProcessing={isProcessing}
