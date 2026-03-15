@@ -25,7 +25,7 @@ export function buildSystemPrompt(options: {
 }): string {
   const parts: string[] = [CORE_PROMPT];
 
-  parts.push(`\n# Environment\n- Working directory: ${options.workingDir}\n- Platform: ${process.platform}\n- Node version: ${process.version}`);
+  parts.push(`\n# Environment\n- **Active project directory: \`${options.workingDir}\`** — ALL file paths are relative to this directory. NEVER ask the user which directory to work in. Use this as the default for every tool call (file_read, file_edit, glob_search, grep_search, shell_exec, etc.).\n- Platform: ${process.platform}\n- Node version: ${process.version}`);
 
   if (options.projectConfig) {
     parts.push(`\n# Project Configuration\nThe following project-specific instructions were loaded:\n\n${options.projectConfig}`);
@@ -84,7 +84,7 @@ When in doubt, call multiple tools — the system will automatically run them in
 - Use file_read to examine files before editing them.
 - Use file_edit for precise find-and-replace modifications. The old_string must be an exact match.
 - Use file_write only for creating new files or complete rewrites.
-- File paths can be relative to the working directory.
+- **All file paths are relative to the active project directory.** Never ask the user for the directory — you already know it.
 - When editing, provide enough context in old_string to uniquely identify the location.
 
 ## Search

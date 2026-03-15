@@ -62,6 +62,10 @@ export class AgentRunner {
   private maxTurns: number;
   private currentTurns: number = 0;
   private isCancelled: boolean = false;
+  /** Tools that the LLM has requested via get_tool — kept for all subsequent turns */
+  private activatedTools: Set<string> = new Set();
+  /** Provider name for provider-specific optimizations (cache_control, etc.) */
+  private provider: string;
 
   constructor(
     modelConfig: Partial<ModelConfig>,
@@ -71,6 +75,7 @@ export class AgentRunner {
     options?: AgentRunnerOptions,
   ) {
     this.model = createModel(modelConfig);
+    this.provider = (modelConfig.provider as string) || "anthropic";
     this.hookManager = hookManager || null;
     this.maxRetries = options?.maxRetries ?? 3;
     this.retryDelayMs = options?.retryDelayMs ?? 1000;
@@ -150,15 +155,89 @@ export class AgentRunner {
    * instructions are removed since the LLM already knows how to use standard
    * coding tools. This saves ~3,000-4,000 tokens per API call.
    */
-  private buildToolDefinitions() {
-    return this.toolRegistry.getAll().map((t) => ({
+  private buildToolDefinitions(filterNames?: Set<string>) {
+    let tools = this.toolRegistry.getAll();
+    if (filterNames) {
+      // Always include activated tools (previously fetched via get_tool)
+      tools = tools.filter((t) => filterNames.has(t.definition.name) || this.activatedTools.has(t.definition.name));
+    }
+
+    const isAnthropic = this.provider === "anthropic";
+
+    const defs = tools.map((t, i) => {
+      const def: Record<string, unknown> = {
+        type: "function" as const,
+        function: {
+          name: t.definition.name,
+          description: compactDescription(t.definition.description),
+          parameters: compactSchema(t.definition.inputSchema),
+        },
+      };
+
+      // Anthropic prompt caching: mark the LAST tool with cache_control
+      // so all tool definitions are cached as a single prefix block.
+      // This means tool tokens are only counted on the first request,
+      // subsequent requests reuse the cached block (~90% savings on tool tokens).
+      if (isAnthropic && i === tools.length - 1) {
+        def.cache_control = { type: "ephemeral" };
+      }
+
+      return def;
+    });
+
+    // Add the get_tool meta-tool when we're filtering (so LLM can request missing tools)
+    if (filterNames) {
+      const getToolDef = this.buildGetToolDefinition();
+      if (isAnthropic) {
+        // Move cache_control to get_tool (it's now the last tool)
+        if (defs.length > 0) delete (defs[defs.length - 1] as any).cache_control;
+        (getToolDef as any).cache_control = { type: "ephemeral" };
+      }
+      defs.push(getToolDef);
+    }
+
+    return defs;
+  }
+
+  /** Build the get_tool meta-tool definition — lets LLM fetch any tool on demand */
+  private buildGetToolDefinition() {
+    const allNames = this.toolRegistry.getAll().map((t) => t.definition.name);
+    return {
       type: "function" as const,
       function: {
-        name: t.definition.name,
-        description: compactDescription(t.definition.description),
-        parameters: compactSchema(t.definition.inputSchema),
+        name: "get_tool",
+        description: `Fetch the full schema of a tool not in your current toolset so you can call it. Available tools: ${allNames.join(", ")}`,
+        parameters: {
+          type: "object",
+          properties: {
+            tool_name: {
+              type: "string",
+              enum: allNames,
+              description: "Name of the tool to fetch",
+            },
+          },
+          required: ["tool_name"],
+        },
       },
-    }));
+    };
+  }
+
+  /** Handle a get_tool call — return the full schema and activate the tool for future turns */
+  private handleGetTool(toolName: string): string {
+    const tool = this.toolRegistry.get(toolName);
+    if (!tool) {
+      return `Tool "${toolName}" not found.`;
+    }
+
+    // Activate this tool for all future turns in this session
+    this.activatedTools.add(toolName);
+
+    // Return full (non-compacted) definition so the LLM has complete info
+    return JSON.stringify({
+      name: tool.definition.name,
+      description: tool.definition.description,
+      parameters: tool.definition.inputSchema,
+    }, null, 2) + `\n\nTool "${toolName}" is now available. You can call it directly.`;
   }
 
   /**
@@ -286,8 +365,6 @@ export class AgentRunner {
     this.messages.push(new HumanMessage(userMessage));
     this.currentTurns = 0;
 
-    const toolDefs = this.buildToolDefinitions();
-    const modelWithTools = this.model.bindTools(toolDefs);
     let fullResponse = "";
 
     try {
@@ -308,6 +385,11 @@ export class AgentRunner {
           new SystemMessage(this.systemPrompt),
           ...this.messages,
         ];
+
+        // Select tools relevant to this turn (saves ~2,000-3,000 tokens vs sending all 22)
+        const selectedTools = this.currentTurns === 1 ? selectToolsForMessage(userMessage) : null;
+        const toolDefs = this.buildToolDefinitions(selectedTools && selectedTools.size > 0 ? selectedTools : undefined);
+        const modelWithTools = this.model.bindTools(toolDefs);
 
         // Stream response with retry
         const accumulated = await this.streamWithRetry(modelWithTools, allMessages, callbacks);
@@ -351,9 +433,24 @@ export class AgentRunner {
         }));
         fullResponse += fullText;
 
-        // Execute tool calls — parallel for reads, sequential for writes
-        // Claude Code approach: split by safety, run safe tools concurrently
-        await this.executeToolCalls(toolCalls, callbacks);
+        // Handle get_tool meta-calls (fetch tool schema on demand)
+        const realToolCalls: typeof toolCalls = [];
+        for (const tc of toolCalls) {
+          if (tc.name === "get_tool") {
+            const toolName = tc.args.tool_name as string;
+            callbacks.onToolCall(tc.name, tc.args);
+            const result = this.handleGetTool(toolName);
+            this.messages.push(new ToolMessage({ content: result, tool_call_id: tc.id }));
+            callbacks.onToolResult(tc.name, result, false);
+          } else {
+            realToolCalls.push(tc);
+          }
+        }
+
+        // Execute real tool calls — parallel for reads, sequential for writes
+        if (realToolCalls.length > 0) {
+          await this.executeToolCalls(realToolCalls, callbacks);
+        }
         // Loop: model sees tool results, decides next step
       }
 
@@ -592,6 +689,64 @@ export class AgentRunner {
   setHistory(messages: BaseMessage[]): void {
     this.messages = messages;
   }
+}
+
+// ── Smart Tool Selection ───────────────────────────────────────────────────
+// On the first turn, analyze the user message to select only relevant tools.
+// This saves ~2,000-3,000 tokens when the user's intent is clear.
+// On subsequent turns, all tools are sent (the agent may chain anything).
+
+/** Core tools always included — these cover 90%+ of coding tasks */
+const ALWAYS_INCLUDE = new Set([
+  "file_read",       // reading files — needed almost every task
+  "file_edit",       // single find-and-replace — most common edit action
+  "multi_edit",      // multiple edits atomically — very common for refactoring
+  "file_write",      // creating new files
+  "shell_exec",      // running commands, builds, tests, git
+  "glob_search",     // finding files by pattern
+  "grep_search",     // searching code content
+  "list_dir",        // exploring directory structure
+  "view_diff",       // reviewing git changes — common workflow
+  "sub_agent",       // delegating parallel tasks
+]);
+
+/** Tool groups activated by keyword signals in the user message */
+const TOOL_SIGNALS: Array<{ keywords: RegExp; tools: string[] }> = [
+  { keywords: /search|find|grep|look for|where is/i, tools: ["codebase_search", "grep_search", "glob_search"] },
+  { keywords: /edit|change|replace|rename|refactor|fix|update|modify/i, tools: ["multi_edit", "file_edit"] },
+  { keywords: /write|create|new file|generate/i, tools: ["file_write"] },
+  { keywords: /delete|remove file|rm /i, tools: ["file_delete"] },
+  { keywords: /run|execute|test|build|install|npm|yarn|pip/i, tools: ["shell_exec", "file_run", "code_verify"] },
+  { keywords: /web|fetch|url|http|download|api/i, tools: ["web_fetch", "web_search"] },
+  { keywords: /notebook|ipynb|jupyter|cell/i, tools: ["notebook_edit"] },
+  { keywords: /ast|tree.?sitter|parse|struct|node|rename func|rename class/i, tools: ["ast_edit"] },
+  { keywords: /diff|git|commit|branch|status|log/i, tools: ["view_diff", "shell_exec"] },
+  { keywords: /todo|task|plan|track/i, tools: ["todo"] },
+  { keywords: /sub.?agent|parallel|background|delegate/i, tools: ["sub_agent"] },
+  { keywords: /repo|map|structure|overview|architecture/i, tools: ["view_repo_map"] },
+  { keywords: /system|info|permission|sandbox/i, tools: ["system_info"] },
+];
+
+/**
+ * Select tools relevant to a user message.
+ * Always includes core tools + any activated by keyword signals.
+ * Falls back to all tools if the message is ambiguous.
+ */
+function selectToolsForMessage(message: string): Set<string> {
+  const selected = new Set(ALWAYS_INCLUDE);
+
+  let signalMatched = false;
+  for (const signal of TOOL_SIGNALS) {
+    if (signal.keywords.test(message)) {
+      for (const tool of signal.tools) selected.add(tool);
+      signalMatched = true;
+    }
+  }
+
+  // If no specific signals matched, include all tools (ambiguous request)
+  if (!signalMatched) return new Set<string>(); // empty = no filter = all tools
+
+  return selected;
 }
 
 // ── Tool Definition Compaction ─────────────────────────────────────────────
