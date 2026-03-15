@@ -430,6 +430,30 @@ body {
 .step-title { font-weight: 600; margin-bottom: 4px; }
 .step-desc { font-size: 14px; color: var(--text-secondary); line-height: 1.6; }
 
+/* React Flow Diagrams */
+.flow-diagram {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  margin: 24px 0;
+  overflow: hidden;
+}
+
+.flow-diagram .react-flow__node {
+  font-family: var(--font-mono), monospace;
+  white-space: pre-line;
+  text-align: center;
+  line-height: 1.4;
+}
+
+.flow-diagram .react-flow__edge-text {
+  font-size: 11px;
+}
+
+.flow-diagram .react-flow__background {
+  opacity: 0.4;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .sidebar { display: none; }

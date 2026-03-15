@@ -1,3 +1,4 @@
+
 # OAuth Authentication — Cdoing Agent
 
 Use your **Claude Pro or Claude Max subscription** to authenticate without an API key. Works in both the **CLI** and the **VS Code Extension**.

@@ -34,6 +34,7 @@ const navigation = [
     items: [
       { name: "Tools System", href: "/tools" },
       { name: "Permissions & Sandbox", href: "/permissions" },
+      { name: "OAuth Authentication", href: "/oauth" },
     ],
   },
 ];
