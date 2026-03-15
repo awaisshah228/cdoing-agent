@@ -18,7 +18,7 @@
 export type IncomingMessage =
   | { type: "startResponse" }                                          // Agent started processing
   | { type: "token"; text: string }                                    // One streamed token from the LLM
-  | { type: "toolCall"; name: string; input: string }                  // Agent is invoking a tool
+  | { type: "toolCall"; name: string; input: string; description?: string } // Agent is invoking a tool
   | { type: "toolResult"; name: string; result: string; isError: boolean } // Tool finished
   | { type: "endResponse" }                                            // Agent done, no more tokens
   | { type: "finalizeStreaming" }                                        // Finalize current streaming message so next tokens start a new message
@@ -37,7 +37,10 @@ export type IncomingMessage =
   | { type: "tabSwitched"; tabId: string }                             // Switched to a tab
   | { type: "tabClosed"; tabId: string }                               // Tab closed
   | { type: "tabTitleUpdated"; tabId: string; title: string }          // Tab title changed
-  | { type: "permissionRequest"; id: string; toolName: string; message: string; hasProject: boolean }; // Permission prompt
+  | { type: "permissionRequest"; id: string; toolName: string; message: string; hasProject: boolean } // Permission prompt
+  | { type: "oauthStatus"; status: "none" | "active" | "expired"; expiresAt?: number }  // OAuth status update
+  | { type: "oauthStarted"; url: string }                                                // OAuth flow started, browser opened
+  | { type: "oauthResult"; success: boolean; error?: string };                           // OAuth exchange result
 
 // ─── Messages FROM webview TO extension host ───
 
@@ -63,6 +66,10 @@ export type OutgoingMessage =
   | { type: "deleteConversation"; id: string }               // Delete a past conversation
   | { type: "cancelGeneration" }                             // Cancel the current streaming response
   | { type: "permissionResponse"; id: string; decision: string } // Permission decision from user
+  | { type: "startOAuth" }                                     // Start OAuth login flow
+  | { type: "exchangeOAuth"; code: string }                    // Exchange OAuth authorization code
+  | { type: "oauthLogout" }                                    // Clear OAuth tokens
+  | { type: "getOAuthStatus" }                                 // Request OAuth status
   | { type: "ready" };                                       // Webview loaded, ready for data
 
 /** Extension configuration (for in-panel settings) */
@@ -72,6 +79,8 @@ export interface ExtensionConfig {
   customProviderName: string;
   customBaseURL: string;
   apiKey: string;
+  /** Auth method for Anthropic: "apiKey" or "oauth" */
+  authMethod?: string;
   temperature: number;
   maxTokens: number;
   permissionMode: string;
@@ -119,6 +128,7 @@ export interface ToolCallEntry {
   input: string;              // JSON input args
   output: string;             // Result output (empty while running)
   isError?: boolean;           // True if the tool failed
+  description?: string;       // Brief description of what the tool is doing
 }
 
 /** Union type — everything that can appear in the message list */

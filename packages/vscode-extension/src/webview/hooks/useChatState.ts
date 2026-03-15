@@ -119,11 +119,11 @@ export function useChatState() {
   // Track the latest tool call ID per tool name so results can update the same entry
   const toolCallMapRef = useRef<Map<string, string>>(new Map());
 
-  const addToolCall = useCallback((name: string, input: string) => {
+  const addToolCall = useCallback((name: string, input: string, description?: string) => {
     const id = nextId();
     // Store mapping: toolName → entryId (for result matching)
     toolCallMapRef.current.set(name, id);
-    setEntries((prev) => [...prev, { id, kind: "call" as const, name, input, output: "" }]);
+    setEntries((prev) => [...prev, { id, kind: "call" as const, name, input, output: "", description }]);
   }, []);
 
   const addToolResult = useCallback((name: string, result: string, isError: boolean) => {
@@ -257,7 +257,7 @@ export function useChatState() {
           streamingRef.current = null;
           break;
         case "toolCall":
-          addToolCall(msg.name, msg.input);
+          addToolCall(msg.name, msg.input, (msg as any).description);
           break;
         case "toolResult":
           addToolResult(msg.name, msg.result, msg.isError);

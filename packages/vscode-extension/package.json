@@ -172,6 +172,16 @@
           "default": "",
           "description": "API key (overrides environment variable). Leave empty to use env var."
         },
+        "cdoing.authMethod": {
+          "type": "string",
+          "default": "apiKey",
+          "enum": ["apiKey", "oauth"],
+          "enumDescriptions": [
+            "Use an API key (from settings or environment variable)",
+            "Use Claude OAuth login (free tier, Haiku only)"
+          ],
+          "description": "Authentication method for Anthropic provider"
+        },
         "cdoing.temperature": {
           "type": "number",
           "default": 0,

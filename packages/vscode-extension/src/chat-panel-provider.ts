@@ -39,6 +39,14 @@ import {
   getDefaultModel,
 } from "@cdoing/ai";
 import { getWebviewContent } from "./webview-content";
+import {
+  generateOAuthUrl,
+  exchangeOAuthCode,
+  resolveOAuthToken,
+  getOAuthStatus,
+  oauthLogout,
+  loadOAuthTokens,
+} from "./oauth";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
@@ -72,6 +80,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private pendingMessages: any[] = [];
   private pendingPermissionResolvers = new Map<string, (decision: "allow" | "always" | "project" | "deny") => void>();
   private permissionIdCounter = 0;
+  private oauthCodeVerifier: string | null = null;
 
   private getTab(id?: string): TabState | undefined {
     return this.tabs.get(id || this.activeTabId || "");
@@ -164,6 +173,60 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           }
           break;
         }
+        case "startOAuth": {
+          const { url, codeVerifier } = generateOAuthUrl();
+          this.oauthCodeVerifier = codeVerifier;
+          vscode.env.openExternal(vscode.Uri.parse(url));
+          this.postMessage({ type: "oauthStarted", url } as any);
+          // Prompt user to paste the code
+          const code = await vscode.window.showInputBox({
+            title: "Claude OAuth Login",
+            prompt: "Paste the authorization code from the browser",
+            placeHolder: "Authorization code...",
+            ignoreFocusOut: true,
+          });
+          if (code && this.oauthCodeVerifier) {
+            try {
+              await exchangeOAuthCode(code, this.oauthCodeVerifier);
+              this.oauthCodeVerifier = null;
+              this.postMessage({ type: "oauthResult", success: true } as any);
+              this.postMessage({ type: "oauthStatus", ...getOAuthStatus() } as any);
+              // Reinitialize with OAuth token
+              this.refreshConfig();
+            } catch (err) {
+              const errMsg = err instanceof Error ? err.message : String(err);
+              this.postMessage({ type: "oauthResult", success: false, error: errMsg } as any);
+            }
+          } else {
+            this.oauthCodeVerifier = null;
+          }
+          break;
+        }
+        case "exchangeOAuth": {
+          if (!this.oauthCodeVerifier) {
+            this.postMessage({ type: "oauthResult", success: false, error: "No OAuth flow in progress" } as any);
+            break;
+          }
+          try {
+            await exchangeOAuthCode(message.code, this.oauthCodeVerifier);
+            this.oauthCodeVerifier = null;
+            this.postMessage({ type: "oauthResult", success: true } as any);
+            this.postMessage({ type: "oauthStatus", ...getOAuthStatus() } as any);
+            this.refreshConfig();
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            this.postMessage({ type: "oauthResult", success: false, error: errMsg } as any);
+          }
+          break;
+        }
+        case "oauthLogout":
+          oauthLogout();
+          this.postMessage({ type: "oauthStatus", ...getOAuthStatus() } as any);
+          this.refreshConfig();
+          break;
+        case "getOAuthStatus":
+          this.postMessage({ type: "oauthStatus", ...getOAuthStatus() } as any);
+          break;
         case "ready":
           this.webviewReady = true;
           this.sendCurrentConfig();
@@ -295,6 +358,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       provider = customProviderName;
     }
 
+    const authMethod = config.get<string>("authMethod") || "apiKey";
+
     const modelConfig: Partial<ModelConfig> = {
       provider,
       model: model || undefined,
@@ -303,6 +368,16 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       apiKey: apiKey || undefined,
       baseURL: customBaseURL || undefined,
     };
+
+    // If Anthropic + OAuth, attach the cached OAuth token (sync check only;
+    // async refresh happens in initSharedServices)
+    if (provider === "anthropic" && authMethod === "oauth") {
+      const status = getOAuthStatus();
+      if (status.status === "active") {
+        const tokens = loadOAuthTokens();
+        if (tokens) modelConfig.oauthToken = tokens.access_token;
+      }
+    }
 
     let permMode: PermissionMode;
     switch (permModeStr) {
@@ -325,14 +400,27 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     const workingDir = this.getWorkingDir();
     const { modelConfig, permMode, provider } = this.getConfig();
 
-    // Ensure API key is available
-    if (!modelConfig.apiKey) {
+    // Ensure API key is available (skip if using OAuth)
+    if (!modelConfig.oauthToken && !modelConfig.apiKey) {
       const envVar = getApiKeyEnvVar(provider);
       if (!process.env[envVar]) {
         const storedKey = this.loadApiKeyFromConfig(provider);
         if (storedKey) {
           process.env[envVar] = storedKey;
         }
+      }
+    }
+
+    // Auto-refresh OAuth token in background if expired
+    if (modelConfig.oauthToken === undefined && provider === "anthropic") {
+      const config = vscode.workspace.getConfiguration("cdoing");
+      if (config.get<string>("authMethod") === "oauth") {
+        resolveOAuthToken().then((token) => {
+          if (token) {
+            // Token refreshed — rebuild agents
+            this.refreshConfig();
+          }
+        }).catch(() => {});
       }
     }
 
@@ -733,11 +821,14 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         customProviderName: vsConfig.get<string>("customProviderName") || "",
         customBaseURL: vsConfig.get<string>("customBaseURL") || "",
         apiKey: vsConfig.get<string>("apiKey") || "",
+        authMethod: vsConfig.get<string>("authMethod") || "apiKey",
         temperature: vsConfig.get<number>("temperature") ?? 0,
         maxTokens: vsConfig.get<number>("maxTokens") ?? 8096,
         permissionMode: vsConfig.get<string>("permissionMode") || "ask",
       },
     });
+    // Also send OAuth status
+    this.postMessage({ type: "oauthStatus", ...getOAuthStatus() } as any);
   }
 
   /** Update config from the webview settings panel */
@@ -750,6 +841,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     if (config.customProviderName !== undefined) await vsConfig.update("customProviderName", config.customProviderName, target);
     if (config.customBaseURL !== undefined) await vsConfig.update("customBaseURL", config.customBaseURL, target);
     if (config.apiKey !== undefined) await vsConfig.update("apiKey", config.apiKey, target);
+    if (config.authMethod !== undefined) await vsConfig.update("authMethod", config.authMethod, target);
     if (config.temperature !== undefined) await vsConfig.update("temperature", config.temperature, target);
     if (config.maxTokens !== undefined) await vsConfig.update("maxTokens", config.maxTokens, target);
     if (config.permissionMode !== undefined) await vsConfig.update("permissionMode", config.permissionMode, target);
@@ -849,12 +941,26 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           // Finalize any streamed text so it stays visible above the tool calls
           // (this is the LLM's thinking, e.g., "Let me search for the file...")
           this.postMessage({ type: "finalizeStreaming" });
-          this.postMessage({ type: "toolCall", name, input: JSON.stringify(input).substring(0, 200) });
+          // Send full input JSON (up to 2KB) so the webview can render per-tool detail
+          const inputStr = JSON.stringify(input);
+          const description = (input as any).description as string | undefined;
+          this.postMessage({
+            type: "toolCall",
+            name,
+            input: inputStr.length > 2000 ? inputStr.substring(0, 2000) : inputStr,
+            description,
+          });
         }
       },
       onToolResult: (name, result, isError) => {
         if (this.activeTabId === tabId) {
-          this.postMessage({ type: "toolResult", name, result: result.substring(0, 500), isError });
+          // Send more output (up to 3KB) so the webview can render trimmed IN/OUT
+          this.postMessage({
+            type: "toolResult",
+            name,
+            result: result.length > 3000 ? result.substring(0, 3000) + `\n… (${result.length - 3000} more chars)` : result,
+            isError,
+          });
         }
       },
       onComplete: () => {

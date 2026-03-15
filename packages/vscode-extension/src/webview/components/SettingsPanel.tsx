@@ -6,8 +6,9 @@
  * leaving the chat panel.
  */
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import type { ExtensionConfig } from "../types";
+import { useVsCode } from "../hooks/useVsCode";
 
 interface SettingsPanelProps {
   config: ExtensionConfig | null;
@@ -44,11 +45,13 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onOpenVscodeSettings,
   onClose,
 }) => {
+  const vscode = useVsCode();
   const [provider, setProvider] = useState(config?.provider || "anthropic");
   const [model, setModel] = useState(config?.model || "");
   const [customProviderName, setCustomProviderName] = useState(config?.customProviderName || "");
   const [customBaseURL, setCustomBaseURL] = useState(config?.customBaseURL || "");
   const [apiKey, setApiKey] = useState(config?.apiKey || "");
+  const [authMethod, setAuthMethod] = useState(config?.authMethod || "apiKey");
   const [temperature, setTemperature] = useState(config?.temperature ?? 0);
   const [maxTokens, setMaxTokens] = useState(config?.maxTokens ?? 8096);
   const [permissionMode, setPermissionMode] = useState(config?.permissionMode || "ask");
@@ -59,6 +62,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [indexerEmbeddingBaseUrl, setIndexerEmbeddingBaseUrl] = useState(config?.indexerEmbeddingBaseUrl || "");
   const [indexerAutoIndex, setIndexerAutoIndex] = useState(config?.indexerAutoIndex ?? true);
 
+  // OAuth status
+  const [oauthStatus, setOauthStatus] = useState<"none" | "active" | "expired">("none");
+  const [oauthExpiresAt, setOauthExpiresAt] = useState<number | undefined>();
+
   // Update local state when config comes in
   useEffect(() => {
     if (config) {
@@ -67,6 +74,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       setCustomProviderName(config.customProviderName || "");
       setCustomBaseURL(config.customBaseURL || "");
       setApiKey(config.apiKey || "");
+      setAuthMethod(config.authMethod || "apiKey");
       setTemperature(config.temperature ?? 0);
       setMaxTokens(config.maxTokens ?? 8096);
       setPermissionMode(config.permissionMode || "ask");
@@ -79,6 +87,29 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     }
   }, [config]);
 
+  // Listen for OAuth status messages
+  useEffect(() => {
+    function handler(event: MessageEvent) {
+      const msg = event.data;
+      if (msg.type === "oauthStatus") {
+        setOauthStatus(msg.status);
+        setOauthExpiresAt(msg.expiresAt);
+      }
+    }
+    window.addEventListener("message", handler);
+    // Request current OAuth status on mount
+    vscode.postMessage({ type: "getOAuthStatus" } as any);
+    return () => window.removeEventListener("message", handler);
+  }, [vscode]);
+
+  const handleStartOAuth = useCallback(() => {
+    vscode.postMessage({ type: "startOAuth" } as any);
+  }, [vscode]);
+
+  const handleOAuthLogout = useCallback(() => {
+    vscode.postMessage({ type: "oauthLogout" } as any);
+  }, [vscode]);
+
   const handleSave = () => {
     onSave({
       provider,
@@ -86,6 +117,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       customProviderName,
       customBaseURL,
       apiKey,
+      authMethod,
       temperature,
       maxTokens,
       permissionMode,
@@ -162,20 +194,86 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
             </span>
           </div>
 
-          {/* API Key */}
-          <div className="settings-group">
-            <label className="settings-label">API Key</label>
-            <input
-              className="settings-input"
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="Leave empty to use env variable"
-            />
-            <span className="settings-hint">
-              Overrides environment variable if set
-            </span>
-          </div>
+          {/* Authentication */}
+          {provider === "anthropic" ? (
+            <div className="settings-group">
+              <label className="settings-label">Authentication</label>
+              <div className="settings-provider-grid">
+                <button
+                  className={`settings-provider-btn ${authMethod === "apiKey" ? "active" : ""}`}
+                  onClick={() => setAuthMethod("apiKey")}
+                >
+                  API Key
+                </button>
+                <button
+                  className={`settings-provider-btn ${authMethod === "oauth" ? "active" : ""}`}
+                  onClick={() => setAuthMethod("oauth")}
+                >
+                  OAuth (Free)
+                </button>
+              </div>
+
+              {authMethod === "apiKey" ? (
+                <>
+                  <input
+                    className="settings-input"
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder="Leave empty to use env variable"
+                    style={{ marginTop: 8 }}
+                  />
+                  <span className="settings-hint">
+                    Overrides ANTHROPIC_API_KEY environment variable if set
+                  </span>
+                </>
+              ) : (
+                <div className="oauth-section">
+                  <div className="oauth-status">
+                    <span className={`oauth-status-dot oauth-status-${oauthStatus}`} />
+                    <span className="oauth-status-text">
+                      {oauthStatus === "active" && "Logged in"}
+                      {oauthStatus === "expired" && "Session expired"}
+                      {oauthStatus === "none" && "Not logged in"}
+                    </span>
+                    {oauthStatus === "active" && oauthExpiresAt && (
+                      <span className="oauth-status-expires">
+                        expires {new Date(oauthExpiresAt).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
+                  <div className="oauth-actions">
+                    {oauthStatus === "active" ? (
+                      <button className="oauth-btn oauth-btn-logout" onClick={handleOAuthLogout}>
+                        Logout
+                      </button>
+                    ) : (
+                      <button className="oauth-btn oauth-btn-login" onClick={handleStartOAuth}>
+                        Login with Claude
+                      </button>
+                    )}
+                  </div>
+                  <span className="settings-hint">
+                    Sign in with your Claude account. Free tier supports Haiku model only.
+                  </span>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="settings-group">
+              <label className="settings-label">API Key</label>
+              <input
+                className="settings-input"
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="Leave empty to use env variable"
+              />
+              <span className="settings-hint">
+                Overrides environment variable if set
+              </span>
+            </div>
+          )}
 
           {/* Permission Mode */}
           <div className="settings-group">

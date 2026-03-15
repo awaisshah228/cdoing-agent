@@ -512,6 +512,124 @@ body {
   margin-bottom: 4px;
 }
 
+/* ─── Tool IO Sections (IN / OUT badges — Claude Code style) ─── */
+.tool-io-section {
+  margin-bottom: 8px;
+}
+.tool-io-section:last-child {
+  margin-bottom: 0;
+}
+.tool-io-header {
+  margin-bottom: 4px;
+}
+.tool-io-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.tool-io-badge-in {
+  background: rgba(0, 120, 212, 0.15);
+  color: var(--accent);
+}
+.tool-io-badge-out {
+  background: rgba(40, 167, 69, 0.12);
+  color: var(--vscode-testing-iconPassed, #73c991);
+}
+.tool-io-block {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--fg);
+}
+.tool-io-block pre,
+pre.tool-io-block {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--desc-fg);
+}
+.tool-io-command {
+  color: var(--fg) !important;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 4px 8px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+.tool-io-code {
+  margin: 2px 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+}
+.tool-io-removed {
+  background: rgba(220, 53, 69, 0.08) !important;
+  border-color: rgba(220, 53, 69, 0.2) !important;
+}
+.tool-io-added {
+  background: rgba(40, 167, 69, 0.08) !important;
+  border-color: rgba(40, 167, 69, 0.2) !important;
+}
+.tool-io-diff-preview {
+  margin-top: 4px;
+}
+.tool-io-diff-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--desc-fg);
+  opacity: 0.7;
+  margin: 4px 0 2px;
+}
+.tool-io-label {
+  color: var(--vscode-symbolIcon-fieldForeground, #9cdcfe);
+  font-weight: 500;
+  font-size: 11px;
+}
+.tool-io-inline-code {
+  font-family: var(--vscode-editor-font-family);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.tool-io-meta {
+  display: block;
+  font-size: 10px;
+  color: var(--desc-fg);
+  opacity: 0.6;
+  margin-top: 2px;
+}
+.tool-io-results {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 11px;
+  line-height: 1.4;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.tool-io-error {
+  color: var(--error-fg) !important;
+}
+.tool-io-empty {
+  font-style: italic;
+  opacity: 0.5;
+  font-size: 11px;
+}
+.tool-step-desc {
+  font-family: var(--vscode-editor-font-family);
+  opacity: 0.85;
+}
+
 /* ─── Clickable File Paths ─── */
 .file-link {
   color: var(--vscode-textLink-foreground) !important;
@@ -1283,6 +1401,85 @@ body {
 }
 .settings-save-btn:hover {
   background: var(--btn-hover);
+}
+
+/* ─── OAuth Section (in Settings panel) ─── */
+.oauth-section {
+  margin-top: 8px;
+}
+
+.oauth-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.oauth-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.oauth-status-none {
+  background: var(--vscode-descriptionForeground, #888);
+}
+
+.oauth-status-active {
+  background: var(--vscode-testing-iconPassed, #73c991);
+}
+
+.oauth-status-expired {
+  background: var(--vscode-editorWarning-foreground, #cca700);
+}
+
+.oauth-status-text {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg);
+}
+
+.oauth-status-expires {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground, #888);
+  margin-left: auto;
+}
+
+.oauth-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.oauth-btn {
+  padding: 6px 16px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  transition: background 0.1s;
+}
+
+.oauth-btn-login {
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  border-color: var(--btn-bg);
+}
+
+.oauth-btn-login:hover {
+  background: var(--btn-hover);
+}
+
+.oauth-btn-logout {
+  background: transparent;
+  color: var(--error-fg);
+  border-color: var(--error-fg);
+}
+
+.oauth-btn-logout:hover {
+  background: color-mix(in srgb, var(--error-fg) 10%, transparent);
 }
 
 /* ─── Permission Prompt (Claude Code style) ─── */
