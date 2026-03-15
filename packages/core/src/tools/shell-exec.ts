@@ -6,8 +6,35 @@ import type { PermissionManager } from "../permissions";
 import { extractShellPaths } from "../utils/shell-paths";
 
 const IS_WINDOWS = os.platform() === "win32";
-const SHELL = IS_WINDOWS ? process.env.COMSPEC || "cmd.exe" : process.env.SHELL || "/bin/sh";
-const SHELL_FLAG = IS_WINDOWS ? "/c" : "-c";
+
+/**
+ * Get the shell command and args for the current platform.
+ * - Windows: PowerShell (more capable than cmd.exe)
+ * - macOS: user's shell with login flag (loads .zshrc/.bashrc for PATH, nvm, pyenv, etc.)
+ * - Linux: user's shell with login flag
+ */
+function getShellCommand(command: string): { shell: string; args: string[] } {
+  if (IS_WINDOWS) {
+    return {
+      shell: "powershell.exe",
+      args: ["-NoLogo", "-ExecutionPolicy", "Bypass", "-Command", command],
+    };
+  }
+  const userShell = process.env.SHELL || (os.platform() === "darwin" ? "/bin/zsh" : "/bin/bash");
+  return { shell: userShell, args: ["-l", "-c", command] };
+}
+
+/** For exec() — the shell to use */
+const SHELL = IS_WINDOWS ? "powershell.exe" : process.env.SHELL || "/bin/sh";
+
+/** Color-supporting environment variables */
+const COLOR_ENV = {
+  FORCE_COLOR: "1",
+  COLORTERM: "truecolor",
+  TERM: "xterm-256color",
+  CLICOLOR: "1",
+  CLICOLOR_FORCE: "1",
+};
 
 /** Absolute danger — always blocked regardless of permissions */
 const ALWAYS_BLOCKED = [
@@ -165,10 +192,14 @@ Commands are also subject to sandbox restrictions.`,
 
     const background = (input.background as boolean) || false;
 
+    // Merge color env for better terminal output
+    Object.assign(env, COLOR_ENV);
+
     // Background mode: spawn detached, return immediately with PID
     if (background) {
       const { spawn } = require("child_process") as typeof import("child_process");
-      const child = spawn(SHELL, [SHELL_FLAG, command], {
+      const { shell, args } = getShellCommand(command);
+      const child = spawn(shell, args, {
         cwd: this.workingDir,
         env,
         detached: !IS_WINDOWS,

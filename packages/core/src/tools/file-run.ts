@@ -7,7 +7,7 @@ import { safePath } from "../utils/path-safety";
 import type { SandboxManager } from "../sandbox";
 
 const IS_WINDOWS = os.platform() === "win32";
-const SHELL = IS_WINDOWS ? process.env.COMSPEC || "cmd.exe" : process.env.SHELL || "/bin/sh";
+const SHELL = IS_WINDOWS ? "powershell.exe" : process.env.SHELL || "/bin/sh";
 
 /** Map file extensions to the command that runs them */
 const RUNNERS: Record<string, string> = {
