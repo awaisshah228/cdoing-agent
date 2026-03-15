@@ -27,7 +27,10 @@ import type { SandboxManager } from "../sandbox";
 const HOME_DIR = os.homedir();
 const GLOBAL_CDOING_DIR = path.join(HOME_DIR, ".cdoing");
 const GLOBAL_PERMISSIONS_FILE = path.join(GLOBAL_CDOING_DIR, "permissions.json");
-const USER_SETTINGS_FILE = path.join(HOME_DIR, ".claude", "settings.json");
+
+// Settings files — check both .cdoing/ (our format) and .claude/ (Claude Code compat)
+const USER_SETTINGS_FILE = path.join(HOME_DIR, ".cdoing", "settings.json");
+const USER_SETTINGS_FILE_CLAUDE = path.join(HOME_DIR, ".claude", "settings.json");
 
 // ── Public types ───────────────────────────────────────────────────────────────
 
@@ -261,9 +264,15 @@ export class PermissionManager {
    */
   private readDefaultModeFromSettings(): PermissionMode | null {
     const candidates = [
+      // Local project overrides (highest priority)
+      this.projectDir ? path.join(this.projectDir, ".cdoing", "settings.local.json") : null,
       this.projectDir ? path.join(this.projectDir, ".claude", "settings.local.json") : null,
-      this.projectDir ? path.join(this.projectDir, ".claude", "settings.json")        : null,
+      // Shared project settings
+      this.projectDir ? path.join(this.projectDir, ".cdoing", "settings.json") : null,
+      this.projectDir ? path.join(this.projectDir, ".claude", "settings.json") : null,
+      // Global user settings
       USER_SETTINGS_FILE,
+      USER_SETTINGS_FILE_CLAUDE,
     ];
     for (const filePath of candidates) {
       if (!filePath) continue;
@@ -358,13 +367,17 @@ export class PermissionManager {
    */
   loadSettingsRules(): void {
     // Load each layer (null if file doesn't exist)
-    const local   = this.projectDir
-      ? loadSettingsFile(path.join(this.projectDir, ".claude", "settings.local.json"))
+    // Load from .cdoing/ (our format) with .claude/ fallback (Claude Code compat)
+    const local = this.projectDir
+      ? (loadSettingsFile(path.join(this.projectDir, ".cdoing", "settings.local.json"))
+        || loadSettingsFile(path.join(this.projectDir, ".claude", "settings.local.json")))
       : null;
-    const shared  = this.projectDir
-      ? loadSettingsFile(path.join(this.projectDir, ".claude", "settings.json"))
+    const shared = this.projectDir
+      ? (loadSettingsFile(path.join(this.projectDir, ".cdoing", "settings.json"))
+        || loadSettingsFile(path.join(this.projectDir, ".claude", "settings.json")))
       : null;
-    const user    = loadSettingsFile(USER_SETTINGS_FILE);
+    const user = loadSettingsFile(USER_SETTINGS_FILE)
+      || loadSettingsFile(USER_SETTINGS_FILE_CLAUDE);
 
     // For allow/ask: highest precedence first so "first match wins" works correctly.
     // Order: local → shared → user
@@ -650,12 +663,15 @@ export class PermissionManager {
   }
 
   /**
-   * Persist a permission rule to .claude/settings.json (project) or ~/.claude/settings.json (global).
-   * This is the same format Claude Code uses, making permissions portable and editable.
+   * Persist a permission rule to settings.json.
+   *
+   * Writes to:
+   *   - Project scope → <project>/.cdoing/settings.json
+   *   - Global scope  → ~/.cdoing/settings.json
    */
   private addToSettingsAllow(rule: string, scope: PermissionScope): void {
     const filePath = scope === "project" && this.projectDir
-      ? path.join(this.projectDir, ".claude", "settings.json")
+      ? path.join(this.projectDir, ".cdoing", "settings.json")
       : USER_SETTINGS_FILE;
 
     try {
