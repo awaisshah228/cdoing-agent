@@ -220,20 +220,49 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
 
   return (
     <div className="input-area">
-      {/* Permission prompt */}
+      {/* Permission prompt — Claude Code style */}
       {permissionRequest && onPermissionResponse && (
         <div className="permission-prompt">
-          <div className="permission-prompt-message">
-            <span className="permission-prompt-icon">&#9889;</span>
-            <span className="permission-prompt-text">{permissionRequest.message}</span>
+          <div className="permission-prompt-header">
+            Allow this {permissionRequest.toolName}?
           </div>
-          <div className="permission-prompt-actions">
-            <button className="permission-btn permission-btn-allow" onClick={() => onPermissionResponse("allow")}>Allow Once</button>
-            <button className="permission-btn permission-btn-always" onClick={() => onPermissionResponse("always")}>Always Allow</button>
+          <div className="permission-prompt-command">
+            <div className="permission-prompt-command-label">
+              {permissionRequest.toolName}
+            </div>
+            <pre className="permission-prompt-command-text">{permissionRequest.message}</pre>
+          </div>
+          <div className="permission-prompt-options">
+            <button
+              className="permission-option permission-option-selected"
+              onClick={() => onPermissionResponse("allow")}
+            >
+              <span className="permission-option-num">1</span>
+              <span>Yes</span>
+            </button>
+            <button
+              className="permission-option"
+              onClick={() => onPermissionResponse("always")}
+            >
+              <span className="permission-option-num">2</span>
+              <span>Yes, always allow <strong>{permissionRequest.toolName}</strong></span>
+            </button>
             {permissionRequest.hasProject && (
-              <button className="permission-btn permission-btn-project" onClick={() => onPermissionResponse("project")}>Allow for Project</button>
+              <button
+                className="permission-option"
+                onClick={() => onPermissionResponse("project")}
+              >
+                <span className="permission-option-num">3</span>
+                <span>Yes, allow for this project (just you)</span>
+              </button>
             )}
-            <button className="permission-btn permission-btn-deny" onClick={() => onPermissionResponse("deny")}>Deny</button>
+            <button
+              className="permission-option permission-option-deny"
+              onClick={() => onPermissionResponse("deny")}
+            >
+              <span className="permission-option-num">{permissionRequest.hasProject ? "4" : "3"}</span>
+              <span>No</span>
+            </button>
           </div>
         </div>
       )}

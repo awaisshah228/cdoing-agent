@@ -361,6 +361,20 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           message,
           hasProject,
         } as any);
+
+        // If the webview panel is not visible, show a VS Code notification
+        // so the user knows permission is needed
+        if (!this.view?.visible) {
+          vscode.window.showInformationMessage(
+            `Cdoing is requesting permission to use ${toolName}`,
+            "View"
+          ).then((action) => {
+            if (action === "View") {
+              // Focus the Cdoing sidebar panel
+              vscode.commands.executeCommand("cdoing.chatPanel.focus");
+            }
+          });
+        }
       });
     });
 

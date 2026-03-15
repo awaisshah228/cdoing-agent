@@ -1285,14 +1285,15 @@ body {
   background: var(--btn-hover);
 }
 
-/* ─── Permission Prompt (inline, above input) ─── */
+/* ─── Permission Prompt (Claude Code style) ─── */
 .permission-prompt {
-  background: var(--editor-bg);
+  background: var(--vscode-editorWidget-background, var(--editor-bg));
   border: 1px solid var(--accent);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 0;
   margin-bottom: 8px;
   animation: permission-slide-in 0.15s ease-out;
+  overflow: hidden;
 }
 
 @keyframes permission-slide-in {
@@ -1300,75 +1301,95 @@ body {
   to   { opacity: 1; transform: translateY(0); }
 }
 
-.permission-prompt-message {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-bottom: 10px;
-  font-size: 12px;
-  line-height: 1.4;
+.permission-prompt-header {
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--fg);
+  border-bottom: 1px solid var(--border);
 }
 
-.permission-prompt-icon {
-  flex-shrink: 0;
-  font-size: 14px;
+.permission-prompt-command {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
 }
 
-.permission-prompt-text {
-  flex: 1;
-  min-width: 0;
-  word-break: break-word;
-}
-
-.permission-prompt-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.permission-btn {
-  padding: 4px 12px;
-  border-radius: 4px;
-  font-size: 11px;
+.permission-prompt-command-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--vscode-descriptionForeground, #888);
+  margin-bottom: 4px;
   font-weight: 500;
+}
+
+.permission-prompt-command-text {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg);
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--vscode-textCodeBlock-background, rgba(0,0,0,0.15));
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+
+.permission-prompt-options {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+}
+
+.permission-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font-size: 12px;
   cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.permission-option:hover {
+  background: var(--list-hover);
+}
+
+.permission-option-selected {
+  background: var(--accent);
+  color: var(--btn-fg, #fff);
+}
+
+.permission-option-selected:hover {
+  background: var(--btn-hover, var(--accent));
+}
+
+.permission-option-deny {
+  color: var(--fg);
+  opacity: 0.7;
+}
+
+.permission-option-deny:hover {
+  opacity: 1;
+}
+
+.permission-option-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
   border: 1px solid var(--border);
-  transition: background 0.1s, border-color 0.1s;
-}
-
-.permission-btn-allow {
-  background: var(--btn-bg);
-  color: var(--btn-fg);
-  border-color: var(--btn-bg);
-}
-.permission-btn-allow:hover {
-  background: var(--btn-hover);
-}
-
-.permission-btn-always {
-  background: transparent;
-  color: var(--fg);
-}
-.permission-btn-always:hover {
-  background: var(--list-hover);
-}
-
-.permission-btn-project {
-  background: transparent;
-  color: var(--fg);
-}
-.permission-btn-project:hover {
-  background: var(--list-hover);
-}
-
-.permission-btn-deny {
-  background: transparent;
-  color: var(--error-fg);
-  border-color: var(--error-fg);
-}
-.permission-btn-deny:hover {
-  background: color-mix(in srgb, var(--error-fg) 10%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+  background: var(--vscode-textCodeBlock-background, rgba(0,0,0,0.1));
 }
 
 /* ─── Scrollbar ─── */
