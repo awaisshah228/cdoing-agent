@@ -250,8 +250,7 @@ export const App: React.FC<AppProps> = ({
       if (value.startsWith("/")) {
         const result = await handleSlashCommand(value);
         if (result !== null) {
-          // Write directly to stdout — avoids React state timing issues with Ink
-          process.stdout.write(chalk.cyan(result) + "\n");
+          addSystemMessage(result);
         }
         return;
       }
@@ -273,7 +272,7 @@ export const App: React.FC<AppProps> = ({
           onSelect={async (id) => {
             setShowSessionBrowser(false);
             const result = await handleSlashCommand(`/resume ${id}`);
-            if (result) process.stdout.write(chalk.cyan(result) + "\n");
+            if (result) addSystemMessage(result);
           }}
           onDelete={async (id) => {
             await handleSlashCommand(`/delete ${id}`);
@@ -281,7 +280,7 @@ export const App: React.FC<AppProps> = ({
           onFork={async (id) => {
             setShowSessionBrowser(false);
             const result = await handleSlashCommand(`/fork ${id}`);
-            if (result) process.stdout.write(chalk.cyan(result) + "\n");
+            if (result) addSystemMessage(result);
           }}
           onClose={() => setShowSessionBrowser(false)}
         />

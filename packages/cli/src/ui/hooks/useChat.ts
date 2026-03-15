@@ -1,9 +1,42 @@
+/**
+ * useChat.ts — Main chat state hook.
+ *
+ * This is the top-level hook consumed by App.tsx.  It wires together three
+ * concerns that intentionally live in separate modules:
+ *
+ *   1. Agent lifecycle   →  ./useAgent.ts
+ *      Build / rebuild the AgentRunner when settings change.
+ *
+ *   2. Pure utilities    →  ./helpers.ts
+ *      Terminal output, diff printing, help text — no React.
+ *
+ *   3. This file (useChat.ts)
+ *      - Message history (what's displayed in the chat window)
+ *      - Session / conversation persistence
+ *      - Background jobs (/bg, /jobs)
+ *      - Slash command dispatch (/model, /dir, /clear, …)
+ *      - The sendMessage() function that runs the agent and streams tokens
+ *
+ * Learning note — why split at all?
+ *   A single 1000-line file works but becomes hard to navigate.  Splitting by
+ *   responsibility means you can read useAgent.ts to understand "how is the
+ *   AI agent built?" without wading through session management, and vice versa.
+ *
+ * Data flow:
+ *   User types  →  UserInput.tsx  →  onSubmit  →  App.tsx  →  sendMessage()
+ *                                                              ↓
+ *                                                       agentRef.current.run()
+ *                                                              ↓
+ *                                              onToken / onToolCall / onComplete
+ *                                                              ↓
+ *                                                    setStreamingContent / setMessages
+ */
+
 import { useState, useCallback, useRef } from "react";
 import * as path from "path";
 import * as fs from "fs";
 import chalk from "chalk";
-import type {} from "diff"; // type-only import for @types/diff
-import { AgentRunner, getDefaultModel } from "@cdoing/ai";
+import { getDefaultModel } from "@cdoing/ai";
 import type { ModelConfig } from "@cdoing/ai";
 import type {
   ToolRegistry,
@@ -13,21 +46,9 @@ import type {
   MemoryStore,
   TodoStore,
 } from "@cdoing/core";
-import {
-  loadProjectConfig,
-  PlanManager,
-  RulesManager,
-  McpManager,
-  EffortManager,
-  ContextProviderRegistry,
-  TerminalContextProvider,
-  UrlContextProvider,
-  TreeContextProvider,
-  CodebaseContextProvider,
-  ClipboardContextProvider,
-  FileIncludeContextProvider,
-} from "@cdoing/core";
 import type { EffortLevel } from "@cdoing/core";
+
+// History helpers — read / write conversations to ~/.cdoing/history/
 import {
   createConversation,
   addMessage,
@@ -36,9 +57,9 @@ import {
   deleteConversation,
   forkConversation,
   updateConversationTitle,
-  printConversationList,
   type Conversation,
 } from "../../history";
+
 import { createToolRegistry } from "../../tools";
 import {
   parsePermissionMode,
@@ -47,123 +68,150 @@ import {
 } from "../../config";
 import { oauthLogout, oauthStatus } from "../../oauth";
 import { handleInit, handleDoctor } from "../../commands";
+
+// Split modules
+import { useAgent }            from "./useAgent";
+import {
+  getContextWindowMax,
+  printToolCall,
+  printToolResult,
+  getHelpText,
+  getConversationListText,
+} from "./helpers";
+
 import type { ChatMessage, ToolActivity, UsageInfo, ContextUsage, BackgroundJob } from "../types";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Small utilities local to this file
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Auto-incrementing message ID — keeps React list keys stable */
 let _msgId = 0;
-function nextId() {
-  return String(++_msgId);
-}
+function nextId(): string { return String(++_msgId); }
 
+/** Short unique ID for background jobs — e.g. "bg-1a2b" */
+function jobId(): string { return `bg-${Date.now().toString(36).slice(-4)}`; }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Public interface
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Props passed by the parent component (App.tsx → chat.ts → here) */
 export interface UseChatOptions {
-  modelConfig: Partial<ModelConfig>;
-  toolRegistry: ToolRegistry;
+  modelConfig:       Partial<ModelConfig>;
+  toolRegistry:      ToolRegistry;
   permissionManager: PermissionManager;
-  hookManager: HookManager;
-  memoryStore: MemoryStore;
-  todoStore?: TodoStore;
+  hookManager:       HookManager;
+  memoryStore:       MemoryStore;
+  todoStore?:        TodoStore;
 }
 
-/** Context window sizes per provider/model family */
-function getContextWindowMax(provider: string, model: string): number {
-  if (provider === "google") return 1_000_000;
-  if (provider === "anthropic") return 200_000;
-  if (provider === "openai") {
-    if (model.includes("o3") || model.includes("o1")) return 200_000;
-    return 128_000;
-  }
-  if (provider === "ollama") return 32_000;
-  return 100_000;
-}
-
-/** Generate a short unique job id */
-function jobId(): string {
-  return `bg-${Date.now().toString(36).slice(-4)}`;
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// The hook
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function useChat(opts: UseChatOptions) {
+
+  // ── 1. Agent infrastructure (from useAgent.ts) ───────────────────────────
+  //
+  // useAgent owns: agentRef, modelConfigRef, toolRegistryRef, workingDirRef,
+  //                planManagerRef, rulesManagerRef, effortManagerRef, …
+  //                rebuildAgent(), resolveContextProviders()
+  //
+  // We destructure everything we need from it.
+  const agent = useAgent(opts);
+  const {
+    agentRef, modelConfigRef, toolRegistryRef, workingDirRef,
+    planManagerRef, rulesManagerRef, effortManagerRef,
+    mcpManagerRef, contextProvidersRef,
+    rebuildAgent, resolveContextProviders,
+  } = agent;
+
+  // ── 2. UI state — these drive React re-renders ───────────────────────────
+
+  /** All committed messages shown in the chat window (user + assistant + system) */
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+
+  /** Token stream currently being received — shown in the live streaming area */
   const [streamingContent, setStreamingContent] = useState("");
+
+  /** Whether the agent is processing a request (disables input, shows spinner) */
   const [isProcessing, setIsProcessing] = useState(false);
+
+  /** Tool currently executing (shows animated spinner with tool name) */
   const [toolActivity, setToolActivity] = useState<ToolActivity | null>(null);
+
+  /** Last token-usage report from the LLM (shown in the status bar) */
   const [lastUsage, setLastUsage] = useState<UsageInfo | null>(null);
+
+  /** Current working directory — shown in the status bar, changed by /dir */
   const [workingDir, setWorkingDir] = useState(process.cwd());
+
+  /** Context-window fill percentage — used to auto-compact at 80% */
   const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
+
+  /** List of /bg background jobs and their statuses */
   const [backgroundJobs, setBackgroundJobs] = useState<BackgroundJob[]>([]);
+
+  /** Whether the /ls session browser overlay is open */
   const [showSessionBrowser, setShowSessionBrowser] = useState(false);
 
-  // Ref so buildAgent() always reads the latest dir without stale closure issues
-  const workingDirRef = useRef(process.cwd());
+  // ── 3. Mutable refs — data that changes without triggering a re-render ───
 
-  // Mutable refs for config that changes without re-render
-  const modelConfigRef = useRef<Partial<ModelConfig>>({ ...opts.modelConfig });
-  const toolRegistryRef = useRef(opts.toolRegistry);
+  /** The AbortController for the current agent run — set to cancel in-flight requests */
   const abortRef = useRef<AbortController | null>(null);
+
+  /**
+   * Message queue — when a message arrives while isProcessing is true it's
+   * pushed here.  The next message in the queue is dequeued in onComplete.
+   */
   const queueRef = useRef<string[]>([]);
+
+  /**
+   * Last tool input — saved so printToolResult() can show the diff after the
+   * tool finishes.  Cleared after each tool result.
+   */
   const lastToolInputRef = useRef<Record<string, unknown>>({});
 
-  // Feature managers
-  const planManagerRef = useRef(new PlanManager());
-  const rulesManagerRef = useRef(new RulesManager(process.cwd()));
-  const effortManagerRef = useRef(new EffortManager());
-  const mcpManagerRef = useRef(new McpManager(process.cwd()));
-  const contextProvidersRef = useRef<ContextProviderRegistry>(
-    buildContextProviders(),
-  );
+  /** Active conversation — persisted to disk on every message */
   const conversationRef = useRef<Conversation>(
     createConversation(
       String(opts.modelConfig.provider || "anthropic"),
-      String(opts.modelConfig.model || "default"),
+      String(opts.modelConfig.model   || "default"),
     ),
   );
-  const lastTerminalOutputRef = useRef("");
-  const planModeActiveRef = useRef(false);
-
-  const agentRef = useRef<AgentRunner>(buildAgent());
-
-  function buildContextProviders(): ContextProviderRegistry {
-    const reg = new ContextProviderRegistry();
-    reg.register(new TerminalContextProvider());
-    reg.register(new UrlContextProvider());
-    reg.register(new TreeContextProvider());
-    reg.register(new CodebaseContextProvider());
-    reg.register(new ClipboardContextProvider());
-    reg.register(new FileIncludeContextProvider());
-    return reg;
-  }
-
-  function buildAgent(): AgentRunner {
-    const dir = workingDirRef.current;
-    const projectConfig = loadProjectConfig(dir);
-    const rulesText = rulesManagerRef.current?.formatForPrompt() || "";
-    const effortAddition =
-      effortManagerRef.current?.getSystemPromptAddition() || "";
-    const combined = [projectConfig || "", rulesText, effortAddition]
-      .filter(Boolean)
-      .join("\n\n");
-
-    return new AgentRunner(
-      modelConfigRef.current,
-      toolRegistryRef.current,
-      opts.permissionManager,
-      opts.hookManager,
-      {
-        workingDir: dir,
-        projectConfig: combined || undefined,
-        memory: opts.memoryStore.formatForPrompt() || undefined,
-      },
-    );
-  }
-
-  function rebuildAgent() {
-    agentRef.current = buildAgent();
-  }
 
   /**
-   * Fire-and-forget: ask the LLM for a short session title, then save it.
-   * Runs in the background so it never blocks the UI.
+   * Last captured terminal output — injected when the user types @terminal.
+   * Set by App.tsx after shell commands finish.
+   */
+  const lastTerminalOutputRef = useRef("");
+
+  /** Whether plan-mode is active (agent proposes a plan before acting) */
+  const planModeActiveRef = useRef(false);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Helper: add a system notification to the message list
+  // ─────────────────────────────────────────────────────────────────────────
+
+  function addSystemMessage(content: string): void {
+    setMessages((prev) => [
+      ...prev,
+      { id: nextId(), role: "system", content },
+    ]);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Helper: auto-generate a session title after the first exchange
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Fires a lightweight LLM call in the background to produce a short title
+   * for the conversation (e.g. "Fix TypeScript build errors").
+   * Saved to disk via updateConversationTitle — never blocks the main UI.
    */
   function generateSessionTitle(conv: Conversation): void {
-    const firstUser = conv.messages.find((m) => m.role === "user");
+    const firstUser      = conv.messages.find((m) => m.role === "user");
     const firstAssistant = conv.messages.find((m) => m.role === "assistant");
     if (!firstUser) return;
 
@@ -172,15 +220,21 @@ export function useChat(opts: UseChatOptions) {
       firstAssistant ? `Assistant: ${firstAssistant.content.substring(0, 200)}` : "",
     ].filter(Boolean).join("\n");
 
-    const titleAgent = buildAgent();
+    // Build a throwaway agent with no tools — we only need a text response
+    const titleAgent = new (agentRef.current.constructor as any)(
+      modelConfigRef.current,
+      toolRegistryRef.current,
+      opts.permissionManager,
+      opts.hookManager,
+    );
     let title = "";
     titleAgent.run(
       `Generate a concise session title (5–8 words max, no quotes) for this conversation:\n\n${snippet}\n\nTitle:`,
       {
-        onToken: (t) => { title += t; },
-        onToolCall: () => {},
+        onToken:      (t: string) => { title += t; },
+        onToolCall:   () => {},
         onToolResult: () => {},
-        onComplete: () => {
+        onComplete:   () => {
           const clean = title.trim().replace(/^["']|["']$/g, "").replace(/\.$/, "");
           if (clean) updateConversationTitle(conv.id, clean);
         },
@@ -189,12 +243,9 @@ export function useChat(opts: UseChatOptions) {
     ).catch(() => {});
   }
 
-  function addSystemMessage(content: string) {
-    setMessages((prev) => [
-      ...prev,
-      { id: nextId(), role: "system", content },
-    ]);
-  }
+  // ─────────────────────────────────────────────────────────────────────────
+  // cancelCurrent — abort the running agent
+  // ─────────────────────────────────────────────────────────────────────────
 
   const cancelCurrent = useCallback(() => {
     if (abortRef.current) {
@@ -207,49 +258,42 @@ export function useChat(opts: UseChatOptions) {
     addSystemMessage("⏹  Cancelled.");
   }, []);
 
-  const resolveContextProviders = useCallback(
-    async (message: string): Promise<string> => {
-      const providers = contextProvidersRef.current.getAll();
-      if (!providers.length) return message;
-      const parts: string[] = [];
-      let clean = message;
-      for (const p of providers) {
-        const idx = message.indexOf(p.trigger);
-        if (idx < 0) continue;
-        const after = message.substring(idx + p.trigger.length);
-        let arg: string | undefined;
-        if (p.requiresArg) {
-          const end = after.indexOf("\n");
-          arg = (end >= 0 ? after.substring(0, end) : after).trim();
-        }
-        const fullTrigger =
-          p.requiresArg && arg ? `${p.trigger} ${arg}` : p.trigger;
-        clean = clean.replace(fullTrigger, "").trim();
-        try {
-          const res = await p.resolve(arg, {
-            workingDir,
-            terminalOutput: lastTerminalOutputRef.current,
-          });
-          if (res.content) parts.push(res.content);
-        } catch {
-          // skip failed provider
-        }
-      }
-      return parts.length ? `${clean}\n\n---\n\n${parts.join("\n\n---\n\n")}` : clean;
-    },
-    [workingDir],
-  );
+  // ─────────────────────────────────────────────────────────────────────────
+  // sendMessage — the core function that runs the agent
+  // ─────────────────────────────────────────────────────────────────────────
 
+  /**
+   * Send a message to the agent and stream the response back into the UI.
+   *
+   * Flow:
+   *  1. If already processing → queue the message and return.
+   *  2. Expand any @mention context providers in the text.
+   *  3. Add the user message to the visible chat history.
+   *  4. Run the agent; wire up streaming callbacks:
+   *       onToken      → update the live streaming area
+   *       onToolCall   → flush text to stdout, show tool spinner
+   *       onToolResult → clear spinner, print diff
+   *       onComplete   → commit reply, dequeue next message
+   *       onError      → show error message
+   *       onUsage      → update token counter and auto-compact if needed
+   */
   const sendMessage = useCallback(
     async (text: string) => {
+      // ── Queue if busy ────────────────────────────────────────────────────
       if (isProcessing) {
         queueRef.current.push(text);
         addSystemMessage(`📬 Queued (${queueRef.current.length} waiting)`);
         return;
       }
 
-      const enriched = await resolveContextProviders(text);
+      // ── Resolve @mentions ────────────────────────────────────────────────
+      const enriched = await resolveContextProviders(
+        text,
+        workingDirRef.current,
+        lastTerminalOutputRef.current,
+      );
 
+      // ── Optimistic UI update ─────────────────────────────────────────────
       setIsProcessing(true);
       setMessages((prev) => [
         ...prev,
@@ -259,47 +303,51 @@ export function useChat(opts: UseChatOptions) {
 
       const ctrl = new AbortController();
       abortRef.current = ctrl;
-      let fullReply = "";
-      // Track how many chars of fullReply have already been flushed to stdout
+
+      /**
+       * Track how much of fullReply has already been written directly to
+       * stdout (to avoid double-printing it when it's committed to messages).
+       */
+      let fullReply  = "";
       let flushedPos = 0;
 
       /**
-       * Flush any unprinted streaming text to stdout and clear the Ink live area.
-       * Called before each tool call so text doesn't disappear in Ink's render area.
+       * Flush any un-printed streaming text to stdout BEFORE showing a tool
+       * call.  Without this, the text would disappear when Ink clears the
+       * live area to render the tool spinner.
        */
-      function flushStreamingText() {
+      function flushStreamingText(): void {
         const pending = fullReply.slice(flushedPos);
-        if (pending.trim()) {
-          process.stdout.write("\n" + pending + "\n");
-        }
+        if (pending.trim()) process.stdout.write("\n" + pending + "\n");
         flushedPos = fullReply.length;
         setStreamingContent("");
       }
 
+      // ── Agent run ────────────────────────────────────────────────────────
       await agentRef.current.run(enriched, {
+
         onToken: (token) => {
           fullReply += token;
-          // Show only the unflushed portion in the Ink streaming area
+          // Show only the part not yet flushed to stdout
           setStreamingContent(fullReply.slice(flushedPos));
         },
+
         onToolCall: (name, input) => {
-          // Flush any streaming text before showing the tool call
           flushStreamingText();
           lastToolInputRef.current = input;
-          // Print tool call header to stdout immediately (stays in scrollback)
-          printToolCall(name, input);
+          printToolCall(name, input);          // permanent stdout line
           const preview = JSON.stringify(input).substring(0, 60);
           setToolActivity({ name, preview, status: "running" });
         },
-        onToolResult: (name, _result, isError) => {
-          // Print the completed tool call result permanently to stdout
-          printToolResult(name, isError, lastToolInputRef.current);
+
+        onToolResult: (_name, _result, isError) => {
+          printToolResult(_name, isError, lastToolInputRef.current);
           lastToolInputRef.current = {};
-          // Clear the live spinner immediately
           setToolActivity(null);
         },
+
         onComplete: () => {
-          // Only add the unflushed remainder to messages (avoids double-printing)
+          // Commit only the portion NOT already flushed to stdout
           const remaining = fullReply.slice(flushedPos);
           if (remaining.trim()) {
             setMessages((prev) => [
@@ -308,52 +356,50 @@ export function useChat(opts: UseChatOptions) {
             ]);
             addMessage(conversationRef.current, "assistant", remaining);
           } else if (flushedPos > 0) {
-            // Everything was flushed via tool call flushes — print separator
+            // All text was flushed — print a separator to mark the end
             process.stdout.write(chalk.gray("─".repeat(40)) + "\n");
           }
-          // Save full reply to conversation regardless
-          if (flushedPos > 0 && remaining.trim()) {
-            // already saved above
-          } else if (flushedPos === 0 && fullReply.trim()) {
+          // Save the full reply to the conversation for the non-flushed case
+          if (flushedPos === 0 && fullReply.trim()) {
             addMessage(conversationRef.current, "assistant", fullReply);
           }
+
           setStreamingContent("");
           setIsProcessing(false);
           abortRef.current = null;
 
-          // Auto-generate session title after first assistant response
+          // Auto-generate a title after the first exchange
           const conv = conversationRef.current;
           if (conv.title === "New conversation" && conv.messages.length >= 2) {
             generateSessionTitle(conv);
           }
 
-          // Process next queued message
+          // Dequeue next message
           const next = queueRef.current.shift();
           if (next) sendMessage(next);
         },
+
         onError: (err) => {
           setMessages((prev) => [
             ...prev,
-            {
-              id: nextId(),
-              role: "system",
-              content: `❌ Error: ${err.message}`,
-              isError: true,
-            },
+            { id: nextId(), role: "system", content: `❌ Error: ${err.message}`, isError: true },
           ]);
           setStreamingContent("");
           setIsProcessing(false);
           abortRef.current = null;
         },
+
         onUsage: (usage) => {
           const u = usage as UsageInfo;
           setLastUsage(u);
-          // Track context window usage and auto-compact at 80%
-          const provider = String(modelConfigRef.current.provider || "anthropic");
-          const model = String(modelConfigRef.current.model || "");
+
+          // Calculate context-window fill % and auto-compact at 80%
+          const provider  = String(modelConfigRef.current.provider || "anthropic");
+          const model     = String(modelConfigRef.current.model    || "");
           const maxTokens = getContextWindowMax(provider, model);
-          const percent = Math.min(100, (u.inputTokens / maxTokens) * 100);
+          const percent   = Math.min(100, (u.inputTokens / maxTokens) * 100);
           setContextUsage({ inputTokens: u.inputTokens, maxTokens, percent });
+
           if (percent >= 80) {
             const ag = agentRef.current as unknown as Record<string, (...a: unknown[]) => unknown>;
             if (typeof ag.compactHistory === "function") {
@@ -364,24 +410,37 @@ export function useChat(opts: UseChatOptions) {
         },
       });
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [isProcessing, resolveContextProviders],
   );
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // handleSlashCommand — dispatch /commands typed in the input
+  // ─────────────────────────────────────────────────────────────────────────
+
   /**
-   * Handle a slash command.  Returns the output lines to display
-   * (as a single string), or null if the command takes over (e.g. /exit).
+   * Process a slash command string (e.g. "/model gpt-4o").
+   *
+   * Returns a string to display in the UI, or null if the command takes over
+   * (e.g. /ls opens the session browser, /exit terminates the process).
+   *
+   * Adding a new command?  Just add a new case here.
    */
   const handleSlashCommand = useCallback(
     async (command: string): Promise<string | null> => {
       const parts = command.split(/\s+/);
-      const cmd = parts[0];
-      const arg = parts.slice(1).join(" ");
+      const cmd   = parts[0];           // e.g. "/model"
+      const arg   = parts.slice(1).join(" "); // e.g. "gpt-4o"
 
       switch (cmd) {
+
+        // ── Conversation management ─────────────────────────────────────────
+
         case "/help":
           return getHelpText();
 
         case "/clear":
+          // Reset the agent's internal history AND the visible message list
           agentRef.current.clearHistory();
           setMessages([]);
           return "Conversation cleared.";
@@ -390,7 +449,7 @@ export function useChat(opts: UseChatOptions) {
           agentRef.current.clearHistory();
           conversationRef.current = createConversation(
             String(modelConfigRef.current.provider || "anthropic"),
-            String(modelConfigRef.current.model || "default"),
+            String(modelConfigRef.current.model   || "default"),
           );
           setMessages([]);
           return "New conversation started.";
@@ -398,23 +457,26 @@ export function useChat(opts: UseChatOptions) {
         case "/history":
           return getConversationListText();
 
+        case "/ls":
+          // Open the interactive TUI session browser (App.tsx renders it)
+          setShowSessionBrowser(true);
+          return null;
+
         case "/resume": {
           if (!arg) return "Usage: /resume <id>";
           const conv = loadConversation(arg);
           if (!conv) return `Conversation not found: ${arg}`;
           agentRef.current.clearHistory();
           for (const m of conv.messages) {
-            if (m.role === "user") agentRef.current.addToHistory("user", m.content);
+            if (m.role === "user")      agentRef.current.addToHistory("user",      m.content);
             else if (m.role === "assistant") agentRef.current.addToHistory("assistant", m.content);
           }
           conversationRef.current = conv;
-          setMessages(
-            conv.messages.map((m) => ({
-              id: nextId(),
-              role: m.role as "user" | "assistant",
-              content: m.content,
-            })),
-          );
+          setMessages(conv.messages.map((m) => ({
+            id:      nextId(),
+            role:    m.role as "user" | "assistant",
+            content: m.content,
+          })));
           return `Resumed conversation: ${arg}`;
         }
 
@@ -425,53 +487,45 @@ export function useChat(opts: UseChatOptions) {
         }
 
         case "/fork": {
+          // Fork creates a copy of a conversation so you can explore a divergent path
           const sourceId = arg || conversationRef.current.id;
-          const forked = forkConversation(sourceId);
+          const forked   = forkConversation(sourceId);
           if (!forked) return `Not found: ${sourceId}`;
           return `Forked → new session: ${forked.id}\nTitle: ${forked.title}\nUse /resume ${forked.id} to switch to it.`;
         }
 
-        case "/ls": {
-          setShowSessionBrowser(true);
-          return null; // TUI takes over
-        }
+        // ── Background jobs ─────────────────────────────────────────────────
 
         case "/bg": {
+          // Run a prompt in the background without blocking the main chat
           if (!arg) return "Usage: /bg <prompt>  — run a prompt as a background job";
-          const id = jobId();
-          const bgJob: BackgroundJob = {
-            id,
-            prompt: arg,
-            status: "running",
-            startedAt: Date.now(),
-          };
+          const id    = jobId();
+          const bgJob: BackgroundJob = { id, prompt: arg, status: "running", startedAt: Date.now() };
           setBackgroundJobs((prev) => [...prev, bgJob]);
           addSystemMessage(`⚡ Background job started: ${id}`);
 
-          const bgAgent = buildAgent();
+          // Build a fresh ephemeral agent so it doesn't share history with main chat
+          const bgAgent = new (agentRef.current.constructor as any)(
+            modelConfigRef.current, toolRegistryRef.current,
+            opts.permissionManager, opts.hookManager,
+          );
           let result = "";
           bgAgent.run(arg, {
-            onToken: (t) => { result += t; },
-            onToolCall: () => {},
+            onToken:      (t: string) => { result += t; },
+            onToolCall:   () => {},
             onToolResult: () => {},
-            onComplete: () => {
+            onComplete:   () => {
               setBackgroundJobs((prev) =>
-                prev.map((j) =>
-                  j.id === id
-                    ? { ...j, status: "done", result, completedAt: Date.now() }
-                    : j,
-                ),
-              );
+                prev.map((j) => j.id === id
+                  ? { ...j, status: "done", result, completedAt: Date.now() }
+                  : j));
               addSystemMessage(`✅ Background job done: ${id}`);
             },
-            onError: (e) => {
+            onError: (e: Error) => {
               setBackgroundJobs((prev) =>
-                prev.map((j) =>
-                  j.id === id
-                    ? { ...j, status: "error", error: e.message, completedAt: Date.now() }
-                    : j,
-                ),
-              );
+                prev.map((j) => j.id === id
+                  ? { ...j, status: "error", error: e.message, completedAt: Date.now() }
+                  : j));
               addSystemMessage(`❌ Background job failed: ${id} — ${e.message}`);
             },
           }).catch(() => {});
@@ -481,8 +535,8 @@ export function useChat(opts: UseChatOptions) {
         case "/jobs": {
           if (!backgroundJobs.length) return "No background jobs.";
           const jobArg = arg.trim();
-          // /jobs <id> — show result
           if (jobArg) {
+            // /jobs <id> — show full result for one job
             const job = backgroundJobs.find((j) => j.id === jobArg);
             if (!job) return `Job not found: ${jobArg}`;
             const elapsed = job.completedAt
@@ -492,10 +546,10 @@ export function useChat(opts: UseChatOptions) {
               `Job: ${job.id}  [${job.status}]  ${elapsed}`,
               `Prompt: ${job.prompt.substring(0, 100)}`,
               job.result ? `\nResult:\n${job.result}` : "",
-              job.error ? `\nError: ${job.error}` : "",
+              job.error  ? `\nError: ${job.error}`   : "",
             ].filter(Boolean).join("\n");
           }
-          // /jobs — list all
+          // /jobs — list all jobs
           return backgroundJobs.map((j) => {
             const elapsed = j.completedAt
               ? `${((j.completedAt - j.startedAt) / 1000).toFixed(1)}s`
@@ -505,45 +559,33 @@ export function useChat(opts: UseChatOptions) {
           }).join("\n");
         }
 
+        // ── Model / provider configuration ──────────────────────────────────
+
         case "/config": {
           if (arg === "show") {
             return ["Stored Config:", ...getStoredConfigDisplay()].join("\n  ");
           }
           if (arg.startsWith("set ")) {
-            const sp = arg.slice(4).trim().split(/\s+/);
+            const sp  = arg.slice(4).trim().split(/\s+/);
             const key = sp[0];
             const val = sp.slice(1).join(" ");
             if (!key || !val)
               return "Usage: /config set <key> <value>\nKeys: provider, model, mode, api-key, base-url";
             const res = updateStoredConfig(key, val);
             if (res.success) {
-              if (key === "provider") {
-                modelConfigRef.current.provider = val;
-                rebuildAgent();
-              }
-              if (key === "model") {
-                modelConfigRef.current.model = val;
-                rebuildAgent();
-              }
-              if (key === "mode")
-                opts.permissionManager.setMode(
-                  parsePermissionMode(val) as PermissionMode,
-                );
-              if (key === "api-key") {
-                modelConfigRef.current.apiKey = val;
-                rebuildAgent();
-              }
-              if (key === "base-url") {
-                modelConfigRef.current.baseURL = val;
-                rebuildAgent();
-              }
+              // Mutate the ref and rebuild so changes take effect immediately
+              if (key === "provider")  { modelConfigRef.current.provider = val; rebuildAgent(); }
+              if (key === "model")     { modelConfigRef.current.model    = val; rebuildAgent(); }
+              if (key === "mode")      opts.permissionManager.setMode(parsePermissionMode(val) as PermissionMode);
+              if (key === "api-key")   { modelConfigRef.current.apiKey  = val; rebuildAgent(); }
+              if (key === "base-url")  { modelConfigRef.current.baseURL = val; rebuildAgent(); }
               return `Saved: ${key} = ${key === "api-key" ? val.slice(0, 8) + "..." : val}`;
             }
             return res.error || "Error saving config";
           }
           return [
             `Provider: ${modelConfigRef.current.provider || "anthropic"}`,
-            `Model:    ${modelConfigRef.current.model || "(default)"}`,
+            `Model:    ${modelConfigRef.current.model    || "(default)"}`,
             `Mode:     ${opts.permissionManager.getMode()}`,
             `Dir:      ${workingDir}`,
             `Chat ID:  ${conversationRef.current.id}`,
@@ -588,13 +630,13 @@ export function useChat(opts: UseChatOptions) {
           }
           if (arg === "default") {
             modelConfigRef.current.provider = "anthropic";
-            modelConfigRef.current.model = undefined;
-            modelConfigRef.current.apiKey = undefined;
+            modelConfigRef.current.model    = undefined;
+            modelConfigRef.current.apiKey   = undefined;
             rebuildAgent();
             return `Reset to default: anthropic / ${getDefaultModel("anthropic")}`;
           }
           modelConfigRef.current.provider = arg.toLowerCase();
-          modelConfigRef.current.model = undefined;
+          modelConfigRef.current.model    = undefined;
           rebuildAgent();
           return `Provider switched to: ${arg}\nTip: use /model to pick a model`;
         }
@@ -602,44 +644,48 @@ export function useChat(opts: UseChatOptions) {
         case "/mode": {
           if (!arg)
             return `Current mode: ${opts.permissionManager.getMode()}\nUsage: /mode <ask|auto-edit|auto>`;
-          opts.permissionManager.setMode(
-            parsePermissionMode(arg) as PermissionMode,
-          );
+          opts.permissionManager.setMode(parsePermissionMode(arg) as PermissionMode);
           return `Permission mode: ${arg}`;
         }
+
+        // ── Working directory ────────────────────────────────────────────────
 
         case "/dir": {
           if (!arg) return `Working directory: ${workingDir}`;
           const newDir = path.resolve(workingDir, arg);
           if (!fs.existsSync(newDir) || !fs.statSync(newDir).isDirectory())
             return `Not a valid directory: ${newDir}`;
-          workingDirRef.current = newDir;
+          // Sync all references to the new directory
+          workingDirRef.current           = newDir;
           setWorkingDir(newDir);
-          toolRegistryRef.current = createToolRegistry(newDir);
+          toolRegistryRef.current         = createToolRegistry(newDir);
           opts.permissionManager.setProjectDir(newDir);
           opts.hookManager.setWorkingDir(newDir);
           rebuildAgent();
           return `Working directory: ${newDir}`;
         }
 
+        // ── Context window & compaction ──────────────────────────────────────
+
+        case "/compact": {
+          const ag = agentRef.current as unknown as Record<string, (...a: unknown[]) => unknown>;
+          ag.compactHistory?.();
+          return "Context compacted.";
+        }
+
+        // ── Permissions, memory, hooks ───────────────────────────────────────
+
         case "/permissions": {
           const pm = opts.permissionManager as unknown as Record<string, (...a: unknown[]) => unknown>;
-          if (arg === "clear") {
-            pm.clearStored?.();
-            return "Stored permissions cleared.";
-          }
+          if (arg === "clear") { pm.clearStored?.(); return "Stored permissions cleared."; }
           const perms = (pm.getAllStored?.() as Record<string, unknown>) || {};
           const lines = Object.entries(perms);
-          if (!lines.length) return "No stored permissions.";
-          return lines.map(([k, v]) => `${k}: ${v}`).join("\n");
+          return lines.length ? lines.map(([k, v]) => `${k}: ${v}`).join("\n") : "No stored permissions.";
         }
 
         case "/memory": {
           const ms = opts.memoryStore as unknown as Record<string, (...a: unknown[]) => unknown>;
-          if (arg === "clear") {
-            ms.clear?.();
-            return "Memory cleared.";
-          }
+          if (arg === "clear") { ms.clear?.(); return "Memory cleared."; }
           return opts.memoryStore.formatForPrompt() || "No memory stored.";
         }
 
@@ -648,33 +694,30 @@ export function useChat(opts: UseChatOptions) {
           return JSON.stringify(hm.getConfig?.() || {}, null, 2);
         }
 
+        // ── Usage stats ──────────────────────────────────────────────────────
+
         case "/usage": {
           if (!lastUsage) return "No usage data yet.";
           return [
             `Input tokens:  ${lastUsage.inputTokens.toLocaleString()}`,
             `Output tokens: ${lastUsage.outputTokens.toLocaleString()}`,
             `Total tokens:  ${lastUsage.totalTokens.toLocaleString()}`,
-            lastUsage.cost !== undefined
-              ? `Cost:          $${lastUsage.cost.toFixed(4)}`
-              : "",
-          ]
-            .filter(Boolean)
-            .join("\n");
+            lastUsage.cost !== undefined ? `Cost:          $${lastUsage.cost.toFixed(4)}` : "",
+          ].filter(Boolean).join("\n");
         }
 
-        case "/compact": {
-          const ag = agentRef.current as unknown as Record<string, (...a: unknown[]) => unknown>;
-          ag.compactHistory?.();
-          return "Context compacted.";
-        }
+        // ── Tasks & todos ────────────────────────────────────────────────────
 
         case "/tasks": {
           const todos = opts.todoStore?.getAll?.() || [];
           if (!todos.length) return "No tasks.";
           return todos
-            .map((t: { id: string; status: string; subject: string }) => `[${t.status}] ${t.id}: ${t.subject}`)
+            .map((t: { id: string; status: string; subject: string }) =>
+              `[${t.status}] ${t.id}: ${t.subject}`)
             .join("\n");
         }
+
+        // ── Plan mode ────────────────────────────────────────────────────────
 
         case "/plan": {
           if (arg === "off" || arg === "cancel") {
@@ -692,9 +735,7 @@ export function useChat(opts: UseChatOptions) {
               const plan = planManagerRef.current.getCurrentPlan();
               if (plan) {
                 planManagerRef.current.startExecution();
-                sendMessage(
-                  `Execute this plan:\n\n${planManagerRef.current.formatPlan()}\n\nOriginal request: ${plan.originalRequest}`,
-                );
+                sendMessage(`Execute this plan:\n\n${planManagerRef.current.formatPlan()}\n\nOriginal request: ${plan.originalRequest}`);
               }
               return "Plan approved! Executing...";
             }
@@ -711,12 +752,13 @@ export function useChat(opts: UseChatOptions) {
               ? "Plan mode ON — next message will generate a plan."
               : "Plan mode OFF.";
           }
+          // /plan <request> — immediately generate a plan for the given request
           planModeActiveRef.current = true;
-          sendMessage(
-            `[PLAN MODE] Analyze this request and create a step-by-step plan. Do NOT modify files.\n\nRequest: ${arg}`,
-          );
+          sendMessage(`[PLAN MODE] Analyze this request and create a step-by-step plan. Do NOT modify files.\n\nRequest: ${arg}`);
           return "Generating plan...";
         }
+
+        // ── Effort level ─────────────────────────────────────────────────────
 
         case "/effort": {
           if (!arg)
@@ -726,36 +768,36 @@ export function useChat(opts: UseChatOptions) {
           return `Effort level: ${arg}`;
         }
 
+        // ── Ephemeral / one-shot questions ───────────────────────────────────
+
         case "/btw": {
-          if (!arg)
-            return "Usage: /btw <question>  (ask without adding to history)";
-          // Run a one-shot agent call without touching history
+          // Ask a question that doesn't get added to the conversation history
+          if (!arg) return "Usage: /btw <question>  (ask without adding to history)";
           setIsProcessing(true);
-          const ephemeralAgent = buildAgent();
+          const ephemeralAgent = new (agentRef.current.constructor as any)(
+            modelConfigRef.current, toolRegistryRef.current,
+            opts.permissionManager, opts.hookManager,
+          );
           let reply = "";
           await ephemeralAgent.run(arg, {
-            onToken: (t) => {
-              reply += t;
-              setStreamingContent(reply);
-            },
-            onToolCall: () => {},
+            onToken:      (t: string) => { reply += t; setStreamingContent(reply); },
+            onToolCall:   () => {},
             onToolResult: () => {},
-            onComplete: () => {
-              setMessages((prev) => [
-                ...prev,
-                { id: nextId(), role: "assistant", content: reply },
-              ]);
+            onComplete:   () => {
+              setMessages((prev) => [...prev, { id: nextId(), role: "assistant", content: reply }]);
               setStreamingContent("");
               setIsProcessing(false);
             },
-            onError: (e) => {
+            onError: (e: Error) => {
               addSystemMessage(`❌ ${e.message}`);
               setStreamingContent("");
               setIsProcessing(false);
             },
           });
-          return null; // streaming takes over
+          return null; // streaming has taken over the display
         }
+
+        // ── Misc ─────────────────────────────────────────────────────────────
 
         case "/rules":
           return rulesManagerRef.current.formatForPrompt() || "No rules defined.";
@@ -773,9 +815,7 @@ export function useChat(opts: UseChatOptions) {
 
         case "/queue": {
           if (!queueRef.current.length) return "No messages in queue.";
-          return queueRef.current
-            .map((m, i) => `${i + 1}. ${m.substring(0, 60)}`)
-            .join("\n");
+          return queueRef.current.map((m, i) => `${i + 1}. ${m.substring(0, 60)}`).join("\n");
         }
 
         case "/doctor":
@@ -802,215 +842,50 @@ export function useChat(opts: UseChatOptions) {
           return `Unknown command: ${cmd}\nType /help for available commands.`;
       }
     },
-    [workingDir, lastUsage, sendMessage, opts],
+    // The deps array includes everything the callback closes over that changes
+    [workingDir, lastUsage, sendMessage, backgroundJobs, opts],
   );
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Public API — what App.tsx destructures from useChat()
+  // ─────────────────────────────────────────────────────────────────────────
+
   return {
+    // Message list (drives the <Static> / stdout rendering in App.tsx)
     messages,
     setMessages,
+
+    // Live streaming area
     streamingContent,
+
+    // Processing state
     isProcessing,
     toolActivity,
+
+    // Token usage (status bar)
     lastUsage,
-    workingDir,
     contextUsage,
+
+    // Working directory (status bar + /dir command)
+    workingDir,
+
+    // Background jobs (status bar badge)
     backgroundJobs,
+
+    // Session browser overlay (/ls command)
     showSessionBrowser,
     setShowSessionBrowser,
-    modelConfig: modelConfigRef.current,
+
+    // Returns all saved conversations (used by SessionBrowser)
     conversations: listConversations,
+
+    // Current model config (read by StatusBar)
+    modelConfig: modelConfigRef.current,
+
+    // Actions
     sendMessage,
     handleSlashCommand,
     cancelCurrent,
     addSystemMessage,
   };
-}
-
-// ── helpers ──────────────────────────────────────────────
-
-const TOOL_ICONS: Record<string, string> = {
-  file_read:   "📖",
-  file_write:  "✏️ ",
-  file_edit:   "🔧",
-  glob_search: "🔍",
-  grep_search: "🔎",
-  shell_exec:  "💻",
-  web_fetch:   "🌐",
-  web_search:  "🔮",
-  sub_agent:   "🤖",
-  todo:        "📋",
-};
-
-function printToolCall(name: string, input: Record<string, unknown>): void {
-  const icon = TOOL_ICONS[name] || "⚡";
-  // Show a short preview of the key argument (file path, query, command, etc.)
-  const hint = getToolHint(name, input);
-  process.stdout.write(
-    chalk.yellow("  ▶ ") + chalk.yellow(`${icon} ${name}`) +
-    (hint ? chalk.gray("  " + hint) : "") + "\n"
-  );
-}
-
-function getToolHint(name: string, input: Record<string, unknown>): string {
-  const p = (k: string) => String(input[k] || "").replace(process.cwd() + "/", "");
-  switch (name) {
-    case "file_read":   return p("file_path") || p("path");
-    case "file_write":  return p("file_path") || p("path");
-    case "file_edit":   return p("file_path") || p("path");
-    case "glob_search": return String(input.pattern || "");
-    case "grep_search": return String(input.pattern || "");
-    case "shell_exec":  return String(input.command || "").substring(0, 50);
-    case "web_fetch":   return String(input.url || "").substring(0, 60);
-    case "web_search":  return String(input.query || "").substring(0, 60);
-    default:            return "";
-  }
-}
-
-function printToolResult(name: string, isError: boolean, input: Record<string, unknown>): void {
-  const icon = TOOL_ICONS[name] || "⚡";
-  if (isError) {
-    process.stdout.write(chalk.red(`  ✗ ${icon} ${name}`) + "\n");
-  } else {
-    process.stdout.write(chalk.green(`  ✓ `) + chalk.cyan(`${icon} ${name}`) + "\n");
-  }
-
-  // Show file diffs for edit/write operations
-  if (!isError && (name === "file_edit" || name === "file_write")) {
-    printFileDiff(name, input);
-  }
-}
-
-function printFileDiff(toolName: string, input: Record<string, unknown>): void {
-  try {
-    let oldContent = "";
-    let newContent = "";
-    let filePath = "";
-
-    if (toolName === "file_edit") {
-      filePath = String(input.file_path || input.path || "");
-      oldContent = String(input.old_string || "");
-      newContent = String(input.new_string || "");
-    } else if (toolName === "file_write") {
-      filePath = String(input.file_path || input.path || "");
-      newContent = String(input.content || "");
-      // Try to read old content for comparison
-      try {
-        oldContent = fs.readFileSync(filePath, "utf-8");
-      } catch {
-        oldContent = "";
-      }
-    }
-
-    if (!oldContent && !newContent) return;
-
-    const shortPath = filePath.replace(process.cwd() + "/", "");
-    process.stdout.write(chalk.bold.white(`\n  📄 ${shortPath}\n`));
-
-    if (!oldContent) {
-      // New file — show all lines as added
-      const lines = newContent.split("\n");
-      const preview = lines.slice(0, 20);
-      for (const line of preview) {
-        process.stdout.write(chalk.green("  + ") + chalk.green(line) + "\n");
-      }
-      if (lines.length > 20) {
-        process.stdout.write(chalk.gray(`  ... +${lines.length - 20} more lines\n`));
-      }
-    } else {
-      const { diffLines, diffWords } = require("diff") as typeof import("diff");
-      const lineHunks = diffLines(oldContent, newContent);
-      let shownLines = 0;
-
-      for (const hunk of lineHunks) {
-        if (!hunk.added && !hunk.removed) continue;
-        const lines = (hunk.value || "").split("\n").filter((l, i, arr) => i < arr.length - 1 || l);
-
-        for (const line of lines) {
-          if (shownLines >= 40) {
-            process.stdout.write(chalk.gray("  ... (diff truncated)\n"));
-            return;
-          }
-
-          if (hunk.added) {
-            // For added lines, find the matching removed line (same index) for word-level highlight
-            process.stdout.write(chalk.green("  + ") + chalk.green(line) + "\n");
-          } else {
-            process.stdout.write(chalk.red("  - ") + chalk.red(line) + "\n");
-          }
-          shownLines++;
-        }
-      }
-
-      // Word-level inline diff for file_edit (old_string vs new_string) — compact view
-      if (toolName === "file_edit" && oldContent && newContent) {
-        const wordDiff = diffWords(oldContent, newContent);
-        const hasChanges = wordDiff.some((p) => p.added || p.removed);
-        if (hasChanges) {
-          process.stdout.write(chalk.gray("  ── word diff ──\n  "));
-          for (const part of wordDiff) {
-            if (part.added) {
-              process.stdout.write(chalk.bgGreen.black(part.value));
-            } else if (part.removed) {
-              process.stdout.write(chalk.bgRed.white(part.value));
-            } else {
-              // Context: only show short surrounding text
-              const ctx = part.value.length > 30
-                ? part.value.substring(0, 15) + chalk.gray("…") + part.value.slice(-15)
-                : part.value;
-              process.stdout.write(chalk.gray(ctx));
-            }
-          }
-          process.stdout.write("\n");
-        }
-      }
-    }
-    process.stdout.write("\n");
-  } catch {
-    // skip diff on any error
-  }
-}
-
-function getHelpText(): string {
-  return [
-    "Available commands:",
-    "  /help          — this message",
-    "  /clear         — clear conversation",
-    "  /new           — new conversation",
-    "  /ls             — browse sessions (interactive TUI)",
-    "  /history        — list saved conversations (text)",
-    "  /resume <id>    — resume a conversation",
-    "  /fork [id]      — fork current or given conversation",
-    "  /delete <id>    — delete a conversation",
-    "  /config         — view config",
-    "  /model <name>   — switch model",
-    "  /provider <n>   — switch provider",
-    "  /mode <mode>    — change permission mode",
-    "  /dir <path>     — change working directory",
-    "  /usage          — token usage",
-    "  /plan           — toggle plan mode",
-    "  /effort <lvl>   — set effort level (low/medium/high/max)",
-    "  /btw <q>        — ask without adding to history",
-    "  /bg <prompt>    — run prompt as background job",
-    "  /jobs [id]      — list / inspect background jobs",
-    "  /rules          — show project rules",
-    "  /mcp            — MCP server status",
-    "  /context        — list context providers",
-    "  /tasks          — show task list",
-    "  /compact        — compact context",
-    "  /exit           — quit",
-    "",
-    "Prefix with ! to run a shell command directly.",
-    "Use @terminal, @tree, @url <u>, @codebase, @file <path> in messages.",
-    "Ctrl+V to paste clipboard  ·  Shift+Tab to cycle mode  ·  Ctrl+L to clear",
-  ].join("\n");
-}
-
-function getConversationListText(): string {
-  // Reuse the existing printConversationList but capture output
-  const lines: string[] = [];
-  const orig = console.log;
-  console.log = (...args: unknown[]) => lines.push(args.join(" "));
-  printConversationList();
-  console.log = orig;
-  return lines.join("\n") || "No saved conversations.";
 }

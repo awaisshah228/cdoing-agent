@@ -529,7 +529,7 @@ export const UserInput: React.FC<UserInputProps> = ({
     // ── /commands dropdown ──
     if (line.startsWith("/")) {
       const matches = SLASH_COMMANDS.filter((c) => c.cmd.startsWith(line) && c.cmd !== line);
-      setSuggestions(matches.slice(0, 8));
+      setSuggestions(matches);
       setSelectedSuggestion(0);
       setPathEntries([]);
       setPathContext(null);
