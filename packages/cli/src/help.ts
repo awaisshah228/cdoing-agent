@@ -1,27 +1,38 @@
 import chalk from "chalk";
+import figlet from "figlet";
 
 const VERSION = "0.1.0";
 
-// Gradient colors for the banner
-const gradientColors = ["#FF6B6B", "#FEC89A", "#FFD93D", "#6BCB77", "#4D96FF", "#9B5DE5"];
+const GRADIENT = ["#FF6B6B", "#FEC89A", "#FFD93D", "#6BCB77", "#4D96FF", "#9B5DE5"];
 
 function gradient(text: string): string {
-  const chars = text.split("");
-  return chars.map((char, i) => {
-    const colorIndex = Math.floor((i / chars.length) * gradientColors.length);
-    return chalk.hex(gradientColors[colorIndex])(char);
+  return text.split("").map((char, i) => {
+    const color = GRADIENT[Math.floor((i / text.length) * GRADIENT.length)];
+    return chalk.hex(color)(char);
   }).join("");
 }
 
 export function printWelcome(): void {
+  const banner = figlet.textSync("Cdoing", {
+    font: "Big",
+    horizontalLayout: "default",
+  });
+
+  // Apply gradient color line-by-line
+  const lines = banner.split("\n");
   console.log();
-  console.log(chalk.hex("#4D96FF")("  ╭─────────────────────────────────────────╮"));
-  console.log(chalk.hex("#4D96FF")("  │") + "  " + gradient("✨ Cdoing Agent") + chalk.hex("#9B5DE5")(` v${VERSION}`) + "               " + chalk.hex("#4D96FF")("│"));
-  console.log(chalk.hex("#4D96FF")("  │") + chalk.hex("#B0BEC5")("     AI-Powered Coding Assistant       ") + chalk.hex("#4D96FF")("│"));
-  console.log(chalk.hex("#4D96FF")("  ╰─────────────────────────────────────────╯"));
+  lines.forEach((line, i) => {
+    const color = GRADIENT[Math.floor((i / lines.length) * GRADIENT.length)];
+    console.log("  " + chalk.hex(color)(line));
+  });
+
+  console.log(
+    "  " + chalk.hex("#9B5DE5").bold(`AI-Powered Coding Assistant`) +
+    chalk.hex("#78909C")(` v${VERSION}`)
+  );
   console.log();
-  console.log(chalk.hex("#90A4AE")("  💬 Type your message and press ") + chalk.hex("#FFD93D")("Enter") + chalk.hex("#90A4AE")(" to chat"));
-  console.log(chalk.hex("#90A4AE")("  ❓ Type ") + chalk.hex("#FF6B6B")("?") + chalk.hex("#90A4AE")(" for help, ") + chalk.hex("#6BCB77")("!cmd") + chalk.hex("#90A4AE")(" to run commands"));
+  console.log(chalk.hex("#90A4AE")("  💬 Type a message and press ") + chalk.hex("#FFD93D")("Enter") + chalk.hex("#90A4AE")(" to chat"));
+  console.log(chalk.hex("#90A4AE")("  /help") + chalk.hex("#78909C")(" for commands  ·  ") + chalk.hex("#90A4AE")("!cmd") + chalk.hex("#78909C")(" to run shell commands"));
   console.log();
 }
 

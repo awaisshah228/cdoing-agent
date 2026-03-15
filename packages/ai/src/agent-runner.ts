@@ -44,6 +44,7 @@ export interface AgentRunnerOptions {
   memory?: string;
   systemPrompt?: string;
   maxTurns?: number;
+  workingDir?: string;
 }
 
 export class AgentRunner {
@@ -70,7 +71,7 @@ export class AgentRunner {
     this.retryDelayMs = options?.retryDelayMs ?? 1000;
     this.maxTurns = options?.maxTurns ?? Infinity;
 
-    const workingDir = process.cwd();
+    const workingDir = options?.workingDir || process.cwd();
 
     // Use custom system prompt if provided, otherwise build default
     if (options?.systemPrompt) {

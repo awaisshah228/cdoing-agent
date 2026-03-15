@@ -41,6 +41,8 @@ export { UrlContextProvider } from "./context-providers/url";
 export { TreeContextProvider } from "./context-providers/tree";
 export { ProblemsContextProvider } from "./context-providers/problems";
 export { CodebaseContextProvider } from "./context-providers/codebase";
+export { ClipboardContextProvider } from "./context-providers/clipboard";
+export { FileIncludeContextProvider } from "./context-providers/file-include";
 
 // Project Rules — hierarchical glob-scoped rules
 export { RulesManager } from "./rules/manager";

@@ -8,6 +8,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import chalk from "chalk";
+import figlet from "figlet";
 import { loadConfig, saveConfig, getStoredConfigDisplay, updateStoredConfig } from "./config";
 import { getApiKeyEnvVar } from "@cdoing/ai";
 
@@ -134,6 +135,7 @@ Files the agent should not modify:
 
   fs.writeFileSync(configFile, template, "utf-8");
   console.log();
+  console.log(chalk.hex("#6BCB77")(figlet.textSync("Init!", { font: "Small" })));
   console.log(chalk.hex("#81C784")("  ✨ Project initialized!"));
   console.log(chalk.hex("#90A4AE")("     Created: ") + chalk.hex("#4FC3F7")(".cdoing/config.md"));
   console.log();

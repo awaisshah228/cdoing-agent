@@ -81,8 +81,11 @@ export function createModel(config: Partial<ModelConfig> = {}) {
         anthropicApiKey: config.apiKey || process.env.ANTHROPIC_API_KEY,
         temperature,
         maxTokens,
+        // LangChain defaults topP to -1 (sentinel) and always sends it.
+        // Override with undefined so JSON.stringify omits it from the request.
         topP: undefined,
-      });
+        invocationKwargs: { top_p: undefined },
+      } as ConstructorParameters<typeof ChatAnthropic>[0]);
 
     case ModelProvider.OPENAI:
       return new ChatOpenAI({

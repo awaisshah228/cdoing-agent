@@ -22,3 +22,5 @@ export { UrlContextProvider } from "./url";
 export { TreeContextProvider } from "./tree";
 export { ProblemsContextProvider } from "./problems";
 export { CodebaseContextProvider } from "./codebase";
+export { ClipboardContextProvider } from "./clipboard";
+export { FileIncludeContextProvider } from "./file-include";
