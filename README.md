@@ -31,17 +31,102 @@ yarn install
 # 2. Build all packages
 yarn build
 
-# 3. Set your API key
-export ANTHROPIC_API_KEY=sk-ant-...
-
-# 4. Run the CLI
+# 3. Run the CLI — it will guide you through setup on first run
 yarn start
-
-# Or run directly
-node packages/cli/dist/index.js
 ```
 
-On first run, if no API key is found the CLI will interactively prompt you to enter one and save it to `~/.cdoing/config.json`.
+On first run with no API key configured, the CLI launches an interactive setup wizard (or run `/setup` at any time to reconfigure).
+
+---
+
+## Authentication
+
+### Interactive Setup Wizard
+
+Run `/setup` inside the CLI at any time to configure provider, model, and authentication:
+
+```
+/setup
+```
+
+The wizard walks through:
+1. **Provider** — Anthropic, OpenAI, Google, Ollama
+2. **Auth method** (Anthropic only) — API key or OAuth
+3. **Model** — filtered by auth method (OAuth supports Haiku only)
+4. **API key or OAuth code** — paste key or complete browser OAuth flow
+
+### API Key
+
+The quickest way to get started:
+
+```bash
+# Environment variable (recommended for CI/scripts)
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Or save permanently
+cdoing config set api-key sk-ant-...
+```
+
+### OAuth (Claude Pro/Max subscription) — [full guide](OAUTH.md)
+
+Log in with your Claude account — no API key needed, uses your subscription:
+
+```bash
+cdoing --login        # Opens browser → paste code → done
+```
+
+Or use `/setup` → choose **OAuth** → approve in browser → paste the code from the redirect URL.
+
+Tokens are stored securely in the OS credential store (macOS Keychain, Linux secret-tool, Windows Credential Manager) with an AES-256 encrypted file fallback.
+
+```bash
+cdoing --logout       # Clear stored OAuth tokens
+```
+
+### API Key Helper (Proxy / Dynamic Keys)
+
+For proxies (e.g. Antigravity) or any setup where the key is generated dynamically, use `apiKeyHelper` — a shell script whose stdout is used as the API key:
+
+```bash
+# 1. Create the helper script
+mkdir -p ~/.cdoing
+cat > ~/.cdoing/api-key-helper.sh << 'EOF'
+#!/bin/bash
+echo "YOUR_PROXY_API_KEY"
+EOF
+chmod +x ~/.cdoing/api-key-helper.sh
+
+# 2. Configure cdoing to use it
+cdoing config set api-key-helper ~/.cdoing/api-key-helper.sh
+cdoing config set base-url http://127.0.0.1:8045   # proxy base URL
+```
+
+Or in `~/.cdoing/config.json`:
+
+```json
+{
+  "apiKeyHelper": "~/.cdoing/api-key-helper.sh",
+  "baseUrl": "http://127.0.0.1:8045"
+}
+```
+
+The script runs on every startup and its output is used as the API key. Useful for:
+- API proxies (Antigravity, LiteLLM, custom gateways)
+- Keys fetched from a secret manager (Vault, AWS Secrets Manager)
+- Keys that rotate frequently
+
+### Key Resolution Order
+
+When resolving the API key, cdoing checks sources in this order and uses the first match:
+
+```
+1. --api-key flag (CLI argument)
+2. apiKeyHelper script (from config.json)
+3. Environment variable (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
+4. Stored key in ~/.cdoing/config.json
+5. OAuth token (Anthropic only — auto-refreshed if expired)
+6. Interactive setup wizard
+```
 
 ---
 
@@ -313,6 +398,8 @@ Options:
   -p, --provider <provider>     AI provider: anthropic, openai, google, custom (default: "anthropic")
   --base-url <url>              Base URL for custom providers
   --api-key <key>               API key (overrides environment variable)
+  --login                       Login with Claude via OAuth (opens browser)
+  --logout                      Clear stored OAuth tokens
   --mode <mode>                 Permission mode: ask, auto-edit, auto (default: "ask")
   -d, --dir <directory>         Working directory (default: current directory)
   --print                       Print output only (non-interactive)
@@ -348,7 +435,10 @@ Options:
 | Google | `--provider google` | `GOOGLE_API_KEY` | Gemini family |
 | Custom | `--provider custom --base-url <url>` | `--api-key <key>` | Any compatible API |
 
-**API key resolution order:** `--api-key` flag → environment variable → `~/.cdoing/config.json` → interactive prompt.
+| Ollama | `--provider ollama` | *(not required)* | LLaMA, Mistral, CodeLlama |
+| Custom / Proxy | `--provider custom --base-url <url>` | `--api-key <key>` or `apiKeyHelper` | Any OpenAI-compatible API |
+
+**API key resolution order:** `--api-key` flag → `apiKeyHelper` script → environment variable → `~/.cdoing/config.json` → OAuth token → interactive setup wizard.
 
 ---
 
@@ -446,7 +536,9 @@ When prompted for permission:
 
 | Command | Description |
 |---------|-------------|
+| `/setup` | Interactive wizard — provider, model, API key or OAuth |
 | `/config` | Show current config |
+| `/config set <key> <value>` | Set a config value (provider, model, mode, api-key, base-url, api-key-helper) |
 | `/model <name>` | Switch model |
 | `/provider <name>` | Switch AI provider |
 | `/mode <mode>` | Change permission mode |
@@ -454,6 +546,15 @@ When prompted for permission:
 | `/rules` | View/reload project rules |
 | `/mcp` | MCP server status and management |
 | `/context` | List available @ context providers |
+
+### Authentication
+
+| Command | Description |
+|---------|-------------|
+| `/setup` | Full setup wizard including auth |
+| `/login` | Open setup wizard to authenticate |
+| `/logout` | Clear stored OAuth tokens |
+| `/auth-status` | Show OAuth token status and stored API keys |
 
 ### Info & System
 
@@ -581,7 +682,8 @@ Configure in `.cdoing/mcp.json` or `~/.cdoing/mcp.json`:
 
 | File | Scope | Purpose |
 |------|-------|---------|
-| `~/.cdoing/config.json` | Global | Default provider, model, API keys |
+| `~/.cdoing/config.json` | Global | Default provider, model, API keys, apiKeyHelper, baseUrl |
+| `~/.cdoing/.oauth-tokens.enc` | Global | Encrypted OAuth tokens (fallback when keychain unavailable) |
 | `~/.cdoing/permissions.json` | Global | Globally allowed tool permissions |
 | `~/.cdoing/hooks.json` | Global | Global hooks |
 | `~/.cdoing/memory.json` | Global | Persistent memories |

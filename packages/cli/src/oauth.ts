@@ -433,13 +433,15 @@ export function oauthLogout(): string {
 export function oauthStatus(): string {
   const tokens = loadOAuthTokens();
 
-  // Load stored config for API keys display
+  // Load stored config
   const configPath = path.join(os.homedir(), ".cdoing", "config.json");
   let apiKeys: Record<string, string> | undefined;
+  let apiKeyHelper: string | undefined;
   try {
     if (fs.existsSync(configPath)) {
       const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
       apiKeys = config.apiKeys;
+      apiKeyHelper = config.apiKeyHelper;
     }
   } catch {}
 
@@ -460,16 +462,28 @@ export function oauthStatus(): string {
     lines.push("  Not logged in — use /setup to authenticate");
   }
 
-  // Stored API keys
+  // API Key Helper (dynamic / proxy keys)
   lines.push("");
-  lines.push("Stored API keys:");
+  lines.push("API Key Helper (dynamic):");
+  if (apiKeyHelper) {
+    lines.push(`  ✓ Script: ${apiKeyHelper}`);
+    lines.push(`  Key is fetched by running this script on every startup`);
+  } else {
+    lines.push("  Not configured");
+    lines.push("  Set with: /config set api-key-helper ~/path/to/script.sh");
+  }
+
+  // Manually stored API keys
+  lines.push("");
+  lines.push("Manually stored API keys:");
   if (apiKeys && Object.keys(apiKeys).length > 0) {
     for (const [provider, key] of Object.entries(apiKeys)) {
       const masked = key.slice(0, 8) + "..." + key.slice(-4);
-      lines.push(`  ✓ ${provider}: ${masked}`);
+      lines.push(`  ✓ ${provider}: ${masked}  (saved via /config set api-key)`);
     }
   } else {
     lines.push("  None");
+    lines.push("  Set with: /config set api-key <your-key>");
   }
 
   // Environment variables

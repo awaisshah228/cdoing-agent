@@ -21,6 +21,7 @@ export interface StoredConfig {
   apiKeys?: Record<string, string>;
   mode?: string;
   baseUrl?: string;
+  apiKeyHelper?: string;
 }
 
 export interface CLIOptions {
@@ -83,7 +84,7 @@ export function saveConfig(config: StoredConfig): void {
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), "utf-8");
 }
 
-const VALID_CONFIG_KEYS = ["provider", "model", "mode", "api-key", "base-url"] as const;
+const VALID_CONFIG_KEYS = ["provider", "model", "mode", "api-key", "base-url", "api-key-helper"] as const;
 type ConfigKey = typeof VALID_CONFIG_KEYS[number];
 
 /**
@@ -123,6 +124,9 @@ export function updateStoredConfig(key: string, value: string): { success: boole
     case "base-url":
       config.baseUrl = value;
       break;
+    case "api-key-helper":
+      config.apiKeyHelper = value;
+      break;
   }
 
   saveConfig(config);
@@ -140,6 +144,8 @@ export function getStoredConfigDisplay(): string[] {
   lines.push(`  model:     ${config.model || "(not set — uses provider default)"}`);
   lines.push(`  mode:      ${config.mode || "(not set — defaults to ask)"}`);
   lines.push(`  base-url:  ${config.baseUrl || "(not set)"}`);
+
+  lines.push(`  api-key-helper: ${config.apiKeyHelper || "(not set)"}`);
 
   if (config.apiKeys) {
     for (const [provider, key] of Object.entries(config.apiKeys)) {
@@ -279,7 +285,23 @@ const PROVIDER_MODELS: Record<string, SelectOption[]> = {
 };
 
 /**
- * Resolve API key from: flag → env → stored config → OAuth token → interactive setup.
+ * Run the apiKeyHelper script and return its stdout trimmed, or null on failure.
+ */
+function runApiKeyHelper(scriptPath: string): string | null {
+  try {
+    const { execFileSync } = require("child_process") as typeof import("child_process");
+    const resolved = scriptPath.startsWith("~")
+      ? path.join(os.homedir(), scriptPath.slice(1))
+      : scriptPath;
+    const key = execFileSync(resolved, { encoding: "utf-8", timeout: 5000 }).trim();
+    return key || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve API key from: flag → apiKeyHelper → env → stored config → OAuth token → interactive setup.
  * Mutates options.apiKey so downstream code can use it.
  */
 export async function resolveApiKey(options: CLIOptions): Promise<void> {
@@ -290,9 +312,20 @@ export async function resolveApiKey(options: CLIOptions): Promise<void> {
   const isDefaultProvider = options.provider === "anthropic";
   if (isDefaultProvider && stored.provider) options.provider = stored.provider;
   if (!options.model && stored.model) options.model = stored.model;
+  if (!options.baseUrl && stored.baseUrl) options.baseUrl = stored.baseUrl;
 
   const provider = options.provider.toLowerCase();
   const envVar = getApiKeyEnvVar(provider);
+
+  // apiKeyHelper: run a script to get the key dynamically (e.g. for proxies)
+  if (stored.apiKeyHelper) {
+    const key = runApiKeyHelper(stored.apiKeyHelper);
+    if (key) {
+      options.apiKey = key;
+      return;
+    }
+    console.log(chalk.yellow(`  Warning: apiKeyHelper script failed or returned empty — falling back.\n`));
+  }
 
   if (process.env[envVar]) return;
 
