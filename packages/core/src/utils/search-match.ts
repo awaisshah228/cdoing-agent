@@ -31,21 +31,10 @@ function exactMatch(fileContent: string, searchContent: string): SearchMatchResu
 function trimmedMatch(fileContent: string, searchContent: string): SearchMatchResult | null {
   const trimmed = searchContent.trim();
   if (!trimmed) return null;
-  // If trimmed version equals original, exact match would have caught it
   if (trimmed === searchContent) return null;
   const idx = fileContent.indexOf(trimmed);
   if (idx !== -1) {
-    // Extend match to include leading whitespace on the same line (preserve indentation context)
-    let adjustedStart = idx;
-    while (adjustedStart > 0 && fileContent[adjustedStart - 1] !== "\n" &&
-           (fileContent[adjustedStart - 1] === " " || fileContent[adjustedStart - 1] === "\t")) {
-      adjustedStart--;
-    }
-    // Only extend if the matched text starts at the beginning of a line
-    // (i.e., the whitespace is indentation, not mid-line spaces)
-    const isLineStart = adjustedStart === 0 || fileContent[adjustedStart - 1] === "\n";
-    const startIdx = isLineStart ? adjustedStart : idx;
-    return { startIndex: startIdx, endIndex: idx + trimmed.length, strategyName: "trimmed" };
+    return { startIndex: idx, endIndex: idx + trimmed.length, strategyName: "trimmed" };
   }
   return null;
 }
@@ -279,11 +268,7 @@ export function executeFindAndReplace(
   let result = content;
   for (let i = toReplace.length - 1; i >= 0; i--) {
     const m = toReplace[i];
-    // For non-exact strategies, adapt indentation of new_string to match
-    // the indentation of the matched region in the original file
-    const adjustedNewString = strategy !== "exact"
-      ? adaptIndentation(content, m.startIndex, oldString, newString)
-      : newString;
+    const adjustedNewString = normalizeIndentation(content, m.startIndex, oldString, newString, strategy === "exact");
     result = result.substring(0, m.startIndex) + adjustedNewString + result.substring(m.endIndex);
   }
 
@@ -291,55 +276,69 @@ export function executeFindAndReplace(
 }
 
 /**
- * Adapt the indentation of newString to match the original file's indentation
- * at the match location.
+ * Normalize indentation of new_string so it matches the file's context.
+ *
+ * The key idea: preserve the RELATIVE indentation within new_string,
+ * but set the BASE indentation to match the target (the file's actual
+ * indentation at the match point).
  *
  * Example:
- *   File matched region:   "  function foo() {\n    return 1;\n  }"  (2-space indent)
- *   LLM old_string:        "function foo() {\n  return 1;\n}"        (0-space indent)
- *   LLM new_string:        "function bar() {\n  return 2;\n}"        (0-space indent)
- *   Result:                "  function bar() {\n    return 2;\n  }"  (2-space indent preserved)
+ *   File:       "  update: (id, data) => {\n    return id;\n  }"   (base: 2 spaces)
+ *   new_string: "      modifyItem: (id, data) => {\n        return id;\n      }"  (base: 6 spaces)
+ *   Result:     "  modifyItem: (id, data) => {\n    return id;\n  }"  (base: 2 spaces, relative preserved)
  */
-function adaptIndentation(
+function normalizeIndentation(
   fileContent: string,
   matchStartIndex: number,
-  oldString: string,
+  _oldString: string,
   newString: string,
+  _isExact: boolean,
 ): string {
-  // Find the indentation of the first line of the match in the file
-  const fileIndent = getLineIndent(fileContent, matchStartIndex);
+  // Get the full line indentation at the match point in the file
+  const fileLineIndent = getLineIndent(fileContent, matchStartIndex);
 
-  // Find the indentation of the first line of old_string (what LLM thinks the indent is)
-  const oldIndent = getLeadingWhitespace(oldString);
+  // How much of that indent is BEFORE matchStartIndex?
+  // (already in the file, outside the matched range — it stays in the output)
+  //
+  // For exact match: match includes the indent → preMatchIndent = ""
+  // For trimmed match: match starts after indent → preMatchIndent = fileLineIndent
+  const lineStartPos = matchStartIndex - fileLineIndent.length;
+  const preMatchIndent = fileContent.substring(lineStartPos, matchStartIndex);
 
-  // If they're the same, no adjustment needed
-  if (fileIndent === oldIndent) return newString;
+  // The first line of the replacement needs LESS indent because preMatchIndent
+  // is already in the file before the insertion point.
+  // Subsequent lines start on fresh lines (after \n) — they need the full indent.
+  const firstLineTargetIndent = fileLineIndent.substring(preMatchIndent.length);
 
-  // Re-indent every line of new_string:
-  // Remove the LLM's assumed indentation and add the file's actual indentation
-  const newLines = newString.split("\n");
-  const adjustedLines = newLines.map((line, i) => {
-    if (i === 0) {
-      // First line: strip old indent, add file indent
-      const stripped = removeIndentPrefix(line, oldIndent);
-      return fileIndent + stripped;
-    }
-    // Subsequent lines: compute relative indent from old_string, apply to file indent
+  // What base indentation does new_string currently have?
+  const newBaseIndent = getLeadingWhitespace(newString);
+
+  // If first-line target already matches new_string's base, no adjustment needed
+  if (firstLineTargetIndent === newBaseIndent) return newString;
+
+  // Re-indent every line: strip newBaseIndent, prepend the correct target indent.
+  const lines = newString.split("\n");
+  const adjusted = lines.map((line, i) => {
     const lineIndent = getLeadingWhitespace(line);
-    if (lineIndent.startsWith(oldIndent)) {
-      // Line has at least the base indent — preserve the extra part
-      const extra = lineIndent.substring(oldIndent.length);
-      const stripped = line.substring(lineIndent.length);
-      return fileIndent + extra + stripped;
+    const content = line.substring(lineIndent.length);
+
+    // Empty/whitespace-only lines: keep as-is
+    if (!content) return line;
+
+    // Compute relative indent (how much deeper than new_string's base)
+    let relativeIndent = "";
+    if (lineIndent.length >= newBaseIndent.length && lineIndent.startsWith(newBaseIndent)) {
+      relativeIndent = lineIndent.substring(newBaseIndent.length);
     }
-    // Line has less indent than base (e.g., closing brace) — adjust proportionally
-    const stripped = line.substring(lineIndent.length);
-    // If old indent is empty, just prepend file indent
-    if (!oldIndent) return fileIndent + line;
-    return fileIndent + stripped;
+
+    // First line: use firstLineTargetIndent (accounts for pre-match whitespace already in file)
+    // Subsequent lines: use full fileLineIndent (they start on fresh lines after \n)
+    const baseIndent = i === 0 ? firstLineTargetIndent : fileLineIndent;
+
+    return baseIndent + relativeIndent + content;
   });
 
-  return adjustedLines.join("\n");
+  return adjusted.join("\n");
 }
 
 /** Get the indentation (leading whitespace) at a position in the file */
@@ -363,13 +362,6 @@ function getLeadingWhitespace(text: string): string {
   return match ? match[1] : "";
 }
 
-/** Remove an indent prefix from a line, if present */
-function removeIndentPrefix(line: string, prefix: string): string {
-  if (!prefix) return line;
-  if (line.startsWith(prefix)) return line.substring(prefix.length);
-  // If the line doesn't start with the exact prefix, strip all leading whitespace
-  return line.replace(/^[ \t]*/, "");
-}
 
 /**
  * Execute multiple sequential find-and-replace operations.
