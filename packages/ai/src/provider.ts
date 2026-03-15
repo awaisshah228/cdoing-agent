@@ -82,11 +82,16 @@ export function createModel(config: Partial<ModelConfig> = {}) {
       // OAuth token: use Bearer auth with Anthropic beta headers (not x-api-key)
       if (config.oauthToken) {
         const oauthToken = config.oauthToken;
+        // OAuth only supports claude-haiku-4-5 — override model if needed
+        const oauthModel = "claude-haiku-4-5-20251001";
+        if (modelName !== oauthModel) {
+          console.log(`[cdoing] OAuth only supports ${oauthModel}, overriding "${modelName}"`);
+        }
         const arch = process.arch === "arm64" ? "arm64" : "x64";
         const osPlatform = process.platform === "darwin" ? "Darwin"
           : process.platform === "win32" ? "Windows" : "Linux";
         return new ChatAnthropic({
-          model: modelName,
+          model: oauthModel,
           anthropicApiKey: "unused",
           temperature,
           maxTokens,
@@ -117,7 +122,22 @@ export function createModel(config: Partial<ModelConfig> = {}) {
                   init = { ...init, body: JSON.stringify(body) };
                 } catch {}
               }
-              return fetch(url as string, init);
+              // Log request details for debugging
+              if (init?.body && typeof init.body === "string") {
+                try {
+                  const reqBody = JSON.parse(init.body);
+                  console.log("[cdoing] OAuth fetch — model:", reqBody.model, "stream:", reqBody.stream, "messages:", reqBody.messages?.length);
+                } catch {}
+              }
+              console.log("[cdoing] OAuth fetch —", typeof url === "string" ? url : "request");
+              const resp = await fetch(url as string, init);
+              console.log("[cdoing] OAuth fetch — status:", resp.status);
+              if (!resp.ok) {
+                const text = await resp.text();
+                console.error("[cdoing] OAuth fetch — error body:", text.substring(0, 300));
+                throw new Error(`API error ${resp.status}: ${text.substring(0, 200)}`);
+              }
+              return resp;
             },
           }),
         } as ConstructorParameters<typeof ChatAnthropic>[0]);

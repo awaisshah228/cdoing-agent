@@ -51,7 +51,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [customProviderName, setCustomProviderName] = useState(config?.customProviderName || "");
   const [customBaseURL, setCustomBaseURL] = useState(config?.customBaseURL || "");
   const [apiKey, setApiKey] = useState(config?.apiKey || "");
-  const [authMethod, setAuthMethod] = useState(config?.authMethod || "apiKey");
+  // Default to oauth if no API key is set (matches auto-detect behavior)
+  const [authMethod, setAuthMethod] = useState(config?.authMethod || (config?.apiKey ? "apiKey" : "oauth"));
   const [temperature, setTemperature] = useState(config?.temperature ?? 0);
   const [maxTokens, setMaxTokens] = useState(config?.maxTokens ?? 8096);
   const [permissionMode, setPermissionMode] = useState(config?.permissionMode || "ask");
@@ -74,7 +75,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       setCustomProviderName(config.customProviderName || "");
       setCustomBaseURL(config.customBaseURL || "");
       setApiKey(config.apiKey || "");
-      setAuthMethod(config.authMethod || "apiKey");
+      setAuthMethod(config.authMethod || (config.apiKey ? "apiKey" : "oauth"));
       setTemperature(config.temperature ?? 0);
       setMaxTokens(config.maxTokens ?? 8096);
       setPermissionMode(config.permissionMode || "ask");
@@ -254,7 +255,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     )}
                   </div>
                   <span className="settings-hint">
-                    Sign in with your Claude account. Free tier supports Haiku model only.
+                    Sign in with your Claude account. Uses claude-haiku-4-5 (only model supported with OAuth).
                   </span>
                 </div>
               )}

@@ -66,6 +66,7 @@ export class AgentRunner {
     hookManager?: HookManager,
     options?: AgentRunnerOptions,
   ) {
+    console.log("[cdoing] AgentRunner — creating model. provider:", modelConfig.provider, "model:", modelConfig.model, "hasOAuth:", !!modelConfig.oauthToken, "hasApiKey:", !!modelConfig.apiKey);
     this.model = createModel(modelConfig);
     this.hookManager = hookManager || null;
     this.maxRetries = options?.maxRetries ?? 3;
@@ -219,7 +220,9 @@ export class AgentRunner {
       try {
         let accumulated: AIMessageChunk | null = null;
 
+        console.log("[cdoing] streamWithRetry — attempt", attempt, "starting stream...");
         const stream = await modelWithTools.stream(allMessages);
+        console.log("[cdoing] streamWithRetry — stream created, reading chunks...");
 
         for await (const chunk of stream) {
           // Stop mid-stream if cancelled
@@ -248,10 +251,11 @@ export class AgentRunner {
         return accumulated;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
+        console.error("[cdoing] streamWithRetry — error on attempt", attempt, ":", lastError.message);
 
-        // Don't retry on auth errors or invalid requests
+        // Don't retry on auth errors, invalid requests, or client errors
         const msg = lastError.message.toLowerCase();
-        if (msg.includes("401") || msg.includes("403") || msg.includes("invalid_api_key") || msg.includes("authentication")) {
+        if (msg.includes("401") || msg.includes("403") || msg.includes("400") || msg.includes("invalid_api_key") || msg.includes("authentication") || msg.includes("credit balance")) {
           throw lastError;
         }
 
