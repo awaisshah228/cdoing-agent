@@ -1,4 +1,4 @@
-import { DependencyGraph, AgenticLoopDiagram } from "@/components/DiagramWrapper";
+import { DependencyGraph, AgenticLoopDiagram, FullSystemDiagram } from "@/components/DiagramWrapper";
 
 export default function Architecture() {
   return (
@@ -76,6 +76,15 @@ export default function Architecture() {
       </p>
 
       <DependencyGraph />
+
+      <h2 className="doc-h2">Full System Map</h2>
+
+      <p className="doc-p">
+        Every module, tool, and external dependency — and how they connect.
+        Solid lines are runtime calls, dashed lines are shared imports.
+      </p>
+
+      <FullSystemDiagram />
 
       <h2 className="doc-h2">Build System</h2>
 

@@ -37,3 +37,12 @@ const VscodeArchDiagramInner = dynamic(
 export function VscodeArchDiagram() {
   return <VscodeArchDiagramInner />;
 }
+
+const FullSystemDiagramInner = dynamic(
+  () => import("@/components/ArchitectureDiagram").then((m) => m.FullSystemDiagram),
+  { ssr: false, loading: () => <div className="flow-diagram" style={{ height: 860 }} /> },
+);
+
+export function FullSystemDiagram() {
+  return <FullSystemDiagramInner />;
+}
