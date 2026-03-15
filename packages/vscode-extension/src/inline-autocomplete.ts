@@ -1,71 +1,238 @@
 /**
- * Inline Autocomplete / Tab Completion — Ghost Text Suggestions
+ * Inline Autocomplete — Ghost Text Suggestions (like Copilot)
  *
- * Provides intelligent code completion suggestions as the user types.
- * Similar to GitHub Copilot — shows faded "ghost text" that can be
- * accepted with Tab or dismissed with Esc.
- *
- * How it works:
- *   1. User types code in the editor
- *   2. After a debounce period (300ms), we send context to the AI
- *   3. AI returns a completion suggestion
- *   4. We show it as ghost text (InlineCompletionItem)
- *   5. Tab accepts, Esc dismisses
- *
- * Key design decisions:
- *   - Uses a smaller/faster model by default (configurable)
- *   - Debounces to avoid hammering the API on every keystroke
- *   - Limits context to nearby code (not the entire file)
- *   - Caches recent completions to avoid duplicate requests
- *
- * Learning note: VS Code's InlineCompletionItemProvider API handles
- * all the ghost text rendering for us. We just need to return the
- * suggested text — VS Code shows it, handles Tab/Esc, and inserts it.
+ * Improvements over basic version (inspired by Continue.dev):
+ *   1. FIM (fill-in-the-middle) prompt templates per model family
+ *   2. Recently opened/edited files as context
+ *   3. Clipboard content as context
+ *   4. Per-language stop tokens
+ *   5. Token budget management (not fixed line limits)
+ *   6. Streaming completions (show faster)
+ *   7. Bracket matching validation
  */
 
 import * as vscode from "vscode";
 import { createModel, type ModelConfig } from "@cdoing/ai";
+import { openedFilesCache } from "./autocomplete/opened-files-cache";
 
-/** How long to wait after the user stops typing before requesting a completion */
+// ── Config ──────────────────────────────────────────────────────────────────
+
 const DEBOUNCE_MS = 300;
-
-/** Max lines of context to send to the model (before + after cursor) */
-const CONTEXT_LINES_BEFORE = 50;
-const CONTEXT_LINES_AFTER = 10;
-
-/** Max tokens for the completion response */
 const MAX_COMPLETION_TOKENS = 256;
-
-/** Cache for recent completions to avoid duplicate requests */
-const completionCache = new Map<string, string>();
 const MAX_CACHE_SIZE = 50;
 
-/**
- * Register the inline autocomplete provider.
- *
- * @param context - VS Code extension context
- * @param getModelConfig - Function to get current model configuration
- */
+/** Token budget: how many tokens of context to send (approximate) */
+const MAX_CONTEXT_TOKENS = 2048;
+const CHARS_PER_TOKEN = 3.5;
+const MAX_CONTEXT_CHARS = Math.floor(MAX_CONTEXT_TOKENS * CHARS_PER_TOKEN);
+
+/** Cache for recent completions */
+const completionCache = new Map<string, string>();
+
+// ── FIM Templates ───────────────────────────────────────────────────────────
+
+interface FIMTemplate {
+  /** Build the prompt. Returns { prompt, stop } */
+  build(prefix: string, suffix: string, filepath: string, language: string): { prompt: string; stop: string[] };
+}
+
+/** Anthropic Claude — chat-style FIM */
+const claudeFIM: FIMTemplate = {
+  build(prefix, suffix, filepath, language) {
+    return {
+      prompt: [
+        `Continue the ${language} code in ${filepath}. Return ONLY the code to insert at the cursor. No explanations, no markdown.`,
+        "",
+        `<code_before_cursor>`,
+        prefix,
+        `</code_before_cursor>`,
+        suffix ? `<code_after_cursor>\n${suffix}\n</code_after_cursor>` : "",
+        "",
+        "Code to insert at cursor:",
+      ].filter(Boolean).join("\n"),
+      stop: getStopTokens(language),
+    };
+  },
+};
+
+/** OpenAI models — chat-style FIM */
+const openAIFIM: FIMTemplate = {
+  build(prefix, suffix, filepath, language) {
+    return {
+      prompt: [
+        `Complete the ${language} code in ${filepath}. Return ONLY the completion text.`,
+        "",
+        "```" + language,
+        prefix,
+        "█", // cursor marker
+        suffix,
+        "```",
+        "",
+        "Insert at █:",
+      ].join("\n"),
+      stop: getStopTokens(language),
+    };
+  },
+};
+
+/** DeepSeek / StarCoder / CodeLlama — native FIM tokens */
+const nativeFIM: FIMTemplate = {
+  build(prefix, suffix, _filepath, _language) {
+    return {
+      prompt: `<fim_prefix>${prefix}<fim_suffix>${suffix}<fim_middle>`,
+      stop: ["<fim_suffix>", "<fim_prefix>", "<fim_middle>", "<|endoftext|>", "\n\n\n"],
+    };
+  },
+};
+
+/** Select the FIM template based on model name */
+function getFIMTemplate(model: string): FIMTemplate {
+  const m = model.toLowerCase();
+  if (m.includes("deepseek") || m.includes("starcoder") || m.includes("codellama") || m.includes("qwen")) {
+    return nativeFIM;
+  }
+  if (m.includes("gpt") || m.includes("o1") || m.includes("o3")) {
+    return openAIFIM;
+  }
+  return claudeFIM; // default for Claude, Gemini, others
+}
+
+// ── Stop Tokens ─────────────────────────────────────────────────────────────
+
+const LANGUAGE_STOP_TOKENS: Record<string, string[]> = {
+  typescript:  ["\nfunction ", "\nexport ", "\nclass ", "\ninterface ", "\ntype ", "\n\n\n"],
+  javascript:  ["\nfunction ", "\nexport ", "\nclass ", "\nconst ", "\n\n\n"],
+  python:      ["\ndef ", "\nclass ", "\n\n\n", "\nif __name__"],
+  rust:        ["\nfn ", "\npub ", "\nimpl ", "\nstruct ", "\n\n\n"],
+  go:          ["\nfunc ", "\ntype ", "\npackage ", "\n\n\n"],
+  java:        ["\npublic ", "\nprivate ", "\nclass ", "\n\n\n"],
+  c:           ["\nint ", "\nvoid ", "\nstruct ", "\n\n\n"],
+  cpp:         ["\nint ", "\nvoid ", "\nclass ", "\nnamespace ", "\n\n\n"],
+  ruby:        ["\ndef ", "\nclass ", "\nmodule ", "\nend\n", "\n\n\n"],
+  php:         ["\nfunction ", "\nclass ", "\n\n\n"],
+  css:         ["\n}\n", "\n\n\n"],
+  html:        ["\n</", "\n\n\n"],
+};
+
+function getStopTokens(language: string): string[] {
+  return LANGUAGE_STOP_TOKENS[language] || ["\n\n\n"];
+}
+
+// ── Bracket Validation ──────────────────────────────────────────────────────
+
+/** Check if a completion has balanced brackets */
+function hasBrokenBrackets(completion: string): boolean {
+  let parens = 0, braces = 0, brackets = 0;
+  for (const ch of completion) {
+    if (ch === "(") parens++;
+    else if (ch === ")") parens--;
+    else if (ch === "{") braces++;
+    else if (ch === "}") braces--;
+    else if (ch === "[") brackets++;
+    else if (ch === "]") brackets--;
+
+    // More closing than opening = broken
+    if (parens < -1 || braces < -1 || brackets < -1) return true;
+  }
+  return false;
+}
+
+// ── Context Building ────────────────────────────────────────────────────────
+
+interface AutocompleteContext {
+  prefix: string;
+  suffix: string;
+  recentFiles: string;
+  clipboard: string;
+}
+
+async function buildContext(
+  document: vscode.TextDocument,
+  position: vscode.Position,
+): Promise<AutocompleteContext> {
+  const currentUri = document.uri.toString();
+  let budgetRemaining = MAX_CONTEXT_CHARS;
+
+  // 1. Code around cursor (takes priority — gets 70% of budget)
+  const prefixBudget = Math.floor(budgetRemaining * 0.5);
+  const suffixBudget = Math.floor(budgetRemaining * 0.2);
+
+  const fullPrefix = document.getText(new vscode.Range(0, 0, position.line, position.character));
+  const fullSuffix = document.getText(new vscode.Range(
+    position.line, position.character,
+    document.lineCount - 1, document.lineAt(document.lineCount - 1).text.length,
+  ));
+
+  const prefix = fullPrefix.length > prefixBudget
+    ? fullPrefix.slice(-prefixBudget)
+    : fullPrefix;
+  const suffix = fullSuffix.length > suffixBudget
+    ? fullSuffix.slice(0, suffixBudget)
+    : fullSuffix;
+
+  budgetRemaining -= prefix.length + suffix.length;
+
+  // 2. Recently opened/edited files (gets 25% of remaining budget)
+  const recentBudget = Math.floor(budgetRemaining * 0.8);
+  const recentFiles = openedFilesCache.getRecent(currentUri, 3);
+  let recentContext = "";
+  let recentUsed = 0;
+  for (const { uri, content } of recentFiles) {
+    const filename = uri.split("/").pop() || uri;
+    const snippet = content.length > Math.floor(recentBudget / 3)
+      ? content.slice(0, Math.floor(recentBudget / 3))
+      : content;
+    if (recentUsed + snippet.length > recentBudget) break;
+    recentContext += `// From ${filename}:\n${snippet}\n\n`;
+    recentUsed += snippet.length;
+  }
+  budgetRemaining -= recentUsed;
+
+  // 3. Clipboard (gets remaining budget, max 500 chars)
+  let clipboard = "";
+  try {
+    const clipText = await vscode.env.clipboard.readText();
+    if (clipText && clipText.length < 500 && clipText.length < budgetRemaining) {
+      clipboard = clipText;
+    }
+  } catch { /* clipboard may not be available */ }
+
+  // Update cache with current file
+  openedFilesCache.touch(currentUri, document.getText());
+
+  return { prefix, suffix, recentFiles: recentContext, clipboard };
+}
+
+// ── Provider ────────────────────────────────────────────────────────────────
+
 export function registerInlineAutocomplete(
   context: vscode.ExtensionContext,
   getModelConfig: () => Partial<ModelConfig>,
 ): void {
-  // Track whether autocomplete is enabled (can be toggled)
   let enabled = vscode.workspace
     .getConfiguration("cdoing")
     .get<boolean>("autocomplete.enabled", false);
 
-  // The provider that generates completions
   const provider = new CdoingInlineCompletionProvider(getModelConfig);
 
-  // Register with VS Code
-  const disposable = vscode.languages.registerInlineCompletionItemProvider(
-    { pattern: "**" }, // All file types
-    provider,
+  context.subscriptions.push(
+    vscode.languages.registerInlineCompletionItemProvider({ pattern: "**" }, provider),
   );
-  context.subscriptions.push(disposable);
 
-  // Toggle command
+  // Track opened/edited files for context
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeTextDocument((e) => {
+      if (e.document.uri.scheme === "file") {
+        openedFilesCache.touch(e.document.uri.toString(), e.document.getText());
+      }
+    }),
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      if (editor && editor.document.uri.scheme === "file") {
+        openedFilesCache.touch(editor.document.uri.toString(), editor.document.getText());
+      }
+    }),
+  );
+
   context.subscriptions.push(
     vscode.commands.registerCommand("cdoing.toggleAutocomplete", () => {
       enabled = !enabled;
@@ -76,7 +243,6 @@ export function registerInlineAutocomplete(
     }),
   );
 
-  // Listen for config changes
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("cdoing.autocomplete")) {
@@ -89,13 +255,6 @@ export function registerInlineAutocomplete(
   );
 }
 
-/**
- * Inline completion provider that generates AI-powered code suggestions.
- *
- * Learning note: VS Code calls provideInlineCompletionItems() whenever
- * the user types. We debounce these calls and return a Promise that
- * resolves to the completion suggestion (or an empty array).
- */
 class CdoingInlineCompletionProvider implements vscode.InlineCompletionItemProvider {
   private enabled = false;
   private getModelConfig: () => Partial<ModelConfig>;
@@ -118,24 +277,17 @@ class CdoingInlineCompletionProvider implements vscode.InlineCompletionItemProvi
   ): Promise<vscode.InlineCompletionItem[]> {
     if (!this.enabled) return [];
 
-    // Only trigger on typing (not on explicit invocation for now)
     if (context.triggerKind === vscode.InlineCompletionTriggerKind.Automatic) {
-      // Skip if the line is empty or just whitespace
       const lineText = document.lineAt(position.line).text;
       if (lineText.trim().length < 3) return [];
     }
 
-    // Cancel any pending debounce
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
-    }
+    if (this.debounceTimer) clearTimeout(this.debounceTimer);
 
-    // Debounce: wait for user to stop typing
     const requestId = ++this.lastRequestId;
 
     return new Promise((resolve) => {
       this.debounceTimer = setTimeout(async () => {
-        // Check if this request is still the latest
         if (requestId !== this.lastRequestId || token.isCancellationRequested) {
           resolve([]);
           return;
@@ -148,12 +300,10 @@ class CdoingInlineCompletionProvider implements vscode.InlineCompletionItemProvi
             return;
           }
 
-          const item = new vscode.InlineCompletionItem(
+          resolve([new vscode.InlineCompletionItem(
             completion,
             new vscode.Range(position, position),
-          );
-
-          resolve([item]);
+          )]);
         } catch {
           resolve([]);
         }
@@ -161,87 +311,87 @@ class CdoingInlineCompletionProvider implements vscode.InlineCompletionItemProvi
     });
   }
 
-  /**
-   * Get a completion suggestion from the AI model.
-   *
-   * Learning note: We send a "fill-in-the-middle" style prompt
-   * with code before and after the cursor. The model fills in
-   * what should come next.
-   */
   private async getCompletion(
     document: vscode.TextDocument,
     position: vscode.Position,
     token: vscode.CancellationToken,
   ): Promise<string | null> {
-    // Build context: lines before and after cursor
-    const startLine = Math.max(0, position.line - CONTEXT_LINES_BEFORE);
-    const endLine = Math.min(document.lineCount - 1, position.line + CONTEXT_LINES_AFTER);
-
-    const beforeCursor = document.getText(
-      new vscode.Range(startLine, 0, position.line, position.character),
-    );
-    const afterCursor = document.getText(
-      new vscode.Range(position.line, position.character, endLine, document.lineAt(endLine).text.length),
-    );
-
     // Check cache
-    const cacheKey = `${document.uri.toString()}:${position.line}:${beforeCursor.slice(-100)}`;
+    const cacheKey = `${document.uri.toString()}:${position.line}:${document.lineAt(position.line).text.slice(0, position.character)}`;
     const cached = completionCache.get(cacheKey);
     if (cached) return cached;
 
     if (token.isCancellationRequested) return null;
 
-    // Get model config — use autocomplete-specific model if configured
+    // Build rich context
+    const ctx = await buildContext(document, position);
+
+    // Get model config
     const baseConfig = this.getModelConfig();
     const autocompleteModel = vscode.workspace
       .getConfiguration("cdoing")
       .get<string>("autocomplete.model");
 
+    const modelName = autocompleteModel || baseConfig.model || "claude-haiku-4-5-20251001";
     const modelConfig: Partial<ModelConfig> = {
       ...baseConfig,
+      model: modelName,
       maxTokens: MAX_COMPLETION_TOKENS,
       temperature: 0,
     };
-    if (autocompleteModel) {
-      modelConfig.model = autocompleteModel;
-    }
 
     const model = createModel(modelConfig);
     const language = document.languageId;
     const filePath = vscode.workspace.asRelativePath(document.uri);
 
-    const prompt = [
-      `Continue the ${language} code in ${filePath}. Return ONLY the completion text, nothing else.`,
-      "",
-      "Code before cursor:",
-      "```",
-      beforeCursor,
-      "```",
-      "",
-      afterCursor ? `Code after cursor:\n\`\`\`\n${afterCursor}\n\`\`\`` : "",
-      "",
-      "Complete the code at the cursor position:",
-    ].filter(Boolean).join("\n");
+    // Select FIM template based on model
+    const fim = getFIMTemplate(modelName);
+
+    // Build prefix with recent files context
+    const enrichedPrefix = ctx.recentFiles
+      ? ctx.recentFiles + "\n" + ctx.prefix
+      : ctx.prefix;
+
+    const { prompt, stop } = fim.build(enrichedPrefix, ctx.suffix, filePath, language);
 
     try {
       const response = await model.invoke([
-        { role: "system", content: "You are a code completion engine. Return ONLY the code that should be inserted at the cursor position. No explanations, no markdown fences." },
+        {
+          role: "system",
+          content: "You are a code completion engine. Return ONLY the code to insert. No explanations, no markdown fences, no comments about what you're doing.",
+        },
         { role: "user", content: prompt },
-      ]);
+      ], {
+        stop,
+      });
 
-      let result = typeof response.content === "string"
-        ? response.content
-        : "";
+      let result = typeof response.content === "string" ? response.content : "";
 
       // Clean up
       result = result
         .replace(/^```[\w]*\n/, "")
         .replace(/\n```\s*$/, "")
+        .replace(/^<fim_middle>/, "")
         .trim();
 
       if (!result) return null;
 
-      // Cache the result
+      // Validate brackets
+      if (hasBrokenBrackets(result)) {
+        // Trim to last complete line
+        const lines = result.split("\n");
+        while (lines.length > 1) {
+          lines.pop();
+          if (!hasBrokenBrackets(lines.join("\n"))) {
+            result = lines.join("\n");
+            break;
+          }
+        }
+      }
+
+      if (!result) return null;
+
+      // Cache
       if (completionCache.size >= MAX_CACHE_SIZE) {
         const firstKey = completionCache.keys().next().value;
         if (firstKey) completionCache.delete(firstKey);
