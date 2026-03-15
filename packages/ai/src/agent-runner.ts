@@ -471,7 +471,7 @@ export class AgentRunner {
 
   /** Tools that are always safe to run in parallel (read-only, no side effects) */
   private static readonly ALWAYS_PARALLEL = new Set([
-    "file_read", "glob_search", "grep_search", "web_fetch", "web_search", "sub_agent",
+    "file_read", "glob_search", "grep_search", "web_fetch", "web_search", "sub_agent", "sub_agent_status", "sub_agent_terminate",
   ]);
 
   /** Tools that can run in parallel IF they target different files */
@@ -721,7 +721,7 @@ const TOOL_SIGNALS: Array<{ keywords: RegExp; tools: string[] }> = [
   { keywords: /ast|tree.?sitter|parse|struct|node|rename func|rename class/i, tools: ["ast_edit"] },
   { keywords: /diff|git|commit|branch|status|log/i, tools: ["view_diff", "shell_exec"] },
   { keywords: /todo|task|plan|track/i, tools: ["todo"] },
-  { keywords: /sub.?agent|parallel|background|delegate/i, tools: ["sub_agent"] },
+  { keywords: /sub.?agent|parallel|background|delegate/i, tools: ["sub_agent", "sub_agent_status", "sub_agent_terminate"] },
   { keywords: /repo|map|structure|overview|architecture/i, tools: ["view_repo_map"] },
   { keywords: /system|info|permission|sandbox/i, tools: ["system_info"] },
 ];

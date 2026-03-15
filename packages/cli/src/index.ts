@@ -77,10 +77,16 @@ function createSubAgentFactory(
   hookManager: HookManager,
   options?: { projectConfig?: string; memory?: string },
 ) {
-  return async (prompt: string): Promise<string> => {
+  return async (prompt: string, signal?: AbortSignal): Promise<string> => {
     // Child registry has no sub_agent tool (no recursion)
     const childRegistry = createToolRegistry(workingDir);
     const childAgent = new AgentRunner(modelConfig, childRegistry, permissionManager, hookManager, options);
+
+    // If an abort signal is provided, cancel the agent when it fires
+    if (signal) {
+      signal.addEventListener("abort", () => childAgent.cancel(), { once: true });
+    }
+
     // Silent callbacks — collect result only
     let result = "";
     await childAgent.run(prompt, {

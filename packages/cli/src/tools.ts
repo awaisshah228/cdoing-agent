@@ -15,6 +15,9 @@ import {
   WebFetchTool,
   WebSearchTool,
   SubAgentTool,
+  SubAgentManager,
+  SubAgentStatusTool,
+  SubAgentTerminateTool,
   TodoTool,
   TodoStore,
   SandboxManager,
@@ -33,6 +36,7 @@ import type { SubAgentRunnerFactory } from "@cdoing/core";
 
 export interface ToolRegistryOptions {
   subAgentFactory?: SubAgentRunnerFactory;
+  subAgentManager?: SubAgentManager;
   todoStore?: TodoStore;
   sandboxManager?: SandboxManager;
   permissionManager?: PermissionManager;
@@ -80,7 +84,10 @@ export function createToolRegistry(
 
   // Sub-agent (only if factory provided — prevents infinite recursion)
   if (options.subAgentFactory) {
-    registry.register(new SubAgentTool(options.subAgentFactory));
+    const manager = options.subAgentManager || new SubAgentManager();
+    registry.register(new SubAgentTool(options.subAgentFactory, manager));
+    registry.register(new SubAgentStatusTool(manager));
+    registry.register(new SubAgentTerminateTool(manager));
   }
 
   // Todo tool (for task tracking)
