@@ -1,11 +1,17 @@
 import { exec } from "child_process";
+import * as os from "os";
 import type { BaseTool, ToolDefinition, ToolResult } from "./types";
 import type { SandboxManager } from "../sandbox";
 import type { PermissionManager } from "../permissions";
 import { extractShellPaths } from "../utils/shell-paths";
 
+const IS_WINDOWS = os.platform() === "win32";
+const SHELL = IS_WINDOWS ? process.env.COMSPEC || "cmd.exe" : process.env.SHELL || "/bin/sh";
+const SHELL_FLAG = IS_WINDOWS ? "/c" : "-c";
+
 /** Absolute danger — always blocked regardless of permissions */
 const ALWAYS_BLOCKED = [
+  // Unix
   "rm -rf /",
   "rm -rf ~",
   "rm -rf /*",
@@ -13,12 +19,21 @@ const ALWAYS_BLOCKED = [
   "mkfs",
   "dd if=",
   ":(){",
+  // Windows
+  "rd /s /q C:\\",
+  "del /f /s /q C:\\",
+  "format C:",
+  "rd /s /q %systemroot%",
 ];
 
 /** Destructive patterns for elevated permission message */
 const DESTRUCTIVE_PATTERNS = [
-  /\brm\s/, /\brm$/, /\brmdir\s/, /\bdel\s/, /\brd\s/, /\bunlink\s/,
-  /\bshred\s/, /\bgit\s+clean\b/, /\bgit\s+reset\s+--hard\b/,
+  // Unix
+  /\brm\s/, /\brm$/, /\brmdir\s/, /\bunlink\s/, /\bshred\s/,
+  // Windows
+  /\bdel\s/, /\brd\s/, /\berase\s/, /\brmdir\s/,
+  // Git (cross-platform)
+  /\bgit\s+clean\b/, /\bgit\s+reset\s+--hard\b/,
 ];
 
 
@@ -153,10 +168,10 @@ Commands are also subject to sandbox restrictions.`,
     // Background mode: spawn detached, return immediately with PID
     if (background) {
       const { spawn } = require("child_process") as typeof import("child_process");
-      const child = spawn("sh", ["-c", command], {
+      const child = spawn(SHELL, [SHELL_FLAG, command], {
         cwd: this.workingDir,
         env,
-        detached: true,
+        detached: !IS_WINDOWS,
         stdio: "ignore",
       });
       child.unref();
@@ -164,7 +179,7 @@ Commands are also subject to sandbox restrictions.`,
     }
 
     return new Promise((resolve) => {
-      exec(command, { cwd: this.workingDir, timeout, maxBuffer: 10 * 1024 * 1024, env },
+      exec(command, { cwd: this.workingDir, timeout, maxBuffer: 10 * 1024 * 1024, env, shell: SHELL },
         (error, stdout, stderr) => {
           const outputParts: string[] = [];
           if (stdout) outputParts.push(stdout.trimEnd());

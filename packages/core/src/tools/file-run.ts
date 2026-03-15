@@ -1,16 +1,21 @@
 import * as fs from "fs";
 import * as path from "path";
+import * as os from "os";
 import { exec } from "child_process";
 import type { BaseTool, ToolDefinition, ToolResult } from "./types";
 import { safePath } from "../utils/path-safety";
 import type { SandboxManager } from "../sandbox";
 
+const IS_WINDOWS = os.platform() === "win32";
+const SHELL = IS_WINDOWS ? process.env.COMSPEC || "cmd.exe" : process.env.SHELL || "/bin/sh";
+
 /** Map file extensions to the command that runs them */
 const RUNNERS: Record<string, string> = {
   ".js": "node", ".mjs": "node", ".cjs": "node",
   ".ts": "npx ts-node", ".tsx": "npx ts-node",
-  ".py": "python3", ".rb": "ruby",
+  ".py": IS_WINDOWS ? "python" : "python3", ".rb": "ruby",
   ".sh": "bash", ".bash": "bash", ".zsh": "zsh",
+  ".bat": "cmd /c", ".cmd": "cmd /c", ".ps1": "powershell -File",
   ".go": "go run", ".swift": "swift", ".lua": "lua",
   ".php": "php", ".pl": "perl",
 };
@@ -100,7 +105,7 @@ export class FileRunTool implements BaseTool {
     }
 
     return new Promise((resolve) => {
-      const child = exec(command, { cwd: this.workingDir, timeout, maxBuffer: 10 * 1024 * 1024, env },
+      const child = exec(command, { cwd: this.workingDir, timeout, maxBuffer: 10 * 1024 * 1024, env, shell: SHELL },
         (error, stdout, stderr) => {
           const outputParts: string[] = [];
           if (stdout) outputParts.push(stdout.trimEnd());

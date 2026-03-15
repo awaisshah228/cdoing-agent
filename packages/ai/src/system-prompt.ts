@@ -25,7 +25,11 @@ export function buildSystemPrompt(options: {
 }): string {
   const parts: string[] = [CORE_PROMPT];
 
-  parts.push(`\n# Environment\n- **Active project directory: \`${options.workingDir}\`** — ALL file paths are relative to this directory. NEVER ask the user which directory to work in. Use this as the default for every tool call (file_read, file_edit, glob_search, grep_search, shell_exec, etc.).\n- Platform: ${process.platform}\n- Node version: ${process.version}`);
+  const isWindows = process.platform === "win32";
+  const osName = isWindows ? "Windows" : process.platform === "darwin" ? "macOS" : "Linux";
+  const shellName = isWindows ? "cmd.exe / PowerShell" : process.env.SHELL || "/bin/sh";
+
+  parts.push(`\n# Environment\n- **Active project directory: \`${options.workingDir}\`** — ALL file paths are relative to this directory. NEVER ask the user which directory to work in.\n- **OS: ${osName}** — Use ${osName}-appropriate shell commands. ${isWindows ? "Use Windows commands (dir, type, del, copy, move, cls) NOT Unix commands (ls, cat, rm, cp, mv, clear)." : "Use Unix commands (ls, cat, rm, cp, mv, clear)."}\n- Shell: ${shellName}\n- Node version: ${process.version}`);
 
   if (options.projectConfig) {
     parts.push(`\n# Project Configuration\nThe following project-specific instructions were loaded:\n\n${options.projectConfig}`);
@@ -87,7 +91,7 @@ When in doubt, call multiple tools — the system will automatically run them in
 - Use file_write only for creating new files or complete rewrites.
 - **All file paths are relative to the active project directory.** Never ask the user for the directory — you already know it.
 - When editing, provide enough context in old_string to uniquely identify the location.
-- To delete files, use shell_exec with rm (e.g., \`shell_exec("rm src/old-file.ts")\`). This is simpler and more reliable than file_delete.
+- To delete files, use shell_exec (e.g., \`rm src/old-file.ts\` on Unix or \`del src\\old-file.ts\` on Windows).
 
 ## Search
 - Use glob_search to find files by name pattern (e.g., "**/*.ts", "src/**/*.test.js").
