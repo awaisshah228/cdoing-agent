@@ -35,6 +35,7 @@ const SLASH_COMMANDS = [
   { cmd: "/setup",       desc: "View & change provider / model / API key" },
   { cmd: "/doctor",      desc: "Check system health" },
   { cmd: "/init",        desc: "Initialize project" },
+  { cmd: "/login",       desc: "Open setup wizard to authenticate" },
   { cmd: "/logout",      desc: "Clear OAuth tokens" },
   { cmd: "/auth-status", desc: "Show auth status" },
   { cmd: "/exit",        desc: "Quit" },

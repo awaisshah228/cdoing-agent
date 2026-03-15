@@ -829,12 +829,13 @@ export function useChat(opts: UseChatOptions) {
           return "Project initialized.";
 
         case "/logout":
-          oauthLogout();
-          return "Logged out.";
+          return oauthLogout();
+
+        case "/login":
+          return "Use /setup to configure provider, model, and authentication.";
 
         case "/auth-status":
-          oauthStatus();
-          return "Auth status shown.";
+          return oauthStatus();
 
         case "/exit":
         case "/quit":

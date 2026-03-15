@@ -13,7 +13,7 @@ import { buildModelConfig, createPermissionManager, resolveApiKey, type CLIOptio
 import { createToolRegistry } from "./tools";
 import { createOneShotCallbacks, createPrintCallbacks, createJsonCallbacks, createStreamJsonCallbacks } from "./callbacks";
 import chalk from "chalk";
-import { oauthLogout } from "./oauth";
+import { oauthLogin, oauthLogout } from "./oauth";
 import { handleConfigCommand, handleInit, handleDoctor, handleCompletions } from "./commands";
 import { loadConversation, loadLastConversation } from "./history";
 
@@ -97,24 +97,20 @@ function createSubAgentFactory(
 async function run(prompt: string | undefined, options: CLIOptions) {
   // Handle --logout first
   if (options.logout) {
-    oauthLogout();
+    console.log(chalk.green(`\n  ${oauthLogout()}\n`));
     return;
   }
 
-  // Handle --login: prompt for token setup
+  // Handle --login: start OAuth flow
   if (options.login) {
-    console.log();
-    console.log(chalk.bold.cyan("  Claude Authentication Setup"));
-    console.log();
-    console.log(chalk.white("  To use with Claude Pro/Max subscription:"));
-    console.log(chalk.dim("    1. Install Claude Code: npm install -g @anthropic-ai/claude-code"));
-    console.log(chalk.dim("    2. Login: claude login"));
-    console.log(chalk.dim("    3. Get token: claude config get oauth_token"));
-    console.log();
-    console.log(chalk.white("  To use with API key:"));
-    console.log(chalk.dim("    Get a key from: https://console.anthropic.com/settings/keys"));
-    console.log();
-    // Continue to resolveApiKey which will prompt for the key
+    try {
+      await oauthLogin();
+      console.log(chalk.green("\n  Login successful! You can now run cdoing.\n"));
+    } catch (err) {
+      console.log(chalk.red(`\n  Login failed: ${(err as Error).message}\n`));
+      process.exit(1);
+    }
+    return;
   }
 
   // Enable verbose logging if requested

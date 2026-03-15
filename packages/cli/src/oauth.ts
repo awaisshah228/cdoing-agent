@@ -423,14 +423,14 @@ function openBrowser(urlToOpen: string): void {
 
 // ── Logout ──────────────────────────────────────────────────
 
-export function oauthLogout(): void {
+export function oauthLogout(): string {
   clearOAuthTokens();
-  console.log(chalk.green("\n  Logged out. OAuth tokens cleared.\n"));
+  return "Logged out. OAuth tokens cleared.";
 }
 
 // ── Status ──────────────────────────────────────────────────
 
-export function oauthStatus(): void {
+export function oauthStatus(): string {
   const tokens = loadOAuthTokens();
 
   // Load stored config for API keys display
@@ -443,42 +443,39 @@ export function oauthStatus(): void {
     }
   } catch {}
 
-  console.log(chalk.bold("\n  Authentication Status\n"));
+  const lines: string[] = [];
+  lines.push("Authentication Status");
+  lines.push("");
 
-  // Show OAuth status
-  console.log(chalk.cyan("  OAuth (Claude):"));
+  // OAuth status
+  lines.push("OAuth (Claude):");
   if (tokens) {
     const expired = isOAuthExpired(tokens);
-    const statusIcon = expired ? chalk.red("✗") : chalk.green("✓");
-    const statusText = expired ? chalk.red("expired") : chalk.green("active");
-
-    console.log(`    ${statusIcon} Token: ${statusText}`);
+    lines.push(`  ${expired ? "✗ expired" : "✓ active"}`);
     if (tokens.expires_at) {
-      const expiresAt = new Date(tokens.expires_at).toLocaleString();
-      console.log(chalk.dim(`    Expires: ${expiresAt}`));
+      lines.push(`  Expires: ${new Date(tokens.expires_at).toLocaleString()}`);
     }
-    console.log(chalk.dim(`    Refresh: ${tokens.refresh_token ? "available" : "none"}`));
+    lines.push(`  Refresh token: ${tokens.refresh_token ? "available" : "none"}`);
   } else {
-    console.log(chalk.dim("    Not logged in"));
-    console.log(chalk.dim("    Run /login to authenticate"));
+    lines.push("  Not logged in — use /setup to authenticate");
   }
 
-  // Show stored API keys
-  console.log();
-  console.log(chalk.cyan("  API Keys (stored):"));
+  // Stored API keys
+  lines.push("");
+  lines.push("Stored API keys:");
   if (apiKeys && Object.keys(apiKeys).length > 0) {
     for (const [provider, key] of Object.entries(apiKeys)) {
       const masked = key.slice(0, 8) + "..." + key.slice(-4);
-      console.log(`    ${chalk.green("✓")} ${provider}: ${chalk.dim(masked)}`);
+      lines.push(`  ✓ ${provider}: ${masked}`);
     }
   } else {
-    console.log(chalk.dim("    No stored API keys"));
+    lines.push("  None");
   }
 
-  // Show environment variables
-  console.log();
-  console.log(chalk.cyan("  Environment variables:"));
-  const envVars = [
+  // Environment variables
+  lines.push("");
+  lines.push("Environment variables:");
+  const envVars: [string, string | undefined][] = [
     ["ANTHROPIC_API_KEY", process.env.ANTHROPIC_API_KEY],
     ["OPENAI_API_KEY", process.env.OPENAI_API_KEY],
     ["GOOGLE_API_KEY", process.env.GOOGLE_API_KEY],
@@ -488,12 +485,10 @@ export function oauthStatus(): void {
     if (value) {
       hasEnvKey = true;
       const masked = value.slice(0, 8) + "..." + value.slice(-4);
-      console.log(`    ${chalk.green("✓")} ${name}: ${chalk.dim(masked)}`);
+      lines.push(`  ✓ ${name}: ${masked}`);
     }
   }
-  if (!hasEnvKey) {
-    console.log(chalk.dim("    No API keys in environment"));
-  }
+  if (!hasEnvKey) lines.push("  None");
 
-  console.log();
+  return lines.join("\n");
 }
