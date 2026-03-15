@@ -27,6 +27,7 @@ import { Spinner, ToolSpinner } from "./Spinner";
 import { UserInput } from "./UserInput";
 import { StatusBar } from "./StatusBar";
 import { SessionBrowser } from "./SessionBrowser";
+import { SetupWizard } from "./SetupWizard";
 import { useChat } from "./hooks/useChat";
 import type { ChatMessage } from "./types";
 
@@ -95,6 +96,7 @@ export const App: React.FC<AppProps> = ({
   // Live shell command output (streams in dynamic area, flushed to Static on complete)
   const [shellLive, setShellLive] = useState("");
   const shellLiveRef = useRef("");
+  const [showSetupWizard, setShowSetupWizard] = useState(false);
 
   const {
     messages,
@@ -248,6 +250,10 @@ export const App: React.FC<AppProps> = ({
       }
 
       if (value.startsWith("/")) {
+        if (value.trim() === "/setup") {
+          setShowSetupWizard(true);
+          return;
+        }
         const result = await handleSlashCommand(value);
         if (result !== null) {
           addSystemMessage(result);
@@ -261,6 +267,29 @@ export const App: React.FC<AppProps> = ({
   );
 
   const runningJobs = backgroundJobs.filter((j) => j.status === "running").length;
+
+  // ── Setup wizard overlay ─────────────────────────────────────────────────
+  if (showSetupWizard) {
+    return (
+      <Box flexDirection="column">
+        <SetupWizard
+          currentProvider={String(modelConfig.provider || "anthropic")}
+          currentModel={String(modelConfig.model || "")}
+          onDone={({ provider, model, apiKey }) => {
+            setShowSetupWizard(false);
+            handleSlashCommand(`/provider ${provider}`);
+            if (model) handleSlashCommand(`/model ${model}`);
+            if (apiKey) handleSlashCommand(`/config set api-key ${apiKey}`);
+            addSystemMessage(`✓ Setup saved — provider: ${provider}  model: ${model || "default"}`);
+          }}
+          onCancel={() => {
+            setShowSetupWizard(false);
+            addSystemMessage("Setup cancelled.");
+          }}
+        />
+      </Box>
+    );
+  }
 
   // ── Session browser overlay ──────────────────────────────────────────────
   if (showSessionBrowser) {

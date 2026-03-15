@@ -797,31 +797,6 @@ export function useChat(opts: UseChatOptions) {
           return null; // streaming has taken over the display
         }
 
-        case "/setup": {
-          const cfg = modelConfigRef.current;
-          const provider = cfg.provider || "anthropic";
-          const model = cfg.model || "(default)";
-          const hasKey = !!(cfg.apiKey);
-          return [
-            "── Current Settings ──────────────────────────",
-            `  Provider:  ${provider}`,
-            `  Model:     ${model}`,
-            `  Mode:      ${opts.permissionManager.getMode()}`,
-            `  Dir:       ${workingDir}`,
-            `  API key:   ${hasKey ? "set ✓" : "not set ✗"}`,
-            "",
-            "── Change Settings ───────────────────────────",
-            "  /config set provider <name>   anthropic | openai | google | ollama",
-            "  /config set model <name>      e.g. claude-sonnet-4-6, gpt-4o",
-            "  /config set api-key <key>     save API key for current provider",
-            "  /config set mode <mode>       ask | auto-edit | auto",
-            "  /config set base-url <url>    custom endpoint (optional)",
-            "",
-            "  Or switch inline:",
-            "  /provider <name>   /model <name>   /mode <mode>",
-          ].join("\n");
-        }
-
         // ── Misc ─────────────────────────────────────────────────────────────
 
         case "/rules":
