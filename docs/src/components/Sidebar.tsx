@@ -39,27 +39,31 @@ const navigation = [
   },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ mobileOpen, onClose }: { mobileOpen?: boolean; onClose?: () => void }) {
   const pathname = usePathname();
 
   return (
-    <aside className="sidebar">
-      {navigation.map((section) => (
-        <div key={section.title} className="sidebar-section">
-          <div className="sidebar-section-title">{section.title}</div>
-          {section.items.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`sidebar-link ${
-                pathname === item.href ? "active" : ""
-              }`}
-            >
-              {item.name}
-            </Link>
-          ))}
-        </div>
-      ))}
-    </aside>
+    <>
+      {mobileOpen && <div className="sidebar-overlay" onClick={onClose} />}
+      <aside className={`sidebar ${mobileOpen ? "sidebar-open" : ""}`}>
+        {navigation.map((section) => (
+          <div key={section.title} className="sidebar-section">
+            <div className="sidebar-section-title">{section.title}</div>
+            {section.items.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`sidebar-link ${
+                  pathname === item.href ? "active" : ""
+                }`}
+                onClick={onClose}
+              >
+                {item.name}
+              </Link>
+            ))}
+          </div>
+        ))}
+      </aside>
+    </>
   );
 }

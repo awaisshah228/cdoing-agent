@@ -2,19 +2,23 @@
 
 import dynamic from "next/dynamic";
 
+function DiagramPlaceholder({ height }: { height: number }) {
+  return <div className="flow-diagram" style={{ minHeight: Math.min(height, 300) }} />;
+}
+
 const DependencyGraphInner = dynamic(
   () => import("@/components/ArchitectureDiagram").then((m) => m.DependencyGraph),
-  { ssr: false, loading: () => <div className="flow-diagram" style={{ height: 400 }} /> },
+  { ssr: false, loading: () => <DiagramPlaceholder height={460} /> },
 );
 
 const AgenticLoopDiagramInner = dynamic(
   () => import("@/components/ArchitectureDiagram").then((m) => m.AgenticLoopDiagram),
-  { ssr: false, loading: () => <div className="flow-diagram" style={{ height: 920 }} /> },
+  { ssr: false, loading: () => <DiagramPlaceholder height={920} /> },
 );
 
 const OAuthFlowDiagramInner = dynamic(
   () => import("@/components/ArchitectureDiagram").then((m) => m.OAuthFlowDiagram),
-  { ssr: false, loading: () => <div className="flow-diagram" style={{ height: 360 }} /> },
+  { ssr: false, loading: () => <DiagramPlaceholder height={360} /> },
 );
 
 export function DependencyGraph() {
@@ -31,7 +35,7 @@ export function OAuthFlowDiagram() {
 
 const VscodeArchDiagramInner = dynamic(
   () => import("@/components/ArchitectureDiagram").then((m) => m.VscodeArchDiagram),
-  { ssr: false, loading: () => <div className="flow-diagram" style={{ height: 500 }} /> },
+  { ssr: false, loading: () => <DiagramPlaceholder height={500} /> },
 );
 
 export function VscodeArchDiagram() {
@@ -40,7 +44,7 @@ export function VscodeArchDiagram() {
 
 const FullSystemDiagramInner = dynamic(
   () => import("@/components/ArchitectureDiagram").then((m) => m.FullSystemDiagram),
-  { ssr: false, loading: () => <div className="flow-diagram" style={{ height: 860 }} /> },
+  { ssr: false, loading: () => <DiagramPlaceholder height={860} /> },
 );
 
 export function FullSystemDiagram() {

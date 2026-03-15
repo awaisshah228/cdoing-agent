@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -161,9 +162,10 @@ function SimpleDiagram({ nodes: initNodes, edges, height }: { nodes: Node[]; edg
 }
 
 export function DependencyGraph() {
+  const isMobile = useIsMobile();
   return (
     <ReactFlowProvider>
-      <SimpleDiagram nodes={depNodes} edges={depEdges} height={460} />
+      <SimpleDiagram nodes={depNodes} edges={depEdges} height={isMobile ? 300 : 460} />
     </ReactFlowProvider>
   );
 }
@@ -201,7 +203,8 @@ const loopEdges: Edge[] = [
 ];
 
 export function AgenticLoopDiagram() {
-  return <WrappedDiagram nodes={loopNodes} edges={loopEdges} height={920} />;
+  const isMobile = useIsMobile();
+  return <WrappedDiagram nodes={loopNodes} edges={loopEdges} height={isMobile ? 500 : 920} />;
 }
 
 // ── 3. OAuth Flow Diagram ───────────────────────────────
@@ -226,7 +229,8 @@ const oauthEdges: Edge[] = [
 ];
 
 export function OAuthFlowDiagram() {
-  return <WrappedDiagram nodes={oauthNodes} edges={oauthEdges} height={360} />;
+  const isMobile = useIsMobile();
+  return <WrappedDiagram nodes={oauthNodes} edges={oauthEdges} height={isMobile ? 250 : 360} />;
 }
 
 // ── 4. VS Code Extension Architecture ───────────────────
@@ -249,11 +253,13 @@ const vscEdges: Edge[] = [
 ];
 
 export function VscodeArchDiagram() {
-  return <WrappedDiagram nodes={vscNodes} edges={vscEdges} height={500} />;
+  const isMobile = useIsMobile();
+  return <WrappedDiagram nodes={vscNodes} edges={vscEdges} height={isMobile ? 350 : 500} />;
 }
 
 export function FullSystemDiagram() {
-  return <WrappedDiagram nodes={fullNodes} edges={fullEdges} height={860} />;
+  const isMobile = useIsMobile();
+  return <WrappedDiagram nodes={fullNodes} edges={fullEdges} height={isMobile ? 500 : 860} />;
 }
 
 // ── 5. Full System Diagram ──────────────────────────────
