@@ -237,7 +237,7 @@ export function useChat(opts: UseChatOptions) {
     ].filter(Boolean).join("\n");
 
     // Build a throwaway agent with no tools — we only need a text response
-    const titleAgent = new (agentRef.current.constructor as any)(
+    const titleAgent = new (agentRef.current!.constructor as any)(
       modelConfigRef.current,
       toolRegistryRef.current,
       opts.permissionManager,
@@ -295,6 +295,12 @@ export function useChat(opts: UseChatOptions) {
    */
   const sendMessage = useCallback(
     async (text: string) => {
+      // ── Guard: no agent (no key configured) ─────────────────────────────
+      if (!agentRef.current) {
+        addSystemMessage("No API key configured. Run /setup to authenticate.");
+        return;
+      }
+
       // ── Queue if busy ────────────────────────────────────────────────────
       if (isProcessing) {
         queueRef.current.push(text);
@@ -457,12 +463,12 @@ export function useChat(opts: UseChatOptions) {
 
         case "/clear":
           // Reset the agent's internal history AND the visible message list
-          agentRef.current.clearHistory();
+          agentRef.current?.clearHistory();
           setMessages([]);
           return "Conversation cleared.";
 
         case "/new":
-          agentRef.current.clearHistory();
+          agentRef.current?.clearHistory();
           conversationRef.current = createConversation(
             String(modelConfigRef.current.provider || "anthropic"),
             String(modelConfigRef.current.model   || "default"),
@@ -482,10 +488,10 @@ export function useChat(opts: UseChatOptions) {
           if (!arg) return "Usage: /resume <id>";
           const conv = loadConversation(arg);
           if (!conv) return `Conversation not found: ${arg}`;
-          agentRef.current.clearHistory();
+          agentRef.current?.clearHistory();
           for (const m of conv.messages) {
-            if (m.role === "user")      agentRef.current.addToHistory("user",      m.content);
-            else if (m.role === "assistant") agentRef.current.addToHistory("assistant", m.content);
+            if (m.role === "user")      agentRef.current?.addToHistory("user",      m.content);
+            else if (m.role === "assistant") agentRef.current?.addToHistory("assistant", m.content);
           }
           conversationRef.current = conv;
           setMessages(conv.messages.map((m) => ({
@@ -521,6 +527,7 @@ export function useChat(opts: UseChatOptions) {
           addSystemMessage(`⚡ Background job started: ${id}`);
 
           // Build a fresh ephemeral agent so it doesn't share history with main chat
+          if (!agentRef.current) return "No API key configured. Run /setup first.";
           const bgAgent = new (agentRef.current.constructor as any)(
             modelConfigRef.current, toolRegistryRef.current,
             opts.permissionManager, opts.hookManager,
@@ -800,6 +807,7 @@ export function useChat(opts: UseChatOptions) {
           // Ask a question that doesn't get added to the conversation history
           if (!arg) return "Usage: /btw <question>  (ask without adding to history)";
           setIsProcessing(true);
+          if (!agentRef.current) { setIsProcessing(false); return "No API key configured. Run /setup first."; }
           const ephemeralAgent = new (agentRef.current.constructor as any)(
             modelConfigRef.current, toolRegistryRef.current,
             opts.permissionManager, opts.hookManager,
