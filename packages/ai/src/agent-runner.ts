@@ -715,7 +715,6 @@ const TOOL_SIGNALS: Array<{ keywords: RegExp; tools: string[] }> = [
   { keywords: /search|find|grep|look for|where is/i, tools: ["codebase_search", "grep_search", "glob_search"] },
   { keywords: /edit|change|replace|rename|refactor|fix|update|modify/i, tools: ["multi_edit", "file_edit"] },
   { keywords: /write|create|new file|generate/i, tools: ["file_write"] },
-  { keywords: /delete|remove file|rm /i, tools: ["file_delete"] },
   { keywords: /run|execute|test|build|install|npm|yarn|pip/i, tools: ["shell_exec", "file_run", "code_verify"] },
   { keywords: /web|fetch|url|http|download|api/i, tools: ["web_fetch", "web_search"] },
   { keywords: /notebook|ipynb|jupyter|cell/i, tools: ["notebook_edit"] },
