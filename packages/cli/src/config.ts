@@ -158,13 +158,50 @@ function ask(question: string): Promise<string> {
   });
 }
 
-interface SelectOption {
+/**
+ * Check if an API key exists for the provider (env var or stored config).
+ * If missing, prompt the user to enter one and optionally save it.
+ * Returns the key, or undefined if skipped.
+ */
+export async function promptApiKeyIfMissing(provider: string): Promise<string | undefined> {
+  const envVar = getApiKeyEnvVar(provider);
+  if (process.env[envVar]) return process.env[envVar];
+
+  const stored = loadConfig();
+  if (stored.apiKeys?.[provider]) return stored.apiKeys[provider];
+
+  // Ollama doesn't need a key
+  if (provider === "ollama") return undefined;
+
+  const info = PROVIDER_INFO[provider];
+  console.log(chalk.yellow(`\n  No API key found for ${provider}.`));
+  if (info?.url) console.log(chalk.dim(`  Get a key: ${info.url}\n`));
+
+  const key = await ask(chalk.green(`  Enter your ${provider} API key (or press Enter to skip): `));
+  if (!key) {
+    console.log(chalk.dim("  Skipped. You can set it later with: /config set api-key <key>\n"));
+    return undefined;
+  }
+
+  const save = await ask(chalk.green("  Save to ~/.cdoing/config.json? (Y/n): "));
+  if (save.toLowerCase() !== "n") {
+    const config = loadConfig();
+    config.apiKeys = config.apiKeys || {};
+    config.apiKeys[provider] = key;
+    saveConfig(config);
+    console.log(chalk.green("  Saved!\n"));
+  }
+
+  return key;
+}
+
+export interface SelectOption {
   label: string;
   hint?: string;
   value: string;
 }
 
-function selectMenu(title: string, options: SelectOption[], defaultIndex = 0): Promise<string> {
+export function selectMenu(title: string, options: SelectOption[], defaultIndex = 0): Promise<string> {
   return new Promise((resolve) => {
     let idx = defaultIndex;
 

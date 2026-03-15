@@ -64,7 +64,7 @@ import type { ModelConfig } from "@cdoing/ai";
 import { printWelcome, printHelp, printConfig } from "./help";
 import { createInteractiveCallbacks } from "./callbacks";
 import { createToolRegistry } from "./tools";
-import { parsePermissionMode, updateStoredConfig, getStoredConfigDisplay } from "./config";
+import { parsePermissionMode, updateStoredConfig, getStoredConfigDisplay, selectMenu, promptApiKeyIfMissing } from "./config";
 import {
   createConversation,
   addMessage,
@@ -97,6 +97,7 @@ export class ChatInterface {
   private isProcessing = false;
   private currentAbortController: AbortController | null = null;
   private keypressHandler: ((_char: string, key: readline.Key) => void) | null = null;
+  private pendingCommand: string | null = null;
 
   // ── New Feature Managers ──────────────────────────────
   // Each manager handles a specific feature domain, keeping this class focused.
@@ -217,6 +218,7 @@ export class ChatInterface {
     { cmd: "/resume", desc: "Resume a conversation" },
     { cmd: "/delete", desc: "Delete a conversation" },
     { cmd: "/config", desc: "View/update config" },
+    { cmd: "/setup", desc: "Change provider + model interactively" },
     { cmd: "/model", desc: "Switch model" },
     { cmd: "/provider", desc: "Switch provider" },
     { cmd: "/mode", desc: "Change permission mode" },
@@ -302,13 +304,18 @@ export class ChatInterface {
               this.clearSuggestions();
               this.inSuggestionMode = false;
               this.selectedSuggestion = -1;
-              // Replace the current line with the selected command
-              const rlAny = this.rl as unknown as { line: string; cursor: number };
-              rlAny.line = selected.cmd + " ";
-              rlAny.cursor = selected.cmd.length + 1;
               // Rewrite the prompt line
               const prompt = chalk.green("❯ ");
-              process.stdout.write(`\r${prompt}${selected.cmd} \x1b[K`);
+              process.stdout.write(`\r${prompt}${selected.cmd}\x1b[K`);
+              if (key.name === "return") {
+                // Store so the rl.question callback runs the full command
+                this.pendingCommand = selected.cmd;
+              } else {
+                // Tab: just fill in the line so user can keep editing
+                const rlAny = this.rl as unknown as { line: string; cursor: number };
+                rlAny.line = selected.cmd + " ";
+                rlAny.cursor = selected.cmd.length + 1;
+              }
               return;
             }
           }
@@ -470,7 +477,9 @@ export class ChatInterface {
       : chalk.hex("#6BCB77")("❯ ");
 
     this.rl.question(prompt, async (input) => {
-      const trimmed = input.trim();
+      // If user pressed Enter on a highlighted suggestion, use that command
+      const trimmed = (this.pendingCommand ?? input).trim();
+      this.pendingCommand = null;
       if (!trimmed) { this.promptUser(); return; }
 
       this.clearSuggestions();
@@ -510,7 +519,7 @@ export class ChatInterface {
       }
 
       if (trimmed.startsWith("/")) {
-        const cont = this.handleCommand(trimmed);
+        const cont = await this.handleCommand(trimmed);
         if (cont) this.promptUser();
         return;
       }
@@ -608,7 +617,7 @@ export class ChatInterface {
     return cleanMessage;
   }
 
-  private handleCommand(command: string): boolean {
+  private async handleCommand(command: string): Promise<boolean> {
     const parts = command.split(/\s+/);
     const cmd = parts[0];
     const arg = parts.slice(1).join(" ");
@@ -700,28 +709,139 @@ export class ChatInterface {
         console.log(chalk.dim(`    /config set <key> <val>  — update saved config\n`));
         return true;
 
-      case "/model":
-        if (!arg) {
-          console.log(chalk.dim(`\n  Current model: ${this.modelConfig.model || "(default)"}`));
-          console.log(chalk.dim("  Usage: /model <name>  (e.g. /model gpt-4o)\n"));
-          return true;
+      case "/setup": {
+        const providerOpts = [
+          { value: "anthropic", label: "Anthropic (Claude)", hint: "claude-sonnet-4-6, claude-opus-4-6" },
+          { value: "openai",    label: "OpenAI (GPT)",       hint: "gpt-4o, gpt-4o-mini" },
+          { value: "google",    label: "Google (Gemini)",    hint: "gemini-2.0-flash, gemini-1.5-pro" },
+          { value: "ollama",    label: "Ollama (local)",     hint: "llama3.1, mistral, codellama" },
+        ];
+        const modelOpts: Record<string, { value: string; label: string; hint: string }[]> = {
+          anthropic: [
+            { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", hint: "recommended · fast & smart" },
+            { value: "claude-opus-4-6",   label: "Claude Opus 4.6",   hint: "most capable" },
+            { value: "claude-haiku-4-5",  label: "Claude Haiku 4.5",  hint: "fastest" },
+          ],
+          openai: [
+            { value: "gpt-4o",      label: "GPT-4o",      hint: "recommended" },
+            { value: "gpt-4o-mini", label: "GPT-4o mini", hint: "fastest" },
+            { value: "o3-mini",     label: "o3-mini",     hint: "reasoning" },
+          ],
+          google: [
+            { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash", hint: "recommended · fast" },
+            { value: "gemini-1.5-pro",   label: "Gemini 1.5 Pro",   hint: "most capable" },
+            { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash", hint: "fastest" },
+          ],
+        };
+        const curProviderIdx = providerOpts.findIndex(o => o.value === (this.modelConfig.provider || "anthropic"));
+        this.rl.close();
+        process.stdin.resume();
+        const chosenProvider = await selectMenu(
+          "Choose a provider  (↑↓ navigate · Enter select)",
+          providerOpts,
+          curProviderIdx >= 0 ? curProviderIdx : 0,
+        );
+        const models = modelOpts[chosenProvider];
+        let chosenModel: string | undefined;
+        if (models) {
+          const curModelIdx = models.findIndex(o => o.value === this.modelConfig.model);
+          chosenModel = await selectMenu(
+            `Choose a model for ${chosenProvider}  (↑↓ navigate · Enter select)`,
+            models,
+            curModelIdx >= 0 ? curModelIdx : 0,
+          );
         }
-        this.modelConfig.model = arg;
+        this.modelConfig.provider = chosenProvider;
+        this.modelConfig.model = chosenModel;
+        const setupKey = await promptApiKeyIfMissing(chosenProvider);
+        if (setupKey) this.modelConfig.apiKey = setupKey;
         this.rebuildAgent();
-        console.log(chalk.green(`\n  Model switched to: ${arg}\n`));
-        return true;
+        console.log(chalk.green(`\n  ✓ Provider: ${chosenProvider}  ·  Model: ${chosenModel || "(default)"}\n`));
+        this.createReadline();
+        this.promptUser();
+        return false;
+      }
 
-      case "/provider":
-        if (!arg) {
-          console.log(chalk.dim(`\n  Current provider: ${this.modelConfig.provider || "anthropic"}`));
-          console.log(chalk.dim("  Usage: /provider <name>  (anthropic, openai, google)\n"));
+      case "/model": {
+        const currentProvider = (this.modelConfig.provider || "anthropic").toLowerCase();
+        const modelOptions: Record<string, { value: string; label: string; hint: string }[]> = {
+          anthropic: [
+            { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", hint: "recommended · fast & smart" },
+            { value: "claude-opus-4-6",   label: "Claude Opus 4.6",   hint: "most capable" },
+            { value: "claude-haiku-4-5",  label: "Claude Haiku 4.5",  hint: "fastest" },
+          ],
+          openai: [
+            { value: "gpt-4o",      label: "GPT-4o",      hint: "recommended" },
+            { value: "gpt-4o-mini", label: "GPT-4o mini", hint: "fastest" },
+            { value: "o3-mini",     label: "o3-mini",     hint: "reasoning" },
+          ],
+          google: [
+            { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash", hint: "recommended · fast" },
+            { value: "gemini-1.5-pro",   label: "Gemini 1.5 Pro",   hint: "most capable" },
+            { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash", hint: "fastest" },
+          ],
+        };
+        if (arg) {
+          this.modelConfig.model = arg;
+          this.rebuildAgent();
+          console.log(chalk.green(`\n  ✓ Model switched to: ${arg}\n`));
           return true;
         }
-        this.modelConfig.provider = arg.toLowerCase();
-        this.modelConfig.model = undefined;
+        const options = modelOptions[currentProvider];
+        if (!options) {
+          console.log(chalk.dim(`\n  No model list for provider "${currentProvider}". Usage: /model <name>\n`));
+          return true;
+        }
+        const currentIdx = options.findIndex(o => o.value === this.modelConfig.model);
+        this.rl.close();
+        process.stdin.resume();
+        const chosen = await selectMenu(
+          `Choose a model for ${currentProvider}  (↑↓ navigate · Enter select)`,
+          options,
+          currentIdx >= 0 ? currentIdx : 0,
+        );
+        this.modelConfig.model = chosen;
         this.rebuildAgent();
-        console.log(chalk.green(`\n  Provider switched to: ${arg}\n`));
-        return true;
+        console.log(chalk.green(`\n  ✓ Model switched to: ${chosen}\n`));
+        this.createReadline();
+        this.promptUser();
+        return false;
+      }
+
+      case "/provider": {
+        const providerOptions = [
+          { value: "anthropic", label: "Anthropic (Claude)", hint: "claude-sonnet-4-6, claude-opus-4-6" },
+          { value: "openai",    label: "OpenAI (GPT)",       hint: "gpt-4o, gpt-4o-mini" },
+          { value: "google",    label: "Google (Gemini)",    hint: "gemini-2.0-flash, gemini-1.5-pro" },
+          { value: "ollama",    label: "Ollama (local)",     hint: "llama3.1, mistral, codellama" },
+        ];
+        if (arg) {
+          this.modelConfig.provider = arg.toLowerCase();
+          this.modelConfig.model = undefined;
+          this.rebuildAgent();
+          console.log(chalk.green(`\n  ✓ Provider switched to: ${arg}`));
+          console.log(chalk.dim(`  Tip: use /model to pick a model\n`));
+          return true;
+        }
+        const currentIdx = providerOptions.findIndex(o => o.value === (this.modelConfig.provider || "anthropic"));
+        this.rl.close();
+        process.stdin.resume();
+        const chosenProvider = await selectMenu(
+          "Choose a provider  (↑↓ navigate · Enter select)",
+          providerOptions,
+          currentIdx >= 0 ? currentIdx : 0,
+        );
+        this.modelConfig.provider = chosenProvider;
+        this.modelConfig.model = undefined;
+        const providerKey = await promptApiKeyIfMissing(chosenProvider);
+        if (providerKey) this.modelConfig.apiKey = providerKey;
+        this.rebuildAgent();
+        console.log(chalk.green(`\n  ✓ Provider switched to: ${chosenProvider}`));
+        console.log(chalk.dim(`  Tip: use /model to pick a model\n`));
+        this.createReadline();
+        this.promptUser();
+        return false;
+      }
 
       case "/mode":
         if (!arg) {
