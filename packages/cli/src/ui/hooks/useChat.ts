@@ -168,7 +168,7 @@ export function useChat(opts: UseChatOptions) {
 
   /** Rebuild agent and trigger a re-render so UI (StatusBar, etc.) shows updated config */
   const rebuildAndRefresh = useCallback(() => {
-    rebuildAndRefresh();
+    rebuildAgent();
     _bumpConfigVersion((v) => v + 1);
   }, [rebuildAgent]);
 
