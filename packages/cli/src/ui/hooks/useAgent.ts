@@ -117,7 +117,9 @@ export function useAgent(opts: UseAgentOptions) {
    * Initialized with buildAgentInternal() immediately, then replaced via
    * rebuildAgent() whenever settings change.
    */
-  const agentRef = useRef<AgentRunner>(buildAgentInternal());
+  const agentRef = useRef<AgentRunner | null>((() => {
+    try { return buildAgentInternal(); } catch { return null; }
+  })());
 
   // ─────────────────────────────────────────────────────────────────────────
   // Agent builder
@@ -158,7 +160,13 @@ export function useAgent(opts: UseAgentOptions) {
    * Call this any time you mutate modelConfigRef, toolRegistryRef, or workingDirRef.
    */
   function rebuildAgent(): void {
-    agentRef.current = buildAgentInternal();
+    try {
+      agentRef.current = buildAgentInternal();
+    } catch (err) {
+      // Don't crash — agentRef keeps the previous agent (or null).
+      // The error will surface as a friendly message on the next send.
+      console.error("[cdoing] Failed to build agent:", (err as Error).message);
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────────

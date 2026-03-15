@@ -853,7 +853,9 @@ export function useChat(opts: UseChatOptions) {
           return "Project initialized.";
 
         case "/logout":
-          return oauthLogout();
+          modelConfigRef.current.oauthToken = undefined;
+          modelConfigRef.current.apiKey     = undefined;
+          return oauthLogout() + "\nRun /setup to configure a new API key or log in again.";
 
         case "/login":
           return "Use /setup to configure provider, model, and authentication.";

@@ -124,7 +124,10 @@ export function createModel(config: Partial<ModelConfig> = {}) {
       }
       return new ChatAnthropic({
         model: modelName,
-        anthropicApiKey: config.apiKey || process.env.ANTHROPIC_API_KEY,
+        // Fall back to a placeholder so the constructor doesn't throw when no key
+        // is configured yet — the error will surface on the first actual API call
+        // with a proper 401, which the TUI handles gracefully.
+        anthropicApiKey: config.apiKey || process.env.ANTHROPIC_API_KEY || "no-key-run-setup",
         temperature,
         maxTokens,
         topP: undefined,
@@ -135,7 +138,7 @@ export function createModel(config: Partial<ModelConfig> = {}) {
     case ModelProvider.OPENAI:
       return new ChatOpenAI({
         model: modelName,
-        openAIApiKey: config.apiKey || process.env.OPENAI_API_KEY,
+        openAIApiKey: config.apiKey || process.env.OPENAI_API_KEY || "no-key-run-setup",
         temperature,
         maxTokens,
         configuration: config.baseURL ? { baseURL: config.baseURL } : undefined,
@@ -144,7 +147,7 @@ export function createModel(config: Partial<ModelConfig> = {}) {
     case ModelProvider.GOOGLE:
       return new ChatGoogleGenerativeAI({
         model: modelName,
-        apiKey: config.apiKey || process.env.GOOGLE_API_KEY,
+        apiKey: config.apiKey || process.env.GOOGLE_API_KEY || "no-key-run-setup",
         temperature,
         maxOutputTokens: maxTokens,
       });
