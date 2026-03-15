@@ -835,7 +835,7 @@ export function useChat(opts: UseChatOptions) {
         // ── Misc ─────────────────────────────────────────────────────────────
 
         case "/rules":
-          return rulesManagerRef.current.formatForPrompt() || "No rules defined.";
+          return rulesManagerRef.current.formatForDisplay();
 
         case "/mcp": {
           const mcp = mcpManagerRef.current as unknown as Record<string, (...a: unknown[]) => unknown>;

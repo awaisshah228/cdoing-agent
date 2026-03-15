@@ -215,6 +215,51 @@ export class RulesManager {
   }
 
   /**
+   * Format rules for CLI display, showing file paths and sources.
+   */
+  formatForDisplay(): string {
+    const allRules = this.loadAllRules();
+    if (allRules.length === 0) return "No rules defined.";
+
+    const globalDir = path.join(os.homedir(), ".cdoing", "rules");
+    const projectDir = path.join(this.workingDir, ".cdoing", "rules");
+
+    const lines: string[] = ["# Rules\n"];
+
+    // Group by source
+    const globalRules = allRules.filter((r) => r.source === "global");
+    const projectRules = allRules.filter((r) => r.source === "path-specific");
+
+    if (globalRules.length > 0) {
+      lines.push(`## Global rules (${globalDir}/)`);
+      for (const rule of globalRules) {
+        const globs = rule.globs.length > 0 ? ` [${rule.globs.join(", ")}]` : "";
+        lines.push(`  - ${rule.filePath}${globs}`);
+      }
+      lines.push("");
+    } else {
+      lines.push(`## Global rules — none found`);
+      lines.push(`  Directory: ${globalDir}/`);
+      lines.push("");
+    }
+
+    if (projectRules.length > 0) {
+      lines.push(`## Project rules (${projectDir}/)`);
+      for (const rule of projectRules) {
+        const globs = rule.globs.length > 0 ? ` [${rule.globs.join(", ")}]` : "";
+        lines.push(`  - ${rule.filePath}${globs}`);
+      }
+      lines.push("");
+    } else {
+      lines.push(`## Project rules — none found`);
+      lines.push(`  Directory: ${projectDir}/`);
+      lines.push("");
+    }
+
+    return lines.join("\n");
+  }
+
+  /**
    * Clear the rule cache (call after file changes).
    */
   invalidateCache(): void {
