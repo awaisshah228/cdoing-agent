@@ -14,7 +14,7 @@ import { createToolRegistry } from "./tools";
 import { createOneShotCallbacks, createPrintCallbacks, createJsonCallbacks, createStreamJsonCallbacks } from "./callbacks";
 import chalk from "chalk";
 import { oauthLogout } from "./oauth";
-import { handleConfigCommand, handleInit, handleDoctor } from "./commands";
+import { handleConfigCommand, handleInit, handleDoctor, handleCompletions } from "./commands";
 import { loadConversation, loadLastConversation } from "./history";
 
 const program = new Command();
@@ -62,6 +62,12 @@ program
   .command("doctor")
   .description("Diagnose setup and configuration issues")
   .action(handleDoctor);
+
+program
+  .command("completions")
+  .description("Generate shell completion script (zsh, bash)")
+  .argument("[shell]", "Shell type: zsh or bash")
+  .action(handleCompletions);
 
 /** Create a sub-agent factory: spawns a child agent without sub_agent tool */
 function createSubAgentFactory(

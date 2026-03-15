@@ -9,8 +9,8 @@
  * scrolling the terminal.
  */
 
-import React, { useCallback, useEffect, useRef } from "react";
-import { Box, useApp } from "ink";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Box, Text, Static, useApp } from "ink";
 import chalk from "chalk";
 
 import type { ModelConfig } from "@cdoing/ai";
@@ -30,28 +30,39 @@ import { SessionBrowser } from "./SessionBrowser";
 import { useChat } from "./hooks/useChat";
 import type { ChatMessage } from "./types";
 
-// ── Direct stdout formatters (bypasses Ink entirely) ───────────────────────
+// ── Static message renderer ─────────────────────────────────────────────────
 
-function printMessage(msg: ChatMessage): void {
+function renderStaticMessage(msg: ChatMessage): React.ReactElement {
   switch (msg.role) {
     case "user":
-      process.stdout.write(chalk.green.bold("\n❯ ") + chalk.white(msg.content) + "\n");
-      break;
-    case "assistant":
-      process.stdout.write("\n" + chalk.white(msg.content) + "\n");
-      process.stdout.write(chalk.gray("─".repeat(40)) + "\n");
-      break;
-    case "system":
-      process.stdout.write(
-        (msg.isError ? chalk.red("  ❌ ") : chalk.yellow("  ")) +
-        msg.content + "\n"
+      return (
+        <Box key={msg.id} flexDirection="column">
+          <Text>{" "}</Text>
+          <Box>
+            <Text color="green" bold>{"❯ "}</Text>
+            <Text color="white">{msg.content}</Text>
+          </Box>
+        </Box>
       );
-      break;
+    case "assistant":
+      return (
+        <Box key={msg.id} flexDirection="column">
+          <Text>{" "}</Text>
+          <Text>{msg.content}</Text>
+          <Text color="gray">{"─".repeat(process.stdout.columns > 0 ? Math.min(process.stdout.columns, 60) : 40)}</Text>
+        </Box>
+      );
+    case "system":
+      return (
+        <Box key={msg.id}>
+          {msg.isError ? <Text color="red">{"  ❌ "}</Text> : <Text color="yellow">{"  ▸ "}</Text>}
+          <Text>{msg.content}</Text>
+        </Box>
+      );
     case "shell":
-      // Raw shell output — no prefix, no extra formatting
-      process.stdout.write(msg.content);
-      if (!msg.content.endsWith("\n")) process.stdout.write("\n");
-      break;
+      return <Text key={msg.id}>{msg.content.trimEnd()}</Text>;
+    default:
+      return <Text key={msg.id}>{msg.content}</Text>;
   }
 }
 
@@ -81,6 +92,9 @@ export const App: React.FC<AppProps> = ({
   const processingStartRef = useRef<number | null>(null);
   // Track background shell processes so Ctrl+C can kill them
   const bgProcessRef = useRef<import("child_process").ChildProcess | null>(null);
+  // Live shell command output (streams in dynamic area, flushed to Static on complete)
+  const [shellLive, setShellLive] = useState("");
+  const shellLiveRef = useRef("");
 
   const {
     messages,
@@ -117,20 +131,14 @@ export const App: React.FC<AppProps> = ({
     }
   }, [isProcessing]);
 
-  // Print new messages directly to stdout as they arrive (not via Ink).
-  // This keeps Ink's render area small and prevents scrolling on keypress.
-  const printedCountRef = useRef(0);
+  // Clear terminal when /clear resets the messages array
+  const prevMsgLenRef = useRef(0);
   useEffect(() => {
-    // If messages was reset (e.g. /clear), reset our pointer too
-    if (messages.length < printedCountRef.current) {
-      printedCountRef.current = 0;
+    if (messages.length === 0 && prevMsgLenRef.current > 0) {
+      process.stdout.write("\x1b[2J\x1b[H");
     }
-    const newMsgs = messages.slice(printedCountRef.current);
-    for (const msg of newMsgs) {
-      printMessage(msg);
-    }
-    printedCountRef.current = messages.length;
-  }, [messages]);
+    prevMsgLenRef.current = messages.length;
+  }, [messages.length]);
 
   // Send initial prompt on mount
   useEffect(() => {
@@ -193,10 +201,13 @@ export const App: React.FC<AppProps> = ({
           return;
         }
 
-        // All other shell commands — buffer output then add as a message
-        // (direct process.stdout.write conflicts with Ink's cursor management)
+        // All other shell commands — stream live in dynamic area, flush to Static on done
         {
           const { spawn } = require("child_process") as typeof import("child_process");
+          addSystemMessage(`$ ${shellCmd}`);
+          shellLiveRef.current = "";
+          setShellLive("");
+
           const child = spawn(shellCmd, [], {
             shell: true,
             cwd: workingDir,
@@ -204,20 +215,22 @@ export const App: React.FC<AppProps> = ({
           });
           bgProcessRef.current = child;
 
-          // Print the command header immediately via addSystemMessage so Ink tracks it
-          addSystemMessage(chalk.gray(`$ ${shellCmd}`));
-
-          let output = "";
-          child.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
-          child.stderr?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+          const onData = (chunk: Buffer) => {
+            shellLiveRef.current += chunk.toString();
+            setShellLive(shellLiveRef.current);
+          };
+          child.stdout?.on("data", onData);
+          child.stderr?.on("data", onData);
 
           child.on("close", (code) => {
             bgProcessRef.current = null;
-            // Route output through React messages so Ink positions it correctly
-            if (output) {
+            const output = shellLiveRef.current;
+            shellLiveRef.current = "";
+            setShellLive("");
+            if (output.trim()) {
               setMessages((prev) => [
                 ...prev,
-                { id: String(Date.now()), role: "shell" as const, content: output },
+                { id: String(Date.now()), role: "shell" as const, content: output.trimEnd() },
               ]);
             }
             if (code !== null && code !== 0) {
@@ -226,6 +239,8 @@ export const App: React.FC<AppProps> = ({
           });
           child.on("error", (err) => {
             bgProcessRef.current = null;
+            shellLiveRef.current = "";
+            setShellLive("");
             addSystemMessage(chalk.red(`[error: ${err.message}]`));
           });
         }
@@ -277,6 +292,14 @@ export const App: React.FC<AppProps> = ({
   // Ink only renders this small fixed section — no scrolling issues
   return (
     <Box flexDirection="column">
+      {/* Static: past messages scroll permanently above the dynamic area */}
+      <Static items={messages}>
+        {(msg) => renderStaticMessage(msg)}
+      </Static>
+
+      {/* Live shell command output — streams here, moves to Static when done */}
+      {shellLive ? <Text>{shellLive.trimEnd()}</Text> : null}
+
       {/* Animated tool activity */}
       {toolActivity ? (
         <ToolSpinner

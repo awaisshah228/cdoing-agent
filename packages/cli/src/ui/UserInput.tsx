@@ -48,12 +48,216 @@ const AT_PROVIDERS = [
   { cmd: "@file",     desc: "Include a file's contents  (@file src/foo.ts)" },
 ];
 
-// Shell commands that take a path argument
-const PATH_COMMANDS = new Set([
+// Shell commands that always take a path argument (hardcoded core set)
+const PATH_COMMANDS_CORE = new Set([
   "cd", "ls", "ll", "la", "cat", "less", "more", "head", "tail",
   "vim", "vi", "nvim", "nano", "code", "open",
-  "cp", "mv", "rm", "mkdir", "rmdir", "touch",
+  "cp", "mv", "rm", "mkdir", "rmdir", "touch", "ln", "chmod", "chown",
+  "diff", "wc", "file", "stat", "find",
 ]);
+
+// Lazily resolved: all executable names found on $PATH
+let _pathBinaries: Set<string> | null = null;
+function getPathBinaries(): Set<string> {
+  if (_pathBinaries) return _pathBinaries;
+  _pathBinaries = new Set(PATH_COMMANDS_CORE);
+  try {
+    const dirs = (process.env.PATH || "").split(path.delimiter).filter(Boolean);
+    for (const dir of dirs) {
+      try {
+        const entries = fs.readdirSync(dir);
+        for (const e of entries) _pathBinaries.add(e);
+      } catch { /* skip unreadable dir */ }
+    }
+  } catch { /* ignore */ }
+  return _pathBinaries;
+}
+
+// ── Tool / subcommand suggestions ────────────────────────────────────────────
+
+interface SubcmdSuggestion { cmd: string; desc: string; }
+
+const TOOL_SUBCOMMANDS: Record<string, SubcmdSuggestion[]> = {
+  npm: [
+    { cmd: "install",   desc: "Install dependencies" },
+    { cmd: "install -g",desc: "Install package globally" },
+    { cmd: "run",       desc: "Run a script" },
+    { cmd: "run dev",   desc: "Start dev server" },
+    { cmd: "run build", desc: "Build project" },
+    { cmd: "run test",  desc: "Run tests" },
+    { cmd: "run lint",  desc: "Lint code" },
+    { cmd: "start",     desc: "Start application" },
+    { cmd: "test",      desc: "Run tests" },
+    { cmd: "publish",   desc: "Publish package" },
+    { cmd: "update",    desc: "Update dependencies" },
+    { cmd: "uninstall", desc: "Remove a package" },
+    { cmd: "ls",        desc: "List installed packages" },
+    { cmd: "audit",     desc: "Security audit" },
+    { cmd: "outdated",  desc: "Show outdated packages" },
+    { cmd: "init",      desc: "Create package.json" },
+    { cmd: "ci",        desc: "Clean install" },
+  ],
+  npx: [
+    { cmd: "create-react-app", desc: "Create React app" },
+    { cmd: "create-next-app",  desc: "Create Next.js app" },
+    { cmd: "tsc",              desc: "TypeScript compiler" },
+    { cmd: "eslint",           desc: "Run ESLint" },
+    { cmd: "prettier",         desc: "Format code" },
+  ],
+  yarn: [
+    { cmd: "install",   desc: "Install dependencies" },
+    { cmd: "add",       desc: "Add a package" },
+    { cmd: "add -D",    desc: "Add dev dependency" },
+    { cmd: "remove",    desc: "Remove a package" },
+    { cmd: "run dev",   desc: "Start dev server" },
+    { cmd: "run build", desc: "Build project" },
+    { cmd: "run test",  desc: "Run tests" },
+    { cmd: "upgrade",   desc: "Upgrade packages" },
+    { cmd: "workspace", desc: "Run command in workspace" },
+    { cmd: "workspaces",desc: "Run command in all workspaces" },
+  ],
+  pnpm: [
+    { cmd: "install",   desc: "Install dependencies" },
+    { cmd: "add",       desc: "Add a package" },
+    { cmd: "add -D",    desc: "Add dev dependency" },
+    { cmd: "remove",    desc: "Remove a package" },
+    { cmd: "run dev",   desc: "Start dev server" },
+    { cmd: "run build", desc: "Build project" },
+    { cmd: "run test",  desc: "Run tests" },
+  ],
+  git: [
+    { cmd: "status",          desc: "Show working tree status" },
+    { cmd: "add .",           desc: "Stage all changes" },
+    { cmd: "add -p",          desc: "Interactive staging" },
+    { cmd: "commit -m",       desc: "Commit with message" },
+    { cmd: "push",            desc: "Push to remote" },
+    { cmd: "pull",            desc: "Pull from remote" },
+    { cmd: "checkout",        desc: "Switch branch / restore file" },
+    { cmd: "checkout -b",     desc: "Create and switch branch" },
+    { cmd: "branch",          desc: "List / create branches" },
+    { cmd: "branch -d",       desc: "Delete branch" },
+    { cmd: "merge",           desc: "Merge branch" },
+    { cmd: "rebase",          desc: "Rebase onto branch" },
+    { cmd: "log --oneline",   desc: "Compact commit log" },
+    { cmd: "diff",            desc: "Show unstaged diff" },
+    { cmd: "diff --staged",   desc: "Show staged diff" },
+    { cmd: "stash",           desc: "Stash changes" },
+    { cmd: "stash pop",       desc: "Apply stashed changes" },
+    { cmd: "fetch",           desc: "Fetch from remote" },
+    { cmd: "remote -v",       desc: "List remotes" },
+    { cmd: "clone",           desc: "Clone repository" },
+    { cmd: "init",            desc: "Initialize repository" },
+    { cmd: "reset --hard",    desc: "Discard all local changes" },
+    { cmd: "cherry-pick",     desc: "Apply specific commit" },
+    { cmd: "tag",             desc: "Create / list tags" },
+  ],
+  gh: [
+    { cmd: "pr create",     desc: "Create pull request" },
+    { cmd: "pr list",       desc: "List pull requests" },
+    { cmd: "pr checkout",   desc: "Check out pull request" },
+    { cmd: "pr merge",      desc: "Merge pull request" },
+    { cmd: "issue create",  desc: "Create issue" },
+    { cmd: "issue list",    desc: "List issues" },
+    { cmd: "repo clone",    desc: "Clone repository" },
+    { cmd: "run list",      desc: "List workflow runs" },
+    { cmd: "run view",      desc: "View workflow run" },
+    { cmd: "auth login",    desc: "Authenticate with GitHub" },
+  ],
+  python: [
+    { cmd: "-m venv",          desc: "Create virtual environment" },
+    { cmd: "-m pip install",   desc: "Install packages" },
+    { cmd: "-m pip freeze",    desc: "List installed packages" },
+    { cmd: "-m pytest",        desc: "Run tests" },
+    { cmd: "-m http.server",   desc: "Start HTTP server" },
+    { cmd: "-c",               desc: "Execute inline code" },
+  ],
+  python3: [
+    { cmd: "-m venv",          desc: "Create virtual environment" },
+    { cmd: "-m pip install",   desc: "Install packages" },
+    { cmd: "-m pip freeze",    desc: "List installed packages" },
+    { cmd: "-m pytest",        desc: "Run tests" },
+    { cmd: "-m http.server",   desc: "Start HTTP server" },
+    { cmd: "-c",               desc: "Execute inline code" },
+  ],
+  pip: [
+    { cmd: "install",   desc: "Install package" },
+    { cmd: "install -r requirements.txt", desc: "Install from requirements" },
+    { cmd: "uninstall", desc: "Uninstall package" },
+    { cmd: "list",      desc: "List packages" },
+    { cmd: "freeze",    desc: "Output installed packages" },
+    { cmd: "show",      desc: "Show package info" },
+    { cmd: "search",    desc: "Search PyPI" },
+  ],
+  pip3: [
+    { cmd: "install",   desc: "Install package" },
+    { cmd: "install -r requirements.txt", desc: "Install from requirements" },
+    { cmd: "uninstall", desc: "Uninstall package" },
+    { cmd: "list",      desc: "List packages" },
+    { cmd: "freeze",    desc: "Output installed packages" },
+  ],
+  docker: [
+    { cmd: "ps",              desc: "List running containers" },
+    { cmd: "ps -a",           desc: "List all containers" },
+    { cmd: "images",          desc: "List images" },
+    { cmd: "build -t",        desc: "Build image" },
+    { cmd: "run",             desc: "Run container" },
+    { cmd: "run -it",         desc: "Run interactive container" },
+    { cmd: "exec -it",        desc: "Exec into container" },
+    { cmd: "stop",            desc: "Stop container" },
+    { cmd: "rm",              desc: "Remove container" },
+    { cmd: "rmi",             desc: "Remove image" },
+    { cmd: "pull",            desc: "Pull image" },
+    { cmd: "push",            desc: "Push image" },
+    { cmd: "logs",            desc: "Show container logs" },
+    { cmd: "compose up",      desc: "Start compose services" },
+    { cmd: "compose down",    desc: "Stop compose services" },
+    { cmd: "compose build",   desc: "Build compose services" },
+  ],
+  kubectl: [
+    { cmd: "get pods",          desc: "List pods" },
+    { cmd: "get services",      desc: "List services" },
+    { cmd: "get deployments",   desc: "List deployments" },
+    { cmd: "describe pod",      desc: "Describe pod" },
+    { cmd: "apply -f",          desc: "Apply config file" },
+    { cmd: "delete -f",         desc: "Delete from config file" },
+    { cmd: "logs",              desc: "Print pod logs" },
+    { cmd: "exec -it",          desc: "Exec into pod" },
+    { cmd: "port-forward",      desc: "Forward port" },
+    { cmd: "rollout status",    desc: "Check rollout status" },
+    { cmd: "scale",             desc: "Scale deployment" },
+  ],
+  cargo: [
+    { cmd: "build",      desc: "Build package" },
+    { cmd: "build --release", desc: "Build release" },
+    { cmd: "run",        desc: "Run binary" },
+    { cmd: "test",       desc: "Run tests" },
+    { cmd: "add",        desc: "Add dependency" },
+    { cmd: "check",      desc: "Type-check without build" },
+    { cmd: "fmt",        desc: "Format code" },
+    { cmd: "clippy",     desc: "Run linter" },
+    { cmd: "update",     desc: "Update dependencies" },
+    { cmd: "publish",    desc: "Publish crate" },
+  ],
+  go: [
+    { cmd: "run",        desc: "Run Go program" },
+    { cmd: "build",      desc: "Build package" },
+    { cmd: "test",       desc: "Run tests" },
+    { cmd: "test ./...", desc: "Run all tests" },
+    { cmd: "mod tidy",   desc: "Clean up modules" },
+    { cmd: "mod init",   desc: "Initialize module" },
+    { cmd: "get",        desc: "Add dependency" },
+    { cmd: "fmt",        desc: "Format code" },
+    { cmd: "vet",        desc: "Vet code" },
+    { cmd: "install",    desc: "Install package" },
+  ],
+  turbo: [
+    { cmd: "run build",  desc: "Build all packages" },
+    { cmd: "run dev",    desc: "Dev all packages" },
+    { cmd: "run test",   desc: "Test all packages" },
+    { cmd: "run lint",   desc: "Lint all packages" },
+    { cmd: "prune",      desc: "Prune for deployment" },
+  ],
+};
 
 // ── Path helpers ─────────────────────────────────────────────────────────────
 
@@ -195,19 +399,24 @@ function computeGhost(line: string, history: string[], workingDir: string): Ghos
  * Returns { cmdPrefix, partial } or null.
  */
 function detectPathContext(line: string): { cmdPrefix: string; partial: string } | null {
-  // Match: (optional !) + known command + space + optional partial path
+  // Match: (optional !) + command + space + optional partial path
   const m = line.match(/^(!?)(\w[\w\-]*)(\s+)(\S*)$/);
   if (!m) {
     // "cd " with trailing space, no path yet
     const m2 = line.match(/^(!?)(\w[\w\-]*)(\s+)$/);
     if (m2) {
       const cmd = m2[2].toLowerCase();
-      if (PATH_COMMANDS.has(cmd)) return { cmdPrefix: m2[1] + m2[2] + m2[3], partial: "" };
+      if (PATH_COMMANDS_CORE.has(cmd) || getPathBinaries().has(cmd)) {
+        return { cmdPrefix: m2[1] + m2[2] + m2[3], partial: "" };
+      }
     }
     return null;
   }
   const cmd = m[2].toLowerCase();
-  if (!PATH_COMMANDS.has(cmd)) return null;
+  // Only show path completions for core path commands or binaries on $PATH
+  // that are NOT tools with their own subcommand suggestions
+  if (TOOL_SUBCOMMANDS[cmd]) return null;
+  if (!PATH_COMMANDS_CORE.has(cmd) && !getPathBinaries().has(cmd)) return null;
   return { cmdPrefix: m[1] + m[2] + m[3], partial: m[4] };
 }
 
@@ -261,6 +470,9 @@ const PathMenu: React.FC<PathMenuProps> = ({ entries, selectedIdx, label }) => {
 function getSuggestionColor(s: { cmd: string; desc: string }): string {
   if (s.cmd.startsWith("@file")) return "magenta";
   if (s.cmd.startsWith("@")) return "yellow";
+  // Tool subcommands (npm, git, etc.) — green tint
+  const toolMatch = s.cmd.match(/^!?(\w[\w-]*)\s/);
+  if (toolMatch && TOOL_SUBCOMMANDS[toolMatch[1].toLowerCase()]) return "green";
   return "cyan";
 }
 
@@ -344,6 +556,33 @@ export const UserInput: React.FC<UserInputProps> = ({
       setPathContext(null);
       setGhost(null);
       return;
+    }
+
+    // ── Tool subcommand suggestions (npm, git, python, docker…) ──
+    // Matches: "npm " or "!git " or "npm ins" etc.
+    const toolMatch = line.match(/^!?(\w[\w-]*)(\s+)(\S*)$/);
+    if (toolMatch) {
+      const tool = toolMatch[1].toLowerCase();
+      const subcmdPartial = toolMatch[3].toLowerCase();
+      const subcmds = TOOL_SUBCOMMANDS[tool];
+      if (subcmds) {
+        const matches = subcmds.filter((s) =>
+          subcmdPartial === "" || s.cmd.toLowerCase().startsWith(subcmdPartial)
+        );
+        if (matches.length > 0) {
+          // Prefix each suggestion with the tool name so acceptSuggestion inserts correctly
+          const prefixed = matches.map((s) => ({
+            cmd: (line.startsWith("!") ? "!" : "") + tool + " " + s.cmd,
+            desc: s.desc,
+          }));
+          setSuggestions(prefixed.slice(0, 10));
+          setSelectedSuggestion(0);
+          setPathEntries([]);
+          setPathContext(null);
+          setGhost(null);
+          return;
+        }
+      }
     }
 
     // ── Path completion for shell commands (cd, ls, vim…) ──

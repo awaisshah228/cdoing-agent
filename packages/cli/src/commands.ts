@@ -143,6 +143,182 @@ Files the agent should not modify:
   console.log();
 }
 
+// ── Shell completion scripts ──────────────────────────────────────────────────
+
+const ZSH_COMPLETION = `#compdef cdoing
+# Zsh completion for cdoing — install with: cdoing completions zsh > ~/.zsh/completions/_cdoing
+# Then add to ~/.zshrc:  fpath=(~/.zsh/completions $fpath) && autoload -Uz compinit && compinit
+
+_cdoing() {
+  local context state line
+  typeset -A opt_args
+
+  _arguments -C \\
+    '(-m --model)'{-m,--model}'[Model to use]:model:->models' \\
+    '(-p --provider)'{-p,--provider}'[AI provider]:provider:(anthropic openai google ollama custom)' \\
+    '--base-url[Base URL for custom providers]:url:' \\
+    '--api-key[API key]:key:' \\
+    '--mode[Permission mode]:mode:(ask auto-edit auto)' \\
+    '(-d --dir)'{-d,--dir}'[Working directory]:directory:_directories' \\
+    '--login[Login with Claude via OAuth]' \\
+    '--logout[Clear stored OAuth tokens]' \\
+    '--print[Print output only]' \\
+    '(-r --resume)'{-r,--resume}'[Resume conversation by ID]:id:' \\
+    '(-c --continue)'{-c,--continue}'[Continue most recent conversation]' \\
+    '--max-turns[Maximum agent turns]:turns:' \\
+    '--output-format[Output format]:format:(text json stream-json)' \\
+    '--verbose[Enable verbose logging]' \\
+    '--system-prompt[Custom system prompt]:prompt:' \\
+    '--allowed-tools[Comma-separated allowed tools]:tools:' \\
+    '--disallowed-tools[Comma-separated disallowed tools]:tools:' \\
+    '(-h --help)'{-h,--help}'[Show help]' \\
+    '(-V --version)'{-V,--version}'[Show version]' \\
+    '1: :->subcmd' \\
+    '*:: :->args'
+
+  case $state in
+    subcmd)
+      local -a cmds
+      cmds=(
+        'config:Manage configuration'
+        'init:Initialize project with .cdoing/config.md'
+        'doctor:Diagnose setup and configuration'
+        'completions:Generate shell completion script'
+      )
+      _describe 'subcommand' cmds
+      ;;
+    models)
+      local -a models
+      models=(
+        'claude-sonnet-4-6:Anthropic Sonnet 4.6'
+        'claude-opus-4-6:Anthropic Opus 4.6'
+        'claude-haiku-4-5:Anthropic Haiku 4.5'
+        'gpt-4o:OpenAI GPT-4o'
+        'gpt-4o-mini:OpenAI GPT-4o Mini'
+        'o3-mini:OpenAI o3 Mini'
+        'gemini-2.0-flash:Google Gemini 2.0 Flash'
+        'gemini-1.5-pro:Google Gemini 1.5 Pro'
+        'llama3.1:Ollama LLaMA 3.1'
+        'mistral:Ollama Mistral'
+        'codellama:Ollama CodeLlama'
+      )
+      _describe 'model' models
+      ;;
+    args)
+      case $words[1] in
+        config)
+          _arguments \\
+            '1:action:(get set list)' \\
+            '2:key:(provider model mode api-key base-url)' \\
+            '3:value:'
+          ;;
+        completions)
+          _arguments '1:shell:(zsh bash)'
+          ;;
+      esac
+      ;;
+  esac
+}
+
+_cdoing "$@"
+`;
+
+const BASH_COMPLETION = `# Bash completion for cdoing — install with: cdoing completions bash > ~/.bash_completion.d/cdoing
+# Then add to ~/.bashrc:  source ~/.bash_completion.d/cdoing
+
+_cdoing_completion() {
+  local cur prev words cword
+  _init_completion 2>/dev/null || {
+    COMPREPLY=()
+    cur="\${COMP_WORDS[COMP_CWORD]}"
+    prev="\${COMP_WORDS[COMP_CWORD-1]}"
+  }
+
+  local subcommands="config init doctor completions"
+  local flags="--model --provider --base-url --api-key --mode --dir --login --logout --print --resume --continue --max-turns --output-format --verbose --system-prompt --allowed-tools --disallowed-tools --help --version"
+  local models="claude-sonnet-4-6 claude-opus-4-6 claude-haiku-4-5 gpt-4o gpt-4o-mini o3-mini gemini-2.0-flash gemini-1.5-pro llama3.1 mistral codellama"
+
+  case "\${prev}" in
+    --model|-m)
+      COMPREPLY=( \$(compgen -W "\${models}" -- "\${cur}") )
+      return ;;
+    --provider|-p)
+      COMPREPLY=( \$(compgen -W "anthropic openai google ollama custom" -- "\${cur}") )
+      return ;;
+    --mode)
+      COMPREPLY=( \$(compgen -W "ask auto-edit auto" -- "\${cur}") )
+      return ;;
+    --output-format)
+      COMPREPLY=( \$(compgen -W "text json stream-json" -- "\${cur}") )
+      return ;;
+    --dir|-d)
+      COMPREPLY=( \$(compgen -d -- "\${cur}") )
+      return ;;
+    config)
+      COMPREPLY=( \$(compgen -W "get set list" -- "\${cur}") )
+      return ;;
+    get|set)
+      COMPREPLY=( \$(compgen -W "provider model mode api-key base-url" -- "\${cur}") )
+      return ;;
+    completions)
+      COMPREPLY=( \$(compgen -W "zsh bash" -- "\${cur}") )
+      return ;;
+  esac
+
+  if [[ "\${cur}" == -* ]]; then
+    COMPREPLY=( \$(compgen -W "\${flags}" -- "\${cur}") )
+    return
+  fi
+
+  if [[ \${COMP_CWORD} -eq 1 ]]; then
+    COMPREPLY=( \$(compgen -W "\${subcommands}" -- "\${cur}") )
+    return
+  fi
+}
+
+complete -F _cdoing_completion cdoing
+`;
+
+/**
+ * Handle `cdoing completions <shell>` - print shell completion script
+ */
+export function handleCompletions(shell: string): void {
+  const s = (shell || "").toLowerCase();
+
+  if (s === "zsh") {
+    process.stdout.write(ZSH_COMPLETION);
+    return;
+  }
+
+  if (s === "bash") {
+    process.stdout.write(BASH_COMPLETION);
+    return;
+  }
+
+  // No shell arg — print install instructions
+  console.log();
+  console.log(chalk.hex("#4FC3F7").bold("  🐚  Shell Completions"));
+  console.log(chalk.hex("#78909C")("  ─────────────────────────────────────"));
+  console.log();
+  console.log(chalk.hex("#B0BEC5")("  Usage:  cdoing completions <shell>"));
+  console.log(chalk.hex("#78909C")("  Shells: zsh  bash"));
+  console.log();
+  console.log(chalk.hex("#FFB74D").bold("  Zsh:"));
+  console.log(chalk.hex("#90A4AE")("    mkdir -p ~/.zsh/completions"));
+  console.log(chalk.hex("#81C784")("    cdoing completions zsh > ~/.zsh/completions/_cdoing"));
+  console.log(chalk.hex("#90A4AE")("    # Add to ~/.zshrc if not already present:"));
+  console.log(chalk.hex("#90A4AE")('    echo \'fpath=(~/.zsh/completions $fpath)\' >> ~/.zshrc'));
+  console.log(chalk.hex("#90A4AE")('    echo "autoload -Uz compinit && compinit" >> ~/.zshrc'));
+  console.log(chalk.hex("#90A4AE")("    source ~/.zshrc"));
+  console.log();
+  console.log(chalk.hex("#FFB74D").bold("  Bash:"));
+  console.log(chalk.hex("#90A4AE")("    mkdir -p ~/.bash_completion.d"));
+  console.log(chalk.hex("#81C784")("    cdoing completions bash > ~/.bash_completion.d/cdoing"));
+  console.log(chalk.hex("#90A4AE")('    echo "source ~/.bash_completion.d/cdoing" >> ~/.bashrc'));
+  console.log(chalk.hex("#90A4AE")("    source ~/.bashrc"));
+  console.log();
+}
+
 /**
  * Handle `cdoing doctor` - diagnose setup and configuration issues
  */
