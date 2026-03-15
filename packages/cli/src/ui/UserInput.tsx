@@ -32,6 +32,7 @@ const SLASH_COMMANDS = [
   { cmd: "/mcp",         desc: "MCP server status / interactive picker" },
   { cmd: "/context",     desc: "List context providers" },
   { cmd: "/queue",       desc: "Show message queue" },
+  { cmd: "/setup",       desc: "View & change provider / model / API key" },
   { cmd: "/doctor",      desc: "Check system health" },
   { cmd: "/init",        desc: "Initialize project" },
   { cmd: "/logout",      desc: "Clear OAuth tokens" },
