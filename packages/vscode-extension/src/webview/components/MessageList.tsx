@@ -1,8 +1,8 @@
 /**
- * MessageList.tsx — Scrollable Message Area (ResizeObserver-based scroll)
+ * MessageList.tsx — Scrollable Message Area with Premium Thinking Indicator
  *
- * Uses ResizeObserver for efficient auto-scrolling (no scroll event polling).
- * User can scroll up to read history — auto-scroll pauses until they scroll back down.
+ * Uses ResizeObserver for efficient auto-scrolling.
+ * Features a branded animated thinking indicator instead of basic dots.
  */
 
 import React from "react";
@@ -41,11 +41,16 @@ export const MessageList: React.FC<MessageListProps> = ({
       })}
 
       {isProcessing && (
-        <div className="typing active">
-          <div className="typing-dots">
+        <div className="thinking-indicator">
+          <div className="thinking-indicator-avatar">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="#fff">
+              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+            </svg>
+          </div>
+          <div className="thinking-dots">
             <span /><span /><span />
           </div>
-          <span>Thinking...</span>
+          <span className="thinking-label">Thinking...</span>
         </div>
       )}
     </div>

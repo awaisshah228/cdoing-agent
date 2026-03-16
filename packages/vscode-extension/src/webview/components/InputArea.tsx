@@ -1,18 +1,14 @@
 /**
- * InputArea.tsx — Chat Input (Copilot style with @ autocomplete)
+ * InputArea.tsx — Premium Chat Input (Cursor/Copilot style)
  *
- * Layout:
- *   ┌──────────────────────────────────────┐
- *   │ TS server.ts:519-520            ×   │  ← context chips
- *   │                                      │
- *   │ @src/app                             │  ← typing triggers dropdown
- *   │ ┌──────────────────────────────┐     │
- *   │ │ 📄 src/app.ts               │     │  ← file suggestions
- *   │ │ 📄 src/app.test.ts          │     │
- *   │ │ 📁 src/api/                 │     │
- *   │ └──────────────────────────────┘     │
- *   │ +  📎                            ↑  │  ← toolbar
- *   └──────────────────────────────────────┘
+ * Features:
+ *   - Polished input box with glow focus state
+ *   - SVG toolbar icons
+ *   - @ autocomplete with file search
+ *   - Context chips with language badges
+ *   - Animated permission prompt
+ *   - Interrupt/enqueue prompt for concurrent messages
+ *   - Image paste support
  */
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
@@ -31,6 +27,7 @@ interface InputAreaProps {
   queueCount: number;
   onSend: (text: string, context?: ContextAttachment[]) => void;
   onCancel?: () => void;
+  onInterruptAndSend?: (newMessage: string) => void;
   permissionRequest?: PermissionRequest | null;
   onPermissionResponse?: (decision: string) => void;
 }
@@ -48,13 +45,14 @@ const LANG_ICONS: Record<string, string> = {
   cpp: "C++", c: "C", ruby: "RB", php: "PHP", swift: "SW",
 };
 
-export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, onSend, onCancel, permissionRequest, onPermissionResponse }) => {
+export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, onSend, onCancel, onInterruptAndSend, permissionRequest, onPermissionResponse }) => {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<ContextAttachment[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const [fileResults, setFileResults] = useState<FileResult[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [atQuery, setAtQuery] = useState("");
+  const [pendingMessage, setPendingMessage] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -64,12 +62,50 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
     if (!trimmed && attachments.length === 0) return;
+
+    // If processing, show interrupt/enqueue prompt instead of sending directly
+    if (isProcessing) {
+      setPendingMessage(trimmed);
+      setText("");
+      setAttachments([]);
+      setShowDropdown(false);
+      if (textareaRef.current) textareaRef.current.style.height = "auto";
+      return;
+    }
+
     onSend(trimmed, attachments.length > 0 ? attachments : undefined);
     setText("");
     setAttachments([]);
     setShowDropdown(false);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
-  }, [text, attachments, onSend]);
+  }, [text, attachments, onSend, isProcessing]);
+
+  const handleEnqueue = useCallback(() => {
+    if (pendingMessage) {
+      onSend(pendingMessage);
+    }
+    setPendingMessage(null);
+  }, [pendingMessage, onSend]);
+
+  const handleInterrupt = useCallback(() => {
+    if (pendingMessage && onInterruptAndSend) {
+      onInterruptAndSend(pendingMessage);
+    }
+    setPendingMessage(null);
+  }, [pendingMessage, onInterruptAndSend]);
+
+  const handleDismissPending = useCallback(() => {
+    if (pendingMessage) setText(pendingMessage);
+    setPendingMessage(null);
+  }, [pendingMessage]);
+
+  // If processing ends while the prompt is still showing, auto-send
+  useEffect(() => {
+    if (!isProcessing && pendingMessage) {
+      onSend(pendingMessage);
+      setPendingMessage(null);
+    }
+  }, [isProcessing]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Keydown ──
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -95,6 +131,12 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
         return;
       }
     }
+    // Handle interrupt/enqueue prompt keyboard shortcuts
+    if (pendingMessage !== null) {
+      if (e.key === "1") { e.preventDefault(); handleEnqueue(); return; }
+      if (e.key === "2" && onInterruptAndSend) { e.preventDefault(); handleInterrupt(); return; }
+      if (e.key === "Escape") { e.preventDefault(); handleDismissPending(); return; }
+    }
     if (e.key === "Escape" && isProcessing) {
       e.preventDefault();
       onCancel?.();
@@ -108,12 +150,10 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
 
   // ── Select a file from dropdown ──
   const selectFile = useCallback((file: FileResult) => {
-    // Remove @query from text
     const atPos = text.lastIndexOf("@");
     const newText = atPos >= 0 ? text.substring(0, atPos) : text;
     setText(newText);
 
-    // Add as context chip
     setAttachments((prev) => {
       if (prev.some((a) => a.path === file.path)) return prev;
       return [...prev, {
@@ -133,27 +173,22 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
   const handleTextChange = useCallback((newText: string) => {
     setText(newText);
 
-    // Auto-resize
     const el = textareaRef.current;
     if (el) {
       el.style.height = "auto";
-      el.style.height = `${Math.min(el.scrollHeight, 150)}px`;
+      el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
     }
 
-    // Check for @ trigger
     const atPos = newText.lastIndexOf("@");
     if (atPos >= 0) {
-      // Make sure @ is at start of word (not in an email)
       const charBefore = atPos > 0 ? newText[atPos - 1] : " ";
       if (charBefore === " " || charBefore === "\n" || atPos === 0) {
         const query = newText.substring(atPos + 1);
-        // Don't trigger if there's a space after the query (user moved on)
         if (!query.includes(" ") && !query.includes("\n")) {
           setAtQuery(query);
           setShowDropdown(true);
           setSelectedIndex(0);
 
-          // Debounce the search request
           if (debounceRef.current) clearTimeout(debounceRef.current);
           debounceRef.current = setTimeout(() => {
             vscode.postMessage({ type: "searchFiles", query });
@@ -191,7 +226,6 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
     return () => window.removeEventListener("message", handler);
   }, []);
 
-  // Scroll selected dropdown item into view
   useEffect(() => {
     if (showDropdown && dropdownRef.current) {
       const selected = dropdownRef.current.querySelector(".at-dropdown-item.selected");
@@ -213,19 +247,13 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
         const reader = new FileReader();
         reader.onload = () => {
           const dataUrl = reader.result as string;
-          // dataUrl format: "data:image/png;base64,iVBOR..."
           const base64 = dataUrl.split(",")[1];
           const mimeType = file.type || "image/png";
           const name = file.name || `pasted-image.${mimeType.split("/")[1]}`;
 
           setAttachments((prev) => [
             ...prev,
-            {
-              type: "image" as const,
-              path: name,
-              base64,
-              mimeType,
-            },
+            { type: "image" as const, path: name, base64, mimeType },
           ]);
         };
         reader.readAsDataURL(file);
@@ -248,12 +276,7 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
           const base64 = dataUrl.split(",")[1];
           setAttachments((prev) => [
             ...prev,
-            {
-              type: "image" as const,
-              path: file.name,
-              base64,
-              mimeType: file.type || "image/png",
-            },
+            { type: "image" as const, path: file.name, base64, mimeType: file.type || "image/png" },
           ]);
         };
         reader.readAsDataURL(file);
@@ -262,7 +285,6 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
     input.click();
   }, []);
 
-  // Cleanup debounce
   useEffect(() => {
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, []);
@@ -279,11 +301,11 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
     vscode.postMessage({ type: "pickFolder" });
   }, [vscode]);
 
-  const placeholder = isProcessing ? "Type to queue..." : "Describe what to build (@ to attach files)";
+  const placeholder = isProcessing ? "Type to queue a follow-up..." : "Ask Cdoing anything... (@ to attach files)";
 
   return (
     <div className="input-area">
-      {/* Permission prompt — Claude Code style */}
+      {/* Permission prompt */}
       {permissionRequest && onPermissionResponse && (
         <div className="permission-prompt">
           <div className="permission-prompt-header">
@@ -316,7 +338,7 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
                 onClick={() => onPermissionResponse("project")}
               >
                 <span className="permission-option-num">3</span>
-                <span>Yes, allow for this project (just you)</span>
+                <span>Yes, allow for this project</span>
               </button>
             )}
             <button
@@ -345,6 +367,29 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
           </div>
         </div>
       )}
+
+      {/* Interrupt / Enqueue prompt */}
+      {pendingMessage && (
+        <div className="interrupt-prompt">
+          <div className="interrupt-prompt-message">
+            <span className="interrupt-prompt-label">Pending:</span> {pendingMessage.length > 60 ? pendingMessage.substring(0, 57) + "..." : pendingMessage}
+          </div>
+          <div className="interrupt-prompt-actions">
+            <button className="interrupt-prompt-btn interrupt-prompt-enqueue" onClick={handleEnqueue} title="Add to queue and process after current response">
+              <span className="interrupt-prompt-key">1</span> Enqueue
+            </button>
+            {onInterruptAndSend && (
+              <button className="interrupt-prompt-btn interrupt-prompt-interrupt" onClick={handleInterrupt} title="Stop current response and process this message">
+                <span className="interrupt-prompt-key">2</span> Interrupt
+              </button>
+            )}
+            <button className="interrupt-prompt-btn interrupt-prompt-dismiss" onClick={handleDismissPending} title="Cancel and put message back in input">
+              <span className="interrupt-prompt-key">Esc</span> Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="input-box">
         {/* Context chips */}
         {attachments.length > 0 && (
@@ -377,7 +422,16 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
                 onMouseEnter={() => setSelectedIndex(i)}
               >
                 <span className="at-dropdown-icon">
-                  {file.isDir ? "📁" : "📄"}
+                  {file.isDir ? (
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                    </svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+                      <polyline points="13 2 13 9 20 9" />
+                    </svg>
+                  )}
                 </span>
                 <span className="at-dropdown-path">{file.path}</span>
                 {file.language && (
@@ -398,9 +452,24 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
         {/* Toolbar */}
         <div className="input-toolbar">
           <div className="input-toolbar-left">
-            <button className="input-tool-btn" onClick={pickFile} title="Attach file (+)">+</button>
-            <button className="input-tool-btn" onClick={pickFolder} title="Attach folder">📎</button>
-            <button className="input-tool-btn" onClick={pickImage} title="Attach image (or Ctrl+V to paste)">🖼</button>
+            <button className="input-tool-btn" onClick={pickFile} title="Attach file">
+              <svg viewBox="0 0 24 24">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+            </button>
+            <button className="input-tool-btn" onClick={pickFolder} title="Attach folder">
+              <svg viewBox="0 0 24 24">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+              </svg>
+            </button>
+            <button className="input-tool-btn" onClick={pickImage} title="Attach image (or Ctrl+V)">
+              <svg viewBox="0 0 24 24">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <polyline points="21 15 16 10 5 21" />
+              </svg>
+            </button>
           </div>
           <div className="input-toolbar-right">
             {queueCount > 0 && <span className="input-queue-badge">{queueCount} queued</span>}
@@ -410,7 +479,9 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
                 onClick={onCancel}
                 title="Stop generation (Esc)"
               >
-                ■
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
+                  <rect x="6" y="6" width="12" height="12" rx="1" />
+                </svg>
               </button>
             ) : (
               <button
@@ -419,7 +490,9 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
                 disabled={!text.trim() && attachments.length === 0}
                 title="Send (Enter)"
               >
-                ↑
+                <svg viewBox="0 0 24 24">
+                  <path d="M12 19V5M5 12l7-7 7 7" />
+                </svg>
               </button>
             )}
           </div>
@@ -433,7 +506,7 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
 
 const ContextChip: React.FC<{ attachment: ContextAttachment; onRemove: () => void }> = ({ attachment, onRemove }) => {
   const fileName = attachment.path.split("/").pop() || attachment.path;
-  const langIcon = LANG_ICONS[attachment.language || ""] || "✦";
+  const langIcon = LANG_ICONS[attachment.language || ""] || "";
 
   let label = fileName;
   if (attachment.type === "selection" && attachment.startLine) {
@@ -444,13 +517,17 @@ const ContextChip: React.FC<{ attachment: ContextAttachment; onRemove: () => voi
     label = fileName;
   }
 
-  const icon = attachment.type === "folder" ? "📁" : attachment.type === "image" ? "🖼" : langIcon;
+  const icon = attachment.type === "folder" ? "DIR" : attachment.type === "image" ? "IMG" : (langIcon || "FILE");
 
   return (
     <div className="context-chip" title={attachment.path}>
       <span className="context-chip-lang">{icon}</span>
       <span className="context-chip-label">{label}</span>
-      <button className="context-chip-remove" onClick={onRemove}>×</button>
+      <button className="context-chip-remove" onClick={onRemove}>
+        <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+          <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
     </div>
   );
 };

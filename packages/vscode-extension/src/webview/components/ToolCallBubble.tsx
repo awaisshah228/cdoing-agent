@@ -18,30 +18,37 @@ interface ToolCallBubbleProps {
   entry: ToolCallEntry;
 }
 
+// ── SVG Icon Helper ──────────────────────────────────
+
+const ToolSvg: React.FC<{ d: string }> = ({ d }) => (
+  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d={d} />
+  </svg>
+);
+
 // ── Tool Config ──────────────────────────────────────
 
-const TOOL_CONFIG: Record<string, { label: string; icon: string }> = {
-  file_read: { label: "Read", icon: "📖" },
-  file_write: { label: "Write", icon: "✏️" },
-  file_edit: { label: "Edit", icon: "🔧" },
-  multi_edit: { label: "MultiEdit", icon: "🔧" },
-
-  ast_edit: { label: "AST Edit", icon: "🌳" },
-  notebook_edit: { label: "Notebook", icon: "📓" },
-  glob_search: { label: "Search files", icon: "🔍" },
-  grep_search: { label: "Search code", icon: "🔎" },
-  codebase_search: { label: "Codebase search", icon: "🔎" },
-  shell_exec: { label: "Bash", icon: "💻" },
-  file_run: { label: "Execute", icon: "▶" },
-  web_fetch: { label: "Fetch", icon: "🌐" },
-  web_search: { label: "Search web", icon: "🔮" },
-  sub_agent: { label: "Agent", icon: "🤖" },
-  todo: { label: "Todo", icon: "📋" },
-  list_dir: { label: "List dir", icon: "📁" },
-  view_diff: { label: "Diff", icon: "📊" },
-  view_repo_map: { label: "Repo map", icon: "🗺️" },
-  code_verify: { label: "Verify", icon: "✅" },
-  system_info: { label: "System info", icon: "ℹ️" },
+const TOOL_CONFIG: Record<string, { label: string; icon: React.ReactNode }> = {
+  file_read:       { label: "Read",       icon: <ToolSvg d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" /> },
+  file_write:      { label: "Write",      icon: <ToolSvg d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /> },
+  file_edit:       { label: "Edit",       icon: <ToolSvg d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /> },
+  multi_edit:      { label: "MultiEdit",  icon: <ToolSvg d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /> },
+  ast_edit:        { label: "AST Edit",   icon: <ToolSvg d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" /> },
+  notebook_edit:   { label: "Notebook",   icon: <ToolSvg d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" /> },
+  glob_search:     { label: "Find files", icon: <ToolSvg d="M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z" /> },
+  grep_search:     { label: "Search",     icon: <ToolSvg d="M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z" /> },
+  codebase_search: { label: "Codebase",   icon: <ToolSvg d="M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z" /> },
+  shell_exec:      { label: "Bash",       icon: <ToolSvg d="M4 17l6-6-6-6M12 19h8" /> },
+  file_run:        { label: "Execute",    icon: <ToolSvg d="M5 3l14 9-14 9V3z" /> },
+  web_fetch:       { label: "Fetch",      icon: <ToolSvg d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /> },
+  web_search:      { label: "Web search", icon: <ToolSvg d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM2 12h20" /> },
+  sub_agent:       { label: "Agent",      icon: <ToolSvg d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" /> },
+  todo:            { label: "Todo",       icon: <ToolSvg d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /> },
+  list_dir:        { label: "List dir",   icon: <ToolSvg d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /> },
+  view_diff:       { label: "Diff",       icon: <ToolSvg d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5" /> },
+  view_repo_map:   { label: "Repo map",   icon: <ToolSvg d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4zM8 2v16M16 6v16" /> },
+  code_verify:     { label: "Verify",     icon: <ToolSvg d="M22 11.08V12a10 10 0 1 1-5.93-9.14M22 4L12 14.01l-3-3" /> },
+  system_info:     { label: "System",     icon: <ToolSvg d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 16v-4M12 8h.01" /> },
 };
 
 function parseInput(detail: string): Record<string, unknown> {
@@ -309,7 +316,7 @@ const ToolCallBubbleInner: React.FC<ToolCallBubbleProps> = ({ entry }) => {
   const vscode = useVsCode();
   const toggle = useCallback(() => setExpanded(p => !p), []);
 
-  const config = TOOL_CONFIG[entry.name] || { label: entry.name, icon: "⚙️" };
+  const config = TOOL_CONFIG[entry.name] || { label: entry.name, icon: <ToolSvg d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.51-1" /> };
   const isRunning = entry.kind === "call";
   const statusClass = isRunning ? "running" : entry.isError ? "error" : "success";
   const statusIcon = isRunning ? "⏳" : entry.isError ? "✗" : "✓";

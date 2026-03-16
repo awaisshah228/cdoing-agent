@@ -1,8 +1,8 @@
 /**
- * MessageBubble.tsx — Single Chat Message (Memoized, Claude Code style)
+ * MessageBubble.tsx — Premium Chat Message with Avatar
  *
- * Wrapped in React.memo — only re-renders when message content changes.
- * Detects clickable file paths in rendered HTML and opens them in the editor.
+ * Features role avatars, smooth entry animation, and polished typography.
+ * Memoized — only re-renders when message content changes.
  */
 
 import React, { useMemo, useCallback, useRef, useEffect } from "react";
@@ -14,11 +14,11 @@ interface MessageBubbleProps {
   message: ChatMessage;
 }
 
-const ROLE_LABELS: Record<string, string> = {
-  user: "You",
-  assistant: "Assistant",
-  system: "System",
-  error: "Error",
+const ROLE_CONFIG: Record<string, { label: string; avatar: string }> = {
+  user: { label: "You", avatar: "U" },
+  assistant: { label: "Cdoing", avatar: "C" },
+  system: { label: "System", avatar: "S" },
+  error: { label: "Error", avatar: "!" },
 };
 
 const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ message }) => {
@@ -32,11 +32,8 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ message }) => {
     return null;
   }, [message.content, message.role]);
 
-  // Click handler for file links and code copy buttons
   const handleClick = useCallback((e: MouseEvent) => {
     const target = e.target as HTMLElement;
-
-    // Handle clickable file paths in inline code
     if (target.classList.contains("file-link")) {
       const filePath = target.getAttribute("data-path");
       if (filePath) {
@@ -46,7 +43,6 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ message }) => {
     }
   }, [vscode]);
 
-  // Attach click handler to content div
   useEffect(() => {
     const el = contentRef.current;
     if (!el) return;
@@ -54,10 +50,13 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ message }) => {
     return () => el.removeEventListener("click", handleClick);
   }, [handleClick]);
 
+  const config = ROLE_CONFIG[message.role] || { label: message.role, avatar: "?" };
+
   return (
     <div className={`message-row ${message.role}`}>
-      <div className="message-role">
-        {ROLE_LABELS[message.role] || message.role}
+      <div className="message-header">
+        <div className="message-avatar">{config.avatar}</div>
+        <div className="message-role">{config.label}</div>
       </div>
       {htmlContent ? (
         <div
@@ -72,7 +71,6 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ message }) => {
   );
 };
 
-/** Memoized — only re-renders when message id or content changes */
 export const MessageBubble = React.memo(MessageBubbleInner, (prev, next) => {
   return prev.message.id === next.message.id && prev.message.content === next.message.content;
 });

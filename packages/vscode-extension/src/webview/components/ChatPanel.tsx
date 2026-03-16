@@ -56,6 +56,7 @@ export const ChatPanel: React.FC = () => {
   const saveSettings = useChatStore((s) => s.saveSettings);
   const openVscodeSettings = useChatStore((s) => s.openVscodeSettings);
   const cancelGeneration = useChatStore((s) => s.cancelGeneration);
+  const interruptAndSend = useChatStore((s) => s.interruptAndSend);
   const respondToPermission = useChatStore((s) => s.respondToPermission);
 
   return (
@@ -87,6 +88,7 @@ export const ChatPanel: React.FC = () => {
         queueCount={queueCount}
         onSend={sendMessage}
         onCancel={cancelGeneration}
+        onInterruptAndSend={interruptAndSend}
         permissionRequest={permissionRequest}
         onPermissionResponse={respondToPermission}
       />
