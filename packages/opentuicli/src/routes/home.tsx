@@ -20,7 +20,6 @@ const LOGO_FULL = [
   "╚██████╗██████╔╝╚██████╔╝██║██║ ╚████║╚██████╔╝",
   " ╚═════╝╚═════╝  ╚═════╝ ╚═╝╚═╝  ╚═══╝ ╚═════╝ ",
 ];
-const LOGO_FULL_WIDTH = 48;
 
 // Compact logo for smaller terminals
 const LOGO_COMPACT = [
@@ -28,13 +27,6 @@ const LOGO_COMPACT = [
   "│  │││ ││││││││ ┬",
   "└─┘└┘└─┘└─┘┘└┘└─┘",
 ];
-const LOGO_COMPACT_WIDTH = 18;
-
-function centerPad(text: string, width: number, textWidth?: number): string {
-  const tw = textWidth ?? text.length;
-  const pad = Math.max(0, Math.floor((width - tw) / 2));
-  return " ".repeat(pad) + text;
-}
 
 export function Home(props: {
   provider: string;
@@ -64,7 +56,6 @@ export function Home(props: {
 
   // Pick logo
   const logo = isSmall ? null : isMedium ? LOGO_COMPACT : LOGO_FULL;
-  const logoWidth = isSmall ? 0 : isMedium ? LOGO_COMPACT_WIDTH : LOGO_FULL_WIDTH;
 
   // Build info lines
   const infoLines = [
@@ -90,58 +81,56 @@ export function Home(props: {
 
   return (
     <box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden" justifyContent="center" alignItems="center">
-      <scrollbox scrollY={true} flexGrow={1} flexShrink={1} flexDirection="column">
-        <box flexDirection="column" alignItems="center">
-          {/* Logo */}
-          {logo && logo.map((line, i) => (
-            <text key={`logo-${i}`} fg={t.primary} attributes={TextAttributes.BOLD}>
-              {centerPad(line, w, logoWidth)}
+      <box flexDirection="column" alignItems="center" justifyContent="center" flexGrow={1}>
+        {/* Logo */}
+        {logo && logo.map((line, i) => (
+          <text key={`logo-${i}`} fg={t.primary} attributes={TextAttributes.BOLD}>
+            {line}
+          </text>
+        ))}
+
+        {/* Subtitle + version */}
+        <text fg={t.textDim}>
+          {subtitle}
+        </text>
+        <text fg={t.textMuted}>
+          {version}
+        </text>
+
+        <text>{""}</text>
+
+        {/* Info section */}
+        {infoLines.map(([key, val], i) => {
+          const line = `${key.padStart(maxKeyLen)}  ${val}`;
+          return (
+            <text key={`info-${i}`} fg={t.textDim}>
+              {line}
             </text>
-          ))}
+          );
+        })}
 
-          {/* Subtitle + version */}
-          <text fg={t.textDim}>
-            {centerPad(subtitle, w)}
-          </text>
-          <text fg={t.textMuted}>
-            {centerPad(version, w)}
-          </text>
+        <text>{""}</text>
 
-          <text>{""}</text>
+        {/* Actions */}
+        <text fg={t.primary} attributes={TextAttributes.BOLD}>
+          {"Actions"}
+        </text>
+        {actions.map((action, i) => {
+          const line = `${action.key.padStart(maxActionKey)}   ${action.label}`;
+          return (
+            <text key={`act-${i}`} fg={t.textMuted}>
+              {line}
+            </text>
+          );
+        })}
 
-          {/* Info section */}
-          {infoLines.map(([key, val], i) => {
-            const line = `${key.padStart(maxKeyLen)}  ${val}`;
-            return (
-              <text key={`info-${i}`} fg={t.textDim}>
-                {centerPad(line, w)}
-              </text>
-            );
-          })}
+        <text>{""}</text>
 
-          <text>{""}</text>
-
-          {/* Actions */}
-          <text fg={t.primary} attributes={TextAttributes.BOLD}>
-            {centerPad("Actions", w)}
-          </text>
-          {actions.map((action, i) => {
-            const line = `${action.key.padStart(maxActionKey)}   ${action.label}`;
-            return (
-              <text key={`act-${i}`} fg={t.textMuted}>
-                {centerPad(line, w)}
-              </text>
-            );
-          })}
-
-          <text>{""}</text>
-
-          {/* Footer */}
-          <text fg={t.textDim}>
-            {centerPad("Powered by @opentui/react + @cdoing/ai", w)}
-          </text>
-        </box>
-      </scrollbox>
+        {/* Footer */}
+        <text fg={t.textDim}>
+          {"Powered by @opentui/react + @cdoing/ai"}
+        </text>
+      </box>
     </box>
   );
 }
