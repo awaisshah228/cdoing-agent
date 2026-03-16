@@ -11,6 +11,7 @@ const SLASH_COMMANDS = [
   { cmd: "/ls",          desc: "Browse sessions (interactive TUI)" },
   { cmd: "/history",     desc: "List saved conversations (text)" },
   { cmd: "/resume",      desc: "Resume a conversation" },
+  { cmd: "/view",        desc: "View messages in a conversation" },
   { cmd: "/fork",        desc: "Fork current or given conversation" },
   { cmd: "/delete",      desc: "Delete a conversation" },
   { cmd: "/config",      desc: "View/update config" },
@@ -803,6 +804,9 @@ export const UserInput: React.FC<UserInputProps> = ({
       }
       return;
     }
+
+    // Ctrl+Arrow keys are reserved for ScrollBox scrolling — don't handle here
+    if (key.ctrl && (key.upArrow || key.downArrow)) return;
 
     // Dropdown navigation
     if (suggestions.length > 0) {

@@ -1,5 +1,6 @@
 import React from "react";
 import { Box, Text, Static } from "ink";
+import chalk from "chalk";
 import type { ChatMessage, ToolActivity } from "./types";
 import { getTheme } from "./theme";
 
@@ -73,7 +74,7 @@ const SystemMessage: React.FC<{ content: string; isError?: boolean }> = ({
 
 // ── Simple inline markdown renderer ────────────────────────────────────────
 
-const RenderMarkdown: React.FC<{ text: string }> = ({ text }) => {
+export const RenderMarkdown: React.FC<{ text: string }> = ({ text }) => {
   const t = getTheme();
   const lines = text.split("\n");
   return (
@@ -143,12 +144,12 @@ const RenderMarkdown: React.FC<{ text: string }> = ({ text }) => {
             </Text>
           );
         }
-        // Plain line
-        const cleaned = line
-          .replace(/\*\*([^*]+)\*\*/g, "$1")
-          .replace(/\*([^*]+)\*/g, "$1")
-          .replace(/`([^`]+)`/g, "$1");
-        return <Text key={i}>{cleaned}</Text>;
+        // Plain line with inline formatting (bold, italic, code)
+        const styled = line
+          .replace(/`([^`]+)`/g, (_m: string, c: string) => chalk.cyan(c))
+          .replace(/\*\*([^*]+)\*\*/g, (_m: string, c: string) => chalk.bold(c))
+          .replace(/(?<!\w)\*([^*]+)\*(?!\w)/g, (_m: string, c: string) => chalk.italic(c));
+        return <Text key={i}>{styled}</Text>;
       })}
     </Box>
   );

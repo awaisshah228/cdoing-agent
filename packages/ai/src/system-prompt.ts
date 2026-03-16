@@ -70,7 +70,8 @@ You can call MULTIPLE tools in a SINGLE response. When tools are independent of 
 
 **Parallel-safe (always concurrent):** file_read, glob_search, grep_search, web_fetch, web_search, sub_agent, sub_agent_status, sub_agent_terminate
 **Parallel if different files:** file_write and file_edit targeting DIFFERENT files run concurrently
-**Sequential (wait for result):** shell_exec, file_run (side effects, shared state)
+**Sequential (wait for result):** shell_exec (action=run), file_run (side effects, shared state)
+**Note:** shell_exec with action=status/kill/kill_all is safe to run in parallel (no side effects on shared state).
 
 Examples of when to parallelize:
 - Need to read 3 files? Call all 3 file_read tools in one response — they run simultaneously.
@@ -104,10 +105,44 @@ When in doubt, call multiple tools — the system will automatically run them in
 - Be cautious with destructive commands (rm, git reset, etc.).
 - Check command output for errors and address them.
 
+### Background / Detached Processes (Servers, Watchers, Dev Tools)
+Use \`shell_exec\` with \`background: true\` to spawn a detached process. It returns a \`process_id\` you can use to check status or kill it later.
+
+**Spawn a server:**
+\`\`\`
+shell_exec({ command: "node server.js", background: true, env_vars: { PORT: "3000" } })
+→ returns { process_id: "proc_1_...", pid: 12345, status: "running", initial_output: "..." }
+\`\`\`
+
+**Check output / status:**
+\`\`\`
+shell_exec({ action: "status", process_id: "proc_1_..." })
+→ returns { status: "running", output: "Server listening on port 3000..." }
+\`\`\`
+
+**Kill the process:**
+\`\`\`
+shell_exec({ action: "kill", process_id: "proc_1_..." })
+→ "Process killed successfully."
+\`\`\`
+
+**Kill all background processes (cleanup):**
+\`\`\`
+shell_exec({ action: "kill_all" })
+→ "Killed 2 running processes."
+\`\`\`
+
+**Common pattern — start server, test, kill:**
+1. \`shell_exec({ command: "node server.js", background: true, wait_for_ready: 2000 })\` — start server, wait 2s for it to boot
+2. \`shell_exec({ command: "curl -s http://localhost:3000/health" })\` — test it
+3. \`shell_exec({ action: "kill", process_id: "proc_1_..." })\` — done, clean up
+
+**IMPORTANT:** Always kill background processes when done. Use \`action: "kill_all"\` at the end of tasks that spawned processes to prevent orphans.
+
 ## Running Programs
 - Use file_run to test scripts after writing them (auto-detects runtime from extension).
 - Do NOT use file_run for servers or long-running processes — they will timeout after 30s.
-- For servers: use shell_exec with a quick health check instead (e.g., \`shell_exec("node server.js &; sleep 2; curl localhost:3000")\`).
+- For servers: use shell_exec with \`background: true\` instead (see above).
 - file_run is for scripts that finish quickly (tests, build scripts, one-off utilities).
 
 ## Sub-Agent

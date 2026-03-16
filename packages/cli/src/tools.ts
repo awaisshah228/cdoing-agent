@@ -18,6 +18,7 @@ import {
   SubAgentManager,
   SubAgentStatusTool,
   SubAgentTerminateTool,
+  ProcessManager,
   TodoTool,
   TodoStore,
   SandboxManager,
@@ -37,6 +38,7 @@ import type { SubAgentRunnerFactory } from "@cdoing/core";
 export interface ToolRegistryOptions {
   subAgentFactory?: SubAgentRunnerFactory;
   subAgentManager?: SubAgentManager;
+  processManager?: ProcessManager;
   todoStore?: TodoStore;
   sandboxManager?: SandboxManager;
   permissionManager?: PermissionManager;
@@ -55,6 +57,7 @@ export function createToolRegistry(
   }
 
   const sm = options.sandboxManager;
+  const pm = options.processManager || new ProcessManager();
   const registry = new ToolRegistry();
 
   // File tools
@@ -73,8 +76,8 @@ export function createToolRegistry(
   registry.register(new ViewRepoMapTool(workingDir));
   registry.register(new CodebaseSearchTool(workingDir));
 
-  // Execution tools
-  registry.register(new ShellExecTool(workingDir, sm, options.permissionManager));
+  // Execution tools (ShellExecTool now includes background process management)
+  registry.register(new ShellExecTool(workingDir, sm, options.permissionManager, pm));
   registry.register(new FileRunTool(workingDir, sm));
   registry.register(new CodeVerifyTool(workingDir));
 

@@ -1,12 +1,8 @@
 /**
  * App — root Ink component.
  *
- * Key design: past messages are printed directly to stdout (so they scroll
- * naturally above the terminal), while Ink only manages the small, fixed-height
- * bottom section: streaming content + tool activity + input + status bar.
- *
- * This prevents Ink from miscalculating its height on every keypress and
- * scrolling the terminal.
+ * Uses Ink's <Static> for past messages (written once, never cleared by Ink).
+ * Ink manages only the dynamic bottom section (streaming, input, status bar).
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -21,6 +17,7 @@ import type {
   MemoryStore,
   TodoStore,
 } from "@cdoing/core";
+import { ShellExecTool } from "@cdoing/core";
 
 import { StreamingMessage } from "./MessageList";
 import { Spinner, ToolSpinner } from "./Spinner";
@@ -28,11 +25,12 @@ import { UserInput } from "./UserInput";
 import { StatusBar } from "./StatusBar";
 import { SessionBrowser } from "./SessionBrowser";
 import { SetupWizard } from "./SetupWizard";
+import { RenderMarkdown } from "./MessageList";
 import { useChat } from "./hooks/useChat";
 import { getTheme } from "./theme";
 import type { ChatMessage } from "./types";
 
-// ── Static message renderer ─────────────────────────────────────────────────
+// ── Render a single message for Static ──────────────────────────────────────
 
 function renderStaticMessage(msg: ChatMessage): React.ReactElement {
   const t = getTheme();
@@ -51,7 +49,7 @@ function renderStaticMessage(msg: ChatMessage): React.ReactElement {
       return (
         <Box key={msg.id} flexDirection="column">
           <Text>{" "}</Text>
-          <Text>{msg.content}</Text>
+          <RenderMarkdown text={msg.content} />
           <Text color={t.separator}>{"─".repeat(process.stdout.columns > 0 ? Math.min(process.stdout.columns, 60) : 40)}</Text>
         </Box>
       );
@@ -63,7 +61,7 @@ function renderStaticMessage(msg: ChatMessage): React.ReactElement {
         </Box>
       );
     case "shell":
-      return <Text key={msg.id}>{msg.content.trimEnd()}</Text>;
+      return <RenderMarkdown key={msg.id} text={msg.content.trimEnd()} />;
     default:
       return <Text key={msg.id}>{msg.content}</Text>;
   }
@@ -93,11 +91,6 @@ export const App: React.FC<AppProps> = ({
   const { exit } = useApp();
 
   const processingStartRef = useRef<number | null>(null);
-  // Track background shell processes so Ctrl+C can kill them
-  const bgProcessRef = useRef<import("child_process").ChildProcess | null>(null);
-  // Live shell command output (streams in dynamic area, flushed to Static on complete)
-  const [shellLive, setShellLive] = useState("");
-  const shellLiveRef = useRef("");
   const [showSetupWizard, setShowSetupWizard] = useState(false);
 
   const {
@@ -136,41 +129,27 @@ export const App: React.FC<AppProps> = ({
     }
   }, [isProcessing]);
 
-  // Clear terminal when /clear resets the messages array
-  const prevMsgLenRef = useRef(0);
-  useEffect(() => {
-    if (messages.length === 0 && prevMsgLenRef.current > 0) {
-      process.stdout.write("\x1b[2J\x1b[H");
-    }
-    prevMsgLenRef.current = messages.length;
-  }, [messages.length]);
-
   // Send initial prompt on mount
   useEffect(() => {
-    if (initialPrompt) {
-      sendMessage(initialPrompt);
-    }
+    if (initialPrompt) sendMessage(initialPrompt);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Ctrl+C: kill bg process if running, otherwise double-tap to exit
+  // Ctrl+C: double-tap to exit
   const ctrlCRef = useRef(0);
   useEffect(() => {
     const handler = () => {
-      // If a background shell process is running, kill it
-      if (bgProcessRef.current) {
-        bgProcessRef.current.kill("SIGINT");
-        bgProcessRef.current = null;
-        process.stdout.write(chalk.yellow("\n[process killed]\n"));
-        return;
-      }
       const now = Date.now();
       if (now - ctrlCRef.current < 1000) {
+        const shellTool = toolRegistry.get("shell_exec") as ShellExecTool | undefined;
+        if (shellTool?.getProcessManager) {
+          shellTool.getProcessManager().killAll();
+        }
         exit();
         process.exit(0);
       }
       ctrlCRef.current = now;
-      process.stdout.write(chalk.gray("Press Ctrl+C again to exit, or type /exit.\n"));
+      addSystemMessage(chalk.gray("Press Ctrl+C again to exit, or type /exit."));
     };
     process.on("SIGINT", handler);
     return () => { process.off("SIGINT", handler); };
@@ -180,79 +159,53 @@ export const App: React.FC<AppProps> = ({
     async (value: string) => {
       if (!value.trim()) return;
 
-      // Determine the raw shell command — either explicit `!cmd` or auto-detected
       const shellCmd = value.startsWith("!")
         ? value.slice(1).trim()
         : detectShellCommand(value);
 
       if (shellCmd !== null) {
-        // Intercept `cd` — exec can't change the parent process directory
         if (shellCmd === "cd" || shellCmd.startsWith("cd ") || shellCmd.startsWith("cd\t")) {
           const target = shellCmd.slice(2).trim() || process.env.HOME || "/";
           const result = await handleSlashCommand(`/dir ${target}`);
-          if (result !== null) {
-            process.stdout.write(chalk.gray(`$ ${shellCmd}`) + "\n" + (result ? chalk.white(result) + "\n" : ""));
-          }
+          if (result !== null) addSystemMessage(`$ ${shellCmd}\n${result || ""}`);
           return;
         }
 
-        // Interactive commands (vim, nano, less…) need full TTY — use spawnSync
-        if (isInteractiveCommand(shellCmd)) {
-          const { spawnSync } = require("child_process") as typeof import("child_process");
-          const parts = shellCmd.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [shellCmd];
-          const [bin, ...args] = parts;
-          // Let the subprocess own the terminal completely
-          spawnSync(bin, args, { stdio: "inherit", cwd: workingDir, env: { ...process.env } });
-          return;
-        }
-
-        // All other shell commands — stream live in dynamic area, flush to Static on done
+        // Shell command — capture output, combine label+output in one Static item
         {
-          const { spawn } = require("child_process") as typeof import("child_process");
-          addSystemMessage(`$ ${shellCmd}`);
-          shellLiveRef.current = "";
-          setShellLive("");
-
-          const child = spawn(shellCmd, [], {
-            shell: true,
-            cwd: workingDir,
-            env: { ...process.env },
-          });
-          bgProcessRef.current = child;
-
-          const onData = (chunk: Buffer) => {
-            shellLiveRef.current += chunk.toString();
-            setShellLive(shellLiveRef.current);
-          };
-          child.stdout?.on("data", onData);
-          child.stderr?.on("data", onData);
-
-          child.on("close", (code) => {
-            bgProcessRef.current = null;
-            const output = shellLiveRef.current;
-            shellLiveRef.current = "";
-            setShellLive("");
-            if (output.trim()) {
-              setMessages((prev) => [
-                ...prev,
-                { id: String(Date.now()), role: "shell" as const, content: output.trimEnd() },
-              ]);
+          const { execSync } = require("child_process") as typeof import("child_process");
+          let output = "";
+          let errorMsg = "";
+          try {
+            output = execSync(shellCmd, {
+              cwd: workingDir,
+              env: { ...process.env },
+              encoding: "utf-8",
+              timeout: 120000,
+              maxBuffer: 10 * 1024 * 1024,
+            });
+          } catch (err: any) {
+            if (err.stdout) output = String(err.stdout);
+            if (err.stderr) errorMsg = String(err.stderr);
+            if (err.status !== undefined && err.status !== 0) {
+              errorMsg += chalk.red(`\n[exited with code ${err.status}]`);
+            } else if (!err.stdout && !err.stderr && err.message) {
+              errorMsg = chalk.red(`[error: ${err.message}]`);
             }
-            if (code !== null && code !== 0) {
-              addSystemMessage(chalk.red(`[exited with code ${code}]`));
-            }
-          });
-          child.on("error", (err) => {
-            bgProcessRef.current = null;
-            shellLiveRef.current = "";
-            setShellLive("");
-            addSystemMessage(chalk.red(`[error: ${err.message}]`));
-          });
+          }
+          const parts = [chalk.gray(`$ ${shellCmd}`)];
+          if (output.trim()) parts.push(output.trimEnd());
+          if (errorMsg.trim()) parts.push(errorMsg.trimEnd());
+          addSystemMessage(parts.join("\n"));
         }
         return;
       }
 
       if (value.startsWith("/")) {
+        if (value.trim() === "/clear") {
+          setMessages([]);
+          return;
+        }
         if (value.trim() === "/setup") {
           setShowSetupWizard(true);
           return;
@@ -266,7 +219,7 @@ export const App: React.FC<AppProps> = ({
 
       await sendMessage(value);
     },
-    [workingDir, handleSlashCommand, sendMessage, addSystemMessage],
+    [workingDir, handleSlashCommand, sendMessage, addSystemMessage, setMessages],
   );
 
   const runningJobs = backgroundJobs.filter((j) => j.status === "running").length;
@@ -322,18 +275,15 @@ export const App: React.FC<AppProps> = ({
     );
   }
 
-  // Ink only renders this small fixed section — no scrolling issues
+  // ── Main layout ─────────────────────────────────────────────────────────
   return (
     <Box flexDirection="column">
-      {/* Static: past messages scroll permanently above the dynamic area */}
+      {/* Static: messages written once, never cleared by Ink */}
       <Static items={messages}>
         {(msg) => renderStaticMessage(msg)}
       </Static>
 
-      {/* Live shell command output — streams here, moves to Static when done */}
-      {shellLive ? <Text>{shellLive.trimEnd()}</Text> : null}
-
-      {/* Animated tool activity */}
+      {/* Tool activity spinner */}
       {toolActivity ? (
         <ToolSpinner
           name={toolActivity.name}
@@ -345,7 +295,7 @@ export const App: React.FC<AppProps> = ({
       {/* Streaming response tokens */}
       {streamingContent ? <StreamingMessage content={streamingContent} /> : null}
 
-      {/* Animated thinking spinner (shown before first token arrives) */}
+      {/* Thinking spinner */}
       {isProcessing && !streamingContent && !toolActivity ? (
         <Spinner
           label="Thinking…"
@@ -383,7 +333,6 @@ export const App: React.FC<AppProps> = ({
 
 // ── Shell command auto-detection ────────────────────────────────────────────
 
-// Commands that run non-interactively (exec is fine)
 const SHELL_COMMANDS = new Set([
   "ls", "ll", "la", "pwd", "cd", "mkdir", "rmdir", "rm", "cp", "mv",
   "cat", "head", "tail", "touch", "echo", "env",
@@ -395,11 +344,9 @@ const SHELL_COMMANDS = new Set([
   "chmod", "chown", "ln",
   "ps", "kill", "df", "du",
   "open", "code",
-  // interactive ones below are handled separately
   "vim", "vi", "nano", "less", "more", "man", "top", "htop",
 ]);
 
-// Commands that require full TTY control — spawned with stdio:'inherit'
 const INTERACTIVE_COMMANDS = new Set([
   "vim", "vi", "nvim", "nano", "pico",
   "less", "more", "man", "info",
@@ -407,20 +354,16 @@ const INTERACTIVE_COMMANDS = new Set([
   "ssh", "fzf", "ranger", "mc",
 ]);
 
-/** Returns the command string if input looks like a shell command, else null. */
 function detectShellCommand(input: string): string | null {
   const trimmed = input.trim();
   const firstWord = trimmed.split(/\s+/)[0].toLowerCase();
   return SHELL_COMMANDS.has(firstWord) ? trimmed : null;
 }
 
-// Dev server / watcher patterns — need a real TTY so their UI renders correctly
 const SERVER_PATTERNS = /\b(run\s+(dev|start|serve|watch|preview)|nodemon|ts-node-dev|live-server|concurrently|turbo\s+dev|next\s+dev|vite|astro\s+dev|nuxt\s+dev|remix\s+dev)\b/i;
 
-/** Returns true if this command needs full TTY (vim, nano, less, dev servers…). */
 function isInteractiveCommand(cmd: string): boolean {
   const firstWord = cmd.trim().split(/\s+/)[0].toLowerCase();
   if (INTERACTIVE_COMMANDS.has(firstWord)) return true;
-  // Dev servers / watchers: need real TTY so their dashboard/colors work correctly
   return SERVER_PATTERNS.test(cmd);
 }
