@@ -414,6 +414,11 @@ export class AgentRunner {
    * Accepts optional image attachments for multimodal messages.
    */
   async run(userMessage: string, callbacks: AgentCallbacks, images?: ImageAttachment[]): Promise<string> {
+    if (this._invalidated) {
+      const errMsg = "Session invalidated (logged out). Run /setup to configure a new API key or log in again.";
+      callbacks.onError?.(new Error(errMsg));
+      return errMsg;
+    }
     this.isCancelled = false;
 
     // Build multimodal content if images are provided
@@ -803,6 +808,25 @@ export class AgentRunner {
   clearHistory(): void {
     this.messages = [];
     this.contextManager.reset();
+  }
+
+  /**
+   * Invalidate this agent — clears history and marks it as logged out.
+   * Any subsequent `run()` calls will throw an error prompting re-authentication.
+   * Used by /logout to ensure the in-memory agent can't keep making API calls.
+   */
+  invalidate(): void {
+    this.messages = [];
+    this.contextManager.reset();
+    this.isCancelled = true;
+    this._invalidated = true;
+  }
+
+  /** Whether this agent has been invalidated (logged out) */
+  private _invalidated = false;
+
+  get isInvalidated(): boolean {
+    return this._invalidated;
   }
 
   addToHistory(role: "user" | "assistant", content: string): void {

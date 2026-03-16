@@ -324,6 +324,34 @@ export function clearOAuthTokens(provider?: string): void {
   }
 }
 
+/**
+ * Full logout — clears OAuth tokens and stored API keys for a provider (or all).
+ * Returns a summary message. Both CLI and TUI should call this for /logout.
+ */
+export function fullLogout(provider?: string): string {
+  // Clear OAuth tokens
+  clearOAuthTokens(provider);
+
+  // Clear stored API keys from ~/.cdoing/config.json
+  try {
+    const configPath = path.join(os.homedir(), ".cdoing", "config.json");
+    if (fs.existsSync(configPath)) {
+      const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      if (config.apiKeys) {
+        if (provider) {
+          delete config.apiKeys[provider];
+        } else {
+          delete config.apiKeys;
+        }
+        fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+      }
+    }
+  } catch { /* ignore config errors */ }
+
+  const target = provider || "all providers";
+  return `Logged out (${target}). OAuth tokens and stored API keys cleared.\nRun /setup to configure a new API key or log in again.`;
+}
+
 export function isOAuthExpired(tokens: OAuthTokens): boolean {
   if (!tokens.expires_at) return false;
   return Date.now() >= tokens.expires_at;

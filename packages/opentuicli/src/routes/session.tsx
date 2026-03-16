@@ -718,9 +718,13 @@ export function SessionView(props: {
 
       case "/logout": {
         try {
-          const { clearOAuthTokens } = require("@cdoing/core");
-          clearOAuthTokens();
-          addMessage("system", "OAuth tokens cleared.");
+          const { fullLogout } = require("@cdoing/core");
+          const msg = fullLogout(sdk.provider);
+
+          // Invalidate the in-memory agent so it can't make further API calls
+          sdk.agent.invalidate();
+
+          addMessage("system", msg);
         } catch {
           addMessage("system", "OAuth logout not available.");
         }

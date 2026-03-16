@@ -151,6 +151,7 @@ export {
   saveOAuthTokens,
   loadOAuthTokens,
   clearOAuthTokens,
+  fullLogout,
   isOAuthExpired,
   refreshAccessToken,
   resolveOAuthToken,

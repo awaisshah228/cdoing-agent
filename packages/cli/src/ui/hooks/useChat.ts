@@ -990,10 +990,13 @@ export function useChat(opts: UseChatOptions) {
           handleInit();
           return "Project initialized.";
 
-        case "/logout":
+        case "/logout": {
           modelConfigRef.current.oauthToken = undefined;
           modelConfigRef.current.apiKey     = undefined;
+          // Invalidate the in-memory agent so it can't make further API calls
+          agentRef.current?.invalidate();
           return oauthLogout() + "\nRun /setup to configure a new API key or log in again.";
+        }
 
         case "/login":
           return "Use /setup to configure provider, model, and authentication.";

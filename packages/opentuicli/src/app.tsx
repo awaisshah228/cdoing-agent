@@ -121,8 +121,9 @@ function AppShell(props: {
   // ── Agent Rebuild ──────────────────────────────────
   const rebuildAgent = useCallback((newProvider: string, newModel: string, apiKey?: string) => {
     // Resolve API key
+    // If apiKey is explicitly "" (empty string), it means logout — skip all fallbacks
     let resolvedKey = apiKey;
-    if (!resolvedKey) {
+    if (apiKey === undefined) {
       const envVar = getApiKeyEnvVar(newProvider);
       if (process.env[envVar]) {
         resolvedKey = process.env[envVar];
