@@ -1,6 +1,6 @@
 {
   "name": "@cdoing/cli",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
@@ -13,8 +13,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@cdoing/ai": "0.1.4",
-    "@cdoing/core": "0.1.7",
+    "@cdoing/ai": "0.1.5",
+    "@cdoing/core": "0.1.8",
     "chalk": "^4.1.2",
     "commander": "^13.1.0",
     "figlet": "^1.11.0",
