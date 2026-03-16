@@ -4,6 +4,9 @@
 
 AI-powered coding assistant — **CLI + VS Code Extension**. Multi-provider (Anthropic, OpenAI, Google), agentic tool use, real-time streaming, permission-controlled sandboxing, and full codebase awareness.
 
+[![npm @cdoing/core](https://img.shields.io/npm/v/@cdoing/core?label=%40cdoing%2Fcore)](https://www.npmjs.com/package/@cdoing/core)
+[![npm @cdoing/cli](https://img.shields.io/npm/v/@cdoing/cli?label=%40cdoing%2Fcli)](https://www.npmjs.com/package/@cdoing/cli)
+
 ![Cdoing Agent — VS Code Extension](assets/image.png)
 
 ![Cdoing Agent — CLI](assets/cli.png)
