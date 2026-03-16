@@ -338,14 +338,14 @@ export function SessionView(props: {
       }
 
       case "/theme": {
-        const validThemes = ["dark", "light", "auto"] as const;
-        if (arg && validThemes.includes(arg as any)) {
-          setMode(arg as "dark" | "light" | "auto");
-          addMessage("system", `Theme switched to: ${arg}`);
-          toast("success", `Theme: ${arg}`);
+        const validModes = ["dark", "light"] as const;
+        if (arg && (validModes as readonly string[]).includes(arg)) {
+          setMode(arg as "dark" | "light");
+          addMessage("system", `Theme mode switched to: ${arg}`);
+          toast("success", `Mode: ${arg}`);
         } else {
-          addMessage("system", "Usage: /theme dark | light | auto");
-          toast("warning", "Usage: /theme dark | light | auto");
+          addMessage("system", "Usage: /theme dark | light  (or Ctrl+T for theme picker)");
+          toast("warning", "Usage: /theme dark | light");
         }
         break;
       }

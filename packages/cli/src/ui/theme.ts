@@ -98,7 +98,7 @@ export async function detectTerminalThemeAsync(): Promise<"dark" | "light"> {
 
 /** Background colors for each theme (used for terminal bg sync) */
 const themeBgHex: Record<string, string> = {
-  dark: "#111827",
+  dark: "#000000",
   light: "#ffffff",
 };
 
@@ -392,8 +392,9 @@ export function initTheme(): void {
     _currentThemeName = stored;
     _currentTheme = themes[stored];
   } else {
-    _currentThemeName = "auto";
-    _currentTheme = themes[detectTheme()];
+    // Default to dark theme
+    _currentThemeName = "dark";
+    _currentTheme = themes["dark"];
   }
 }
 
@@ -410,19 +411,15 @@ export async function initThemeAsync(options?: { syncTerminalBg?: boolean }): Pr
     _currentThemeName = stored;
     _currentTheme = themes[stored];
   } else {
-    _currentThemeName = "auto";
-    const detected = await detectTerminalThemeAsync();
-    _currentTheme = themes[detected];
+    // Default to dark theme
+    _currentThemeName = "dark";
+    _currentTheme = themes["dark"];
   }
 
   // Optionally set the terminal background to match
   if (options?.syncTerminalBg) {
-    const resolved = _currentThemeName === "auto"
-      ? (_currentTheme === lightTheme ? "light" : "dark")
-      : _currentThemeName;
-    if (resolved === "dark" || resolved === "light") {
-      setTerminalBackground(resolved);
-    }
+    const resolved: "dark" | "light" = _currentTheme === lightTheme ? "light" : "dark";
+    setTerminalBackground(resolved);
   }
 }
 

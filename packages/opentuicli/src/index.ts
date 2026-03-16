@@ -29,7 +29,7 @@ program
   .option("--mode <mode>", "Permission mode: ask, auto-edit, auto", "ask")
   .option("-r, --resume <id>", "Resume conversation by ID")
   .option("-c, --continue", "Continue most recent conversation")
-  .option("--theme <theme>", "Theme: dark, light, auto", "auto")
+  .option("--theme <theme>", "Theme: dark, light, auto", "dark")
   .argument("[prompt]", "Initial prompt")
   .action(async (prompt, opts) => {
     const { startTUI } = await import("./app");

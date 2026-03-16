@@ -1,5 +1,5 @@
 /**
- * Home Route — landing screen with logo, project info, and shortcuts
+ * Home Route — landing screen with logo, project info, shortcuts, and quick actions
  *
  * Responsive: adapts layout based on terminal dimensions.
  *   - Small terminals (< 60 cols or < 20 rows): compact layout, no logo
@@ -40,6 +40,8 @@ export function Home(props: {
   provider: string;
   model: string;
   workingDir: string;
+  themeId: string;
+  onAction?: (action: string) => void;
 }) {
   const { theme } = useTheme();
   const t = theme;
@@ -64,27 +66,31 @@ export function Home(props: {
   const logo = isSmall ? null : isMedium ? LOGO_COMPACT : LOGO_FULL;
   const logoWidth = isSmall ? 0 : isMedium ? LOGO_COMPACT_WIDTH : LOGO_FULL_WIDTH;
 
-  // Build info lines as right-aligned key-value pairs
+  // Build info lines
   const infoLines = [
     ["Provider", props.provider],
     ["Model", props.model],
+    ["Theme", props.themeId],
     ["Directory", shortDir()],
   ];
   const maxKeyLen = Math.max(...infoLines.map(([k]) => k.length));
 
-  const shortcuts = [
-    ["Enter", "Start session"],
-    ["Ctrl+N", "New session"],
-    ["Ctrl+P", "Switch model"],
-    ["Ctrl+S", "Browse sessions"],
-    ["Ctrl+C", "Quit"],
+  // Quick actions
+  const actions = [
+    { key: "Enter", label: "Start session", id: "start" },
+    { key: "Ctrl+P", label: "Switch model", id: "model" },
+    { key: "Ctrl+T", label: "Change theme", id: "theme" },
+    { key: "Ctrl+N", label: "New session", id: "new" },
+    { key: "Ctrl+S", label: "Browse sessions", id: "sessions" },
+    { key: "Ctrl+X", label: "Command palette", id: "commands" },
+    { key: "/setup", label: "Setup wizard", id: "setup" },
+    { key: "Ctrl+C", label: "Quit", id: "quit" },
   ];
-  const maxShortcutKey = Math.max(...shortcuts.map(([k]) => k.length));
+  const maxActionKey = Math.max(...actions.map((a) => a.key.length));
 
-  // Calculate vertical padding to roughly center content
-  // Content height: logo + subtitle + version + spacer + info(3) + spacer + shortcuts header + shortcuts(5) + spacer + footer
-  const contentHeight = (logo ? logo.length : 0) + 2 + 1 + 3 + 1 + 1 + shortcuts.length + 1 + 1;
-  const topPad = Math.max(1, Math.floor((h - contentHeight - 4) / 3)); // bias toward upper third
+  // Vertical padding
+  const contentHeight = (logo ? logo.length : 0) + 2 + 1 + infoLines.length + 1 + 1 + actions.length + 1 + 1;
+  const topPad = Math.max(1, Math.floor((h - contentHeight - 4) / 3));
 
   return (
     <box flexDirection="column" flexGrow={1}>
@@ -110,7 +116,7 @@ export function Home(props: {
 
       <text>{""}</text>
 
-      {/* Info section — aligned key: value */}
+      {/* Info section */}
       {infoLines.map(([key, val], i) => {
         const line = `${key.padStart(maxKeyLen)}  ${val}`;
         return (
@@ -122,14 +128,14 @@ export function Home(props: {
 
       <text>{""}</text>
 
-      {/* Shortcuts */}
+      {/* Actions */}
       <text fg={t.primary} attributes={TextAttributes.BOLD}>
-        {centerPad("Shortcuts", w)}
+        {centerPad("Actions", w)}
       </text>
-      {shortcuts.map(([key, desc], i) => {
-        const line = `${key.padStart(maxShortcutKey)}   ${desc}`;
+      {actions.map((action, i) => {
+        const line = `${action.key.padStart(maxActionKey)}   ${action.label}`;
         return (
-          <text key={`sc-${i}`} fg={t.textMuted}>
+          <text key={`act-${i}`} fg={t.textMuted}>
             {centerPad(line, w)}
           </text>
         );

@@ -28,18 +28,22 @@ import {
 import { AgentRunner, getDefaultModel, getApiKeyEnvVar } from "@cdoing/ai";
 import type { ModelConfig } from "@cdoing/ai";
 
-import { ThemeProvider, useTheme, detectTerminalTheme, restoreTerminalBackground } from "./context/theme";
+import { ThemeProvider, useTheme, detectTerminalTheme, restoreTerminalBackground, getThemeColors, setTerminalBackground } from "./context/theme";
 import { SDKProvider } from "./context/sdk";
 import { ToastProvider } from "./components/toast";
 import { Home } from "./routes/home";
 import { SessionView } from "./routes/session";
 import { StatusBar } from "./components/status-bar";
+import { SessionHeader } from "./components/session-header";
+import { SessionFooter } from "./components/session-footer";
 import { Sidebar } from "./components/sidebar";
 import { DialogModel } from "./components/dialog-model";
 import { DialogCommand } from "./components/dialog-command";
 import { DialogHelp } from "./components/dialog-help";
+import { DialogTheme } from "./components/dialog-theme";
 import { SessionBrowser } from "./components/session-browser";
 import { SetupWizard } from "./components/setup-wizard";
+import { DialogStatus } from "./components/dialog-status";
 import { setTerminalTitle, resetTerminalTitle } from "./lib/terminal-title";
 import type { Conversation } from "./lib/history";
 
@@ -61,7 +65,7 @@ export interface TUIOptions {
 // ── App Shell ────────────────────────────────────────────
 
 type Route = "home" | "session";
-type Dialog = "none" | "model" | "command" | "sessions" | "setup" | "help";
+type Dialog = "none" | "model" | "command" | "sessions" | "setup" | "help" | "theme" | "status";
 
 function AppShell(props: {
   options: TUIOptions;
@@ -70,7 +74,7 @@ function AppShell(props: {
   permissionManager: PermissionManager;
 }) {
   const dims = useTerminalDimensions();
-  const { theme, setMode } = useTheme();
+  const { theme, themeId, setMode, setThemeId } = useTheme();
   const t = theme;
 
   const [route, setRoute] = useState<Route>(props.options.prompt ? "session" : "home");
@@ -82,7 +86,7 @@ function AppShell(props: {
   const [tokens, setTokens] = useState<{ input: number; output: number } | undefined>();
   const [contextPercent, setContextPercent] = useState(0);
   const [activeTool, setActiveTool] = useState<string | undefined>();
-  const [showSidebar, setShowSidebar] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(true);
 
   // Mutable refs for agent rebuild
   const agentRef = useRef(props.agent);
@@ -156,9 +160,11 @@ function AppShell(props: {
     // Don't intercept keys when a dialog is open (except escape)
     if (dialog !== "none" && key.name !== "escape") return;
 
-    // Ctrl+C — quit
+    // Ctrl+C — graceful quit
     if (key.ctrl && key.name === "c") {
-      process.exit(0);
+      const cleanup = (globalThis as any).__cdoingCleanup;
+      if (cleanup) cleanup();
+      else process.exit(0);
     }
     // Ctrl+N — new session
     if (key.ctrl && key.name === "n") {
@@ -176,6 +182,10 @@ function AppShell(props: {
     // Ctrl+B — toggle sidebar
     if (key.ctrl && key.name === "b") {
       setShowSidebar((s) => !s);
+    }
+    // Ctrl+T — theme picker
+    if (key.ctrl && key.name === "t") {
+      setDialog((d) => (d === "theme" ? "none" : "theme"));
     }
     // Ctrl+X — command palette
     if (key.ctrl && key.name === "x") {
@@ -205,18 +215,28 @@ function AppShell(props: {
 
   return (
     <box width={dims.width} height={dims.height} flexDirection="column">
-      {/* Header */}
-      <box height={1} flexDirection="row">
-        <text fg={t.primary} attributes={TextAttributes.BOLD}>
-          {" cdoing "}
-        </text>
-        <text fg={t.textDim}>{"│ "}</text>
+      {/* Header bar */}
+      <box height={1} flexDirection="row" paddingX={1}>
+        <text fg={t.primary} attributes={TextAttributes.BOLD}>{"cdoing"}</text>
+        <text fg={t.border}>{" │ "}</text>
         <text fg={t.textMuted}>{model}</text>
-        <text fg={t.textDim}>{" │ "}</text>
+        <text fg={t.border}>{" │ "}</text>
         <text fg={status === "Error" ? t.error : status === "Processing..." ? t.warning : t.success}>
           {status}
         </text>
       </box>
+
+      {/* Session header (only in session route) */}
+      {route === "session" && (
+        <SessionHeader
+          title="Session"
+          provider={provider}
+          model={model}
+          tokens={tokens}
+          contextPercent={contextPercent}
+          status={status}
+        />
+      )}
 
       {/* Separator */}
       <box height={1}>
@@ -257,6 +277,7 @@ function AppShell(props: {
                 provider={provider}
                 model={model}
                 workingDir={workingDir}
+                themeId={themeId}
               />
             ) : (
               <SessionView
@@ -280,6 +301,7 @@ function AppShell(props: {
             contextPercent={contextPercent}
             activeTool={activeTool}
             status={status}
+            themeId={themeId}
           />
         )}
       </box>
@@ -289,17 +311,24 @@ function AppShell(props: {
         <text fg={t.border}>{"─".repeat(Math.max(dims.width, 40))}</text>
       </box>
 
-      {/* Status bar */}
-      <StatusBar
-        provider={provider}
-        model={model}
-        mode={props.options.mode}
-        workingDir={workingDir}
-        tokens={tokens}
-        contextPercent={contextPercent}
-        activeTool={activeTool}
-        isProcessing={status === "Processing..."}
-      />
+      {/* Footer: session footer in session route, status bar always */}
+      {route === "session" ? (
+        <SessionFooter
+          workingDir={workingDir}
+          isProcessing={status === "Processing..."}
+        />
+      ) : (
+        <StatusBar
+          provider={provider}
+          model={model}
+          mode={props.options.mode}
+          workingDir={workingDir}
+          tokens={tokens}
+          contextPercent={contextPercent}
+          activeTool={activeTool}
+          isProcessing={status === "Processing..."}
+        />
+      )}
 
       {/* Model picker dialog (overlay) */}
       {dialog === "model" && (
@@ -343,23 +372,36 @@ function AppShell(props: {
               case "theme:light":
                 setMode("light");
                 break;
-              case "theme:auto":
-                setMode("auto");
+              case "theme:picker":
+                setDialog("theme");
                 break;
               // Display
+              case "display:sidebar":
+                setShowSidebar((s) => !s);
+                break;
               case "display:timestamps":
               case "display:thinking":
                 // Display toggles — extend as needed
                 break;
               // System
+              case "system:status":
+                setDialog("status");
+                break;
               case "system:help":
                 setDialog("help");
                 break;
               case "system:doctor":
                 setStatus("Doctor");
                 break;
-              case "system:exit":
-                process.exit(0);
+              case "system:setup":
+                setDialog("setup");
+                break;
+              case "system:exit": {
+                const exit = (globalThis as any).__cdoingCleanup;
+                if (exit) exit();
+                else process.exit(0);
+                break;
+              }
             }
           }}
           onClose={() => setDialog("none")}
@@ -371,6 +413,18 @@ function AppShell(props: {
         <DialogHelp
           onClose={() => setDialog("none")}
         />
+      )}
+
+      {/* Theme picker dialog (overlay) */}
+      {dialog === "theme" && (
+        <DialogTheme
+          onClose={() => setDialog("none")}
+        />
+      )}
+
+      {/* Status dialog (overlay) */}
+      {dialog === "status" && (
+        <DialogStatus onClose={() => setDialog("none")} />
       )}
     </box>
   );
@@ -454,23 +508,24 @@ export async function startTUI(options: TUIOptions): Promise<void> {
     detectedMode = await detectTerminalTheme();
   }
 
+  // Set terminal background BEFORE clearing so it fills the entire screen
+  const resolvedMode: "dark" | "light" = options.theme === "light" ? "light"
+    : options.theme === "auto" ? (detectedMode || "dark")
+    : "dark";
+  const initialColors = getThemeColors("default", resolvedMode);
+  setTerminalBackground(initialColors.bg);
+
   console.clear();
 
   // Set terminal title on mount
   setTerminalTitle("cdoing");
 
-  // Restore terminal background and title on exit
-  const cleanup = () => {
-    resetTerminalTitle();
-    restoreTerminalBackground();
-    process.exit(0);
-  };
-
   const renderer = await createCliRenderer({
     useMouse: true,
     exitOnCtrlC: false,
   });
-  createRoot(renderer).render(
+  const root = createRoot(renderer);
+  root.render(
     <ThemeProvider mode={options.theme} detectedMode={detectedMode} syncTerminalBg>
       <ToastProvider>
         <AppShell
@@ -483,8 +538,23 @@ export async function startTUI(options: TUIOptions): Promise<void> {
     </ThemeProvider>
   );
 
+  // Graceful cleanup: unmount React, destroy renderer, restore terminal
+  let isCleaningUp = false;
+  const cleanup = () => {
+    if (isCleaningUp) return;
+    isCleaningUp = true;
+    try { root.unmount(); } catch {}
+    try { renderer.destroy(); } catch {}
+    resetTerminalTitle();
+    restoreTerminalBackground();
+    process.exit(0);
+  };
+
   process.on("SIGINT", cleanup);
   process.on("SIGTERM", cleanup);
+
+  // Expose cleanup globally so the keyboard handler can use it
+  (globalThis as any).__cdoingCleanup = cleanup;
 
   // Keep alive
   await new Promise(() => {});

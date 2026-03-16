@@ -23,23 +23,22 @@ const COMMANDS: Command[] = [
   // Session
   { id: "session:new", label: "New Session", shortcut: "Ctrl+N", category: "Session" },
   { id: "session:browse", label: "Browse Sessions", shortcut: "Ctrl+S", category: "Session" },
-  { id: "session:clear", label: "Clear", shortcut: "", category: "Session" },
+  { id: "session:clear", label: "Clear History", shortcut: "", category: "Session" },
 
-  // Model
+  // Model & Provider
   { id: "model:switch", label: "Switch Model", shortcut: "Ctrl+P", category: "Model" },
 
-  // Theme
-  { id: "theme:dark", label: "Dark", shortcut: "", category: "Theme" },
-  { id: "theme:light", label: "Light", shortcut: "", category: "Theme" },
-  { id: "theme:auto", label: "Auto", shortcut: "", category: "Theme" },
-
-  // Display
-  { id: "display:timestamps", label: "Toggle Timestamps", shortcut: "", category: "Display" },
-  { id: "display:thinking", label: "Toggle Thinking", shortcut: "", category: "Display" },
+  // Theme & Appearance
+  { id: "theme:picker", label: "Browse Themes", shortcut: "Ctrl+T", category: "Appearance" },
+  { id: "theme:dark", label: "Dark Mode", shortcut: "", category: "Appearance" },
+  { id: "theme:light", label: "Light Mode", shortcut: "", category: "Appearance" },
+  { id: "display:sidebar", label: "Toggle Sidebar", shortcut: "Ctrl+B", category: "Appearance" },
 
   // System
-  { id: "system:help", label: "Help", shortcut: "", category: "System" },
+  { id: "system:status", label: "System Status", shortcut: "", category: "System" },
+  { id: "system:help", label: "Help", shortcut: "F1", category: "System" },
   { id: "system:doctor", label: "Doctor", shortcut: "", category: "System" },
+  { id: "system:setup", label: "Setup Wizard", shortcut: "", category: "System" },
   { id: "system:exit", label: "Exit", shortcut: "Ctrl+C", category: "System" },
 ];
 
