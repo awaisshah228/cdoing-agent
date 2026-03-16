@@ -1,125 +1,92 @@
-# Cdoing Agent — VS Code Extension
+# Cdoing Agent — AI Coding Assistant for VS Code
 
-AI-powered coding assistant with multi-model support. Chat, instruct, and run commands right from VS Code.
+Open-source, multi-provider AI coding assistant that lives right inside VS Code. Chat with AI, edit code inline, get autocomplete suggestions, and run 20+ tools — all without leaving your editor.
+
+**Use your own API key** with Anthropic (Claude), OpenAI (GPT), Google (Gemini), Ollama, or any OpenAI-compatible provider.
+
+![Cdoing Agent — VS Code Extension](https://raw.githubusercontent.com/awaisshah228/cdoing-agent/main/assets/image.png)
+
+---
 
 ## Features
 
-- **Chat Panel** — Sidebar chat with streaming responses, tool call visualization, and quick actions
-- **Multi-Model** — Anthropic (Claude), OpenAI (GPT), Google (Gemini), or any OpenAI-compatible provider
-- **Custom Models** — Use Ollama, Together, Groq, LM Studio, or any OpenAI-compatible endpoint
-- **Code Actions** — Right-click to Explain, Refactor, Fix, or Send selection to chat
-- **6 Built-in Tools** — File read/write/edit, glob search, grep search, shell execution
-- **Permission Modes** — Ask, Auto-Edit, or Auto for tool execution control
+### Chat Panel
+- Sidebar chat or editor panel (beside your code)
+- Real-time streaming responses
+- Multi-tab conversations with independent state
+- Conversation history — resume past chats
+- Markdown rendering with syntax-highlighted code blocks
+- Copy button on code blocks
+- Clickable file paths in responses
 
-## Development Setup
+### Inline Edit (Cmd+I)
+- Select code, press `Cmd+I` / `Ctrl+I`, type your instruction
+- See inline diff preview before accepting changes
+- Works without opening the chat panel
 
-### Prerequisites
+### Inline Autocomplete
+- Ghost text suggestions as you type
+- Tab to accept, Esc to dismiss
+- Configurable model (use a faster model for autocomplete)
 
-- Node.js >= 18
-- VS Code >= 1.95.0
+### Code Actions
+- Right-click any selected code for quick actions:
+  - **Explain** — get a detailed explanation
+  - **Refactor** — improve code structure
+  - **Fix** — find and fix issues
+  - **Add to Chat** — send code as context
+  - **Send to Chat** — ask about selected code
 
-### Install & Build
+### 20+ Built-in Tools
+The AI agent can autonomously:
+- Read, write, and edit files with multi-strategy matching
+- Search your codebase (glob patterns, regex, FTS5 indexed search)
+- Run shell commands (with background mode for servers)
+- Fetch web pages and search the web
+- Spawn sub-agents for parallel tasks
+- Track tasks with built-in todo system
 
-```bash
-# From the monorepo root
-yarn install
+### Context Providers
+Attach rich context using `@` mentions in chat:
 
-# Build all packages (core → ai → extension)
-yarn build
+| Trigger | Description |
+|---------|-------------|
+| `@file <path>` | Include a specific file |
+| `@codebase <query>` | Search your entire codebase |
+| `@terminal` | Last terminal output |
+| `@tree` | Workspace file tree |
+| `@url <url>` | Fetch a web page |
+| `@git` | Branch, status, commits |
+| `@diff` | Current working changes |
+| `@open` | All open editor files |
+| `@problems` | Current file diagnostics |
+| `@clipboard` | Clipboard contents |
 
-# Or build just the extension
-cd packages/vscode-extension
-yarn build
-```
+### Permission System
+Control what the AI can do:
+- **Ask** — prompts before every tool that requires permission
+- **Auto-Edit** — auto-approves file edits, asks for shell commands
+- **Auto** — auto-approves everything (for trusted environments)
 
-### Run in Development
+### Multi-Provider Support
 
-```bash
-# Watch mode (auto-rebuilds on file changes)
-cd packages/vscode-extension
-yarn dev
-```
+| Provider | Models | Auth |
+|----------|--------|------|
+| **Anthropic** (default) | Claude Sonnet 4.6, Opus 4.6, Haiku 4.5 | API key or OAuth |
+| **OpenAI** | GPT-4o, GPT-4o mini, o3-mini | API key |
+| **Google** | Gemini 2.0 Flash, 1.5 Pro, 1.5 Flash | API key |
+| **Ollama** | LLaMA, Mistral, CodeLlama | Not required |
+| **Custom** | Any OpenAI-compatible API | Configurable |
 
-Then press **F5** in VS Code (or Run → Start Debugging) to launch the Extension Development Host.
+---
 
-### Testing the Extension
+## Getting Started
 
-#### Option 1: F5 Debug Launch
+### 1. Install the extension
+Search for **"Cdoing Agent"** in the VS Code Extensions panel, or install from the [Marketplace](https://marketplace.visualstudio.com/items?itemName=awaisshah228.cdoing-vscode).
 
-1. Open the monorepo root in VS Code
-2. Make sure all packages are built: `yarn build`
-3. Open `packages/vscode-extension/src/extension.ts`
-4. Press **F5** — this opens a new VS Code window with the extension loaded
-5. Click the Cdoing icon in the Activity Bar (left sidebar)
-6. Start chatting
-
-#### Option 2: Install as VSIX
-
-```bash
-cd packages/vscode-extension
-
-# Install vsce if you don't have it
-yarn global add @vscode/vsce
-
-# Package the extension
-vsce package
-
-# Install in VS Code
-code --install-extension cdoing-vscode-0.1.0.vsix
-```
-
-#### Option 3: Symlink for Quick Iteration
-
-```bash
-# Link the extension into VS Code's extensions directory
-ln -s $(pwd)/packages/vscode-extension ~/.vscode/extensions/cdoing-vscode
-
-# Restart VS Code
-# The extension will load from your source directory
-```
-
-### Debug Configuration
-
-Add this to `.vscode/launch.json` in the monorepo root:
-
-```json
-{
-  "version": "0.2.0",
-  "configurations": [
-    {
-      "name": "Run Cdoing Extension",
-      "type": "extensionHost",
-      "request": "launch",
-      "args": [
-        "--extensionDevelopmentPath=${workspaceFolder}/packages/vscode-extension"
-      ],
-      "outFiles": [
-        "${workspaceFolder}/packages/vscode-extension/dist/**/*.js"
-      ],
-      "preLaunchTask": "yarn: build"
-    }
-  ]
-}
-```
-
-## Configuration
-
-Open VS Code Settings and search for "Cdoing", or run **Cdoing: Open Settings** from the Command Palette.
-
-| Setting | Default | Description |
-|---|---|---|
-| `cdoing.provider` | `anthropic` | AI provider: anthropic, openai, google, custom |
-| `cdoing.model` | *(empty)* | Model name (empty = provider default) |
-| `cdoing.apiKey` | *(empty)* | API key (overrides env var) |
-| `cdoing.customBaseURL` | *(empty)* | Base URL for custom providers |
-| `cdoing.customProviderName` | *(empty)* | Name for custom provider |
-| `cdoing.temperature` | `0` | Model temperature (0–2) |
-| `cdoing.maxTokens` | `8096` | Max tokens in response |
-| `cdoing.permissionMode` | `ask` | Permission mode: ask, auto-edit, auto |
-
-### API Key Setup
-
-Set the API key for your provider as an environment variable:
+### 2. Set your API key
+Open VS Code Settings → search "Cdoing" → enter your API key. Or set an environment variable:
 
 ```bash
 # Anthropic
@@ -132,84 +99,76 @@ export OPENAI_API_KEY=sk-...
 export GOOGLE_API_KEY=AI...
 ```
 
-Or set it directly in VS Code settings (`cdoing.apiKey`).
+### 3. Start chatting
+Click the **Cdoing** icon in the Activity Bar (left sidebar) and start typing.
 
-### Using Custom Providers
+---
 
-For Ollama, Together, Groq, or any OpenAI-compatible API:
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Cmd+Shift+L` | Open chat as editor panel (beside code) |
+| `Cmd+I` / `Ctrl+I` | Inline edit selected code |
+| `Cmd+Shift+Enter` | Send selected code to chat |
+
+---
+
+## Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `cdoing.provider` | `anthropic` | AI provider |
+| `cdoing.model` | *(auto)* | Model name (empty = provider default) |
+| `cdoing.apiKey` | *(empty)* | API key (overrides env var) |
+| `cdoing.authMethod` | `apiKey` | Auth method: apiKey or oauth |
+| `cdoing.customBaseURL` | *(empty)* | Base URL for custom providers |
+| `cdoing.temperature` | `0` | Model temperature (0 = deterministic) |
+| `cdoing.maxTokens` | `8096` | Max tokens in response |
+| `cdoing.permissionMode` | `ask` | Permission mode: ask, auto-edit, auto |
+
+### Using Ollama or Local Models
 
 1. Set `cdoing.provider` to `custom`
-2. Set `cdoing.customBaseURL` to your endpoint (e.g., `http://localhost:11434/v1`)
-3. Set `cdoing.model` to the model name (e.g., `llama3`)
-4. Set `cdoing.apiKey` if required
+2. Set `cdoing.customBaseURL` to `http://localhost:11434/v1`
+3. Set `cdoing.model` to `llama3` (or your model)
+4. Leave `cdoing.apiKey` empty
 
-## Commands
+---
 
-| Command | Shortcut | Description |
-|---|---|---|
-| Cdoing: New Chat | `Cmd+Shift+L` | Start a new chat session |
-| Cdoing: Select Model | — | Pick provider and model |
-| Cdoing: Open Settings | — | Open extension settings |
-| Cdoing: Clear History | — | Clear chat history |
-| Cdoing: Send Selection | `Cmd+Shift+Enter` | Send selected code to chat |
-| Cdoing: Explain Selection | — | Explain selected code |
-| Cdoing: Refactor Selection | — | Refactor selected code |
-| Cdoing: Fix Selection | — | Fix issues in selected code |
-
-## Slash Commands (in Chat)
+## Slash Commands
 
 | Command | Description |
-|---|---|
+|---------|-------------|
 | `/help` | Show available commands |
-| `/clear` | Clear conversation history |
-| `/model` | Change model/provider |
-| `/settings` | Open extension settings |
+| `/clear` | Clear conversation |
+| `/new` | Start a new conversation |
+| `/compact` | Compress context |
+| `/plan` | Enter planning mode (read-only) |
+| `/history` | Browse past conversations |
+| `/effort` | Set response depth |
 
-## Project Structure
+---
 
-```
-packages/vscode-extension/
-├── package.json                 ← Extension manifest (commands, settings, views)
-├── esbuild.config.js            ← Dual-bundle build (extension + webview)
-├── tsconfig.json                ← TypeScript config with JSX support
-├── ARCHITECTURE.md              ← Detailed architecture documentation
-│
-├── src/
-│   ├── extension.ts             ← Activation: registers commands & webview provider
-│   ├── chat-panel-provider.ts   ← Bridge: webview ↔ agent communication
-│   ├── webview-content.ts       ← HTML generator that loads the React bundle
-│   │
-│   └── webview/                 ← React app (runs in browser sandbox)
-│       ├── index.tsx            ← Entry point
-│       ├── types.ts             ← Message protocol types
-│       ├── hooks/
-│       │   ├── useVsCode.ts     ← VS Code API singleton
-│       │   └── useChatState.ts  ← Chat state + message handling
-│       ├── components/
-│       │   ├── ChatPanel.tsx    ← Root component
-│       │   ├── Header.tsx       ← Model badge + action buttons
-│       │   ├── MessageList.tsx  ← Message rendering
-│       │   ├── MessageBubble.tsx← Single message
-│       │   ├── ToolCallBubble.tsx← Tool call display
-│       │   ├── InputArea.tsx    ← Input textarea
-│       │   └── Welcome.tsx      ← Welcome screen
-│       └── styles/
-│           └── chat.css         ← All styles
-│
-├── media/
-│   └── icon.svg                 ← Activity bar icon
-│
-└── dist/                        ← Build output
-    ├── extension.js             ← Extension host bundle (Node.js)
-    ├── webview.js               ← React webview bundle (browser)
-    └── webview.css              ← Extracted styles
-```
+## Open Source
 
-## How It Works
+Cdoing Agent is fully open source. The extension is part of the [cdoing-agent](https://github.com/awaisshah228/cdoing-agent) monorepo which also includes a CLI (`@cdoing/cli`) and core library (`@cdoing/core`).
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for a detailed technical breakdown of:
-- How the React webview communicates with the extension host
-- How the extension host calls into `@cdoing/ai` and `@cdoing/core`
-- The complete message protocol
-- The agentic loop and tool execution flow
-- Configuration hierarchy
+**Built with:** TypeScript, React, esbuild, LangChain
+
+**Packages:**
+- [`@cdoing/core`](https://www.npmjs.com/package/@cdoing/core) — tools, permissions, sandbox, hooks
+- [`@cdoing/cli`](https://www.npmjs.com/package/@cdoing/cli) — terminal-based AI assistant
+
+---
+
+## Feedback & Issues
+
+- [GitHub Issues](https://github.com/awaisshah228/cdoing-agent/issues)
+- [GitHub Repository](https://github.com/awaisshah228/cdoing-agent)
+
+---
+
+## License
+
+MIT

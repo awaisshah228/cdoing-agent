@@ -7,10 +7,39 @@
   "engines": {
     "vscode": "^1.95.0"
   },
+  "icon": "media/icon.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/awaisshah228/cdoing-agent"
+  },
+  "homepage": "https://github.com/awaisshah228/cdoing-agent",
+  "bugs": {
+    "url": "https://github.com/awaisshah228/cdoing-agent/issues"
+  },
+  "keywords": [
+    "ai",
+    "coding assistant",
+    "claude",
+    "openai",
+    "gpt",
+    "gemini",
+    "ollama",
+    "copilot",
+    "chat",
+    "agent",
+    "multi-model",
+    "code generation",
+    "refactor",
+    "inline edit",
+    "autocomplete"
+  ],
   "categories": [
     "AI",
     "Chat",
-    "Programming Languages"
+    "Programming Languages",
+    "Machine Learning",
+    "Other"
   ],
   "activationEvents": [
     "onStartupFinished"
