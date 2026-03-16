@@ -21,7 +21,7 @@
       </feMerge>
     </filter>
   </defs>
-  <rect width="256" height="256" rx="48" fill="url(#bg)"/>
+  <rect width="256" height="256" fill="url(#bg)"/>
   <g filter="url(#glow)">
     <path d="M88 80L44 128L88 176" stroke="url(#bracket)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
     <path d="M168 80L212 128L168 176" stroke="url(#bracket)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
