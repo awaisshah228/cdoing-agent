@@ -388,6 +388,12 @@ export class AgentRunner {
         if (msg.includes("401") || msg.includes("403") || msg.includes("400") || msg.includes("429") || msg.includes("404") || msg.includes("invalid_api_key") || msg.includes("authentication") || msg.includes("credit balance") || msg.includes("rate") || msg.includes("quota")) {
           // Try to extract a cleaner error message from JSON API responses
           const cleaned = AgentRunner.extractApiErrorMessage(lastError.message);
+          // Add hint for image-related 400 errors
+          const hasImages = allMessages.some((m) => Array.isArray(m.content) && (m.content as any[]).some((c: any) => c.type === "image" || c.type === "image_url"));
+          if (msg.includes("400") && hasImages) {
+            const hint = `\n\nHint: This error may be because the model "${this.modelName || this.provider}" does not support image/vision input. Try a vision-capable model (e.g. claude-sonnet-4, gpt-4o).`;
+            throw new Error((cleaned !== lastError.message ? cleaned : lastError.message) + hint);
+          }
           if (cleaned !== lastError.message) {
             throw new Error(cleaned);
           }
@@ -464,8 +470,10 @@ export class AgentRunner {
     this.isCancelled = false;
 
     // Build multimodal content if images are provided
+    // Uses standard image_url format for ALL providers — LangChain handles
+    // conversion to provider-native format (e.g. Anthropic's source block) internally.
     if (images && images.length > 0) {
-      const content: Array<{ type: string; text?: string; image_url?: { url: string } }> = [];
+      const content: Array<{ type: string; text?: string; image_url?: string | { url: string } }> = [];
       for (const img of images) {
         content.push({
           type: "image_url",

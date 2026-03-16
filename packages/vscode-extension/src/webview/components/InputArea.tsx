@@ -508,6 +508,22 @@ const ContextChip: React.FC<{ attachment: ContextAttachment; onRemove: () => voi
   const fileName = attachment.path.split("/").pop() || attachment.path;
   const langIcon = LANG_ICONS[attachment.language || ""] || "";
 
+  // Image attachments render as thumbnail previews (like Claude Code)
+  if (attachment.type === "image" && attachment.base64 && attachment.mimeType) {
+    const src = `data:${attachment.mimeType};base64,${attachment.base64}`;
+    return (
+      <div className="context-image-preview" title={attachment.path}>
+        <img src={src} alt={fileName} />
+        <span className="context-image-label">{fileName}</span>
+        <button className="context-image-remove" onClick={onRemove}>
+          <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      </div>
+    );
+  }
+
   let label = fileName;
   if (attachment.type === "selection" && attachment.startLine) {
     label = `${fileName}:${attachment.startLine}${attachment.endLine && attachment.endLine !== attachment.startLine ? `-${attachment.endLine}` : ""}`;

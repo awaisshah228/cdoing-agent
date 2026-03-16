@@ -52,6 +52,7 @@ export function getWebviewContent(
   <!-- Content-Security-Policy: only allow scripts with our nonce, styles from VS Code or inline -->
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none';
+             img-src data:;
              style-src ${webview.cspSource} 'unsafe-inline';
              script-src 'nonce-${nonce}';">
   <title>Cdoing Agent</title>

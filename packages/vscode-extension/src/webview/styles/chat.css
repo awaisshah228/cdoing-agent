@@ -1149,6 +1149,65 @@ pre.tool-io-block {
   color: var(--error-fg);
 }
 
+/* ═══ Image Preview in Input ═══ */
+.context-image-preview {
+  position: relative;
+  display: inline-block;
+  max-width: 80px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--subtle-border);
+  background: var(--surface);
+  transition: border-color var(--transition-fast);
+}
+.context-image-preview:hover {
+  border-color: var(--accent);
+}
+.context-image-preview img {
+  width: 100%;
+  max-height: 64px;
+  object-fit: cover;
+  display: block;
+}
+.context-image-label {
+  display: block;
+  padding: 2px 6px;
+  font-size: 9px;
+  color: var(--desc-fg);
+  font-family: var(--vscode-editor-font-family);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+  background: var(--surface);
+}
+.context-image-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+  border: none;
+  color: var(--fg);
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+  padding: 0;
+}
+.context-image-preview:hover .context-image-remove {
+  opacity: 0.8;
+}
+.context-image-remove:hover {
+  opacity: 1 !important;
+  color: var(--error-fg);
+  background: color-mix(in srgb, var(--bg) 95%, transparent);
+}
+
 /* ═══ Input Area ═══ */
 .input-area {
   padding: 8px 12px 12px;

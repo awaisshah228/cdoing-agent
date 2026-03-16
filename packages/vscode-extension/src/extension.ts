@@ -24,8 +24,11 @@ import { registerInlineEdit } from "./inline-edit";
 import { registerInlineAutocomplete } from "./inline-autocomplete";
 import type { ModelConfig } from "@cdoing/ai";
 
-/** Shared chat provider instance */
+/** Sidebar chat provider instance */
 let chatProvider: ChatPanelProvider;
+
+/** Editor panel chat provider (independent from sidebar) */
+let editorChatProvider: ChatPanelProvider | undefined;
 
 /** Editor panel instance (opened alongside code in the editor area) */
 let editorPanel: vscode.WebviewPanel | undefined;
@@ -96,8 +99,13 @@ export function activate(context: vscode.ExtensionContext) {
 
     // ── Open Chat Panel (right side, no file context — just project path) ──
     vscode.commands.registerCommand("cdoing.openChatPanel", () => {
+      const panelAlreadyOpen = !!editorPanel;
       openEditorPanel(context);
-      // No file/folder context — agent already knows the project path from system prompt
+      // If panel was already open, create a new independent tab
+      if (panelAlreadyOpen && editorChatProvider) {
+        editorChatProvider.createTab();
+        editorPanel!.title = "Cdoing Chat";
+      }
     }),
 
     // ── Focus Sidebar (when activity bar icon is clicked) ──
@@ -188,9 +196,10 @@ export function activate(context: vscode.ExtensionContext) {
       sendEditorSelection("Fix any issues in this code:\n\n");
     }),
 
-    // ── Fix Diagnostics (triggered from quick-fix lightbulb) ──
+// ── Fix Diagnostics (triggered from quick-fix lightbulb) ──
     vscode.commands.registerCommand("cdoing.fixDiagnostics", (filePath: string, lang: string, code: string, errors: string, line: number) => {
-      chatProvider.postMessage({
+      const provider = editorPanel ? editorChatProvider : chatProvider;
+      provider?.postMessage({
         type: "contextAttached",
         attachment: {
           type: "selection",
@@ -203,7 +212,7 @@ export function activate(context: vscode.ExtensionContext) {
       });
 
       const prompt = `Fix the following ${errors.includes("\n") ? "issues" : "issue"} in \`${filePath}\` around line ${line}:\n\n${errors}`;
-      chatProvider.postMessage({ type: "insertMessage", message: prompt });
+      provider?.postMessage({ type: "insertMessage", message: prompt });
 
       if (editorPanel) {
         editorPanel.reveal(vscode.ViewColumn.Beside);
@@ -226,6 +235,7 @@ export function activate(context: vscode.ExtensionContext) {
       const selection = editor.selection;
       const selectedText = editor.document.getText(selection);
       const fullContent = editor.document.getText();
+      const fileName = filePath.split("/").pop() || filePath;
 
       const panelAlreadyOpen = !!editorPanel;
       openEditorPanel(context);
@@ -249,10 +259,12 @@ export function activate(context: vscode.ExtensionContext) {
       const contextMsg = { type: "contextAttached", attachment };
 
       if (panelAlreadyOpen) {
-        const fileName = filePath.split("/").pop() || filePath;
-        chatProvider.createTab(fileName);
-        setTimeout(() => chatProvider.postMessage(contextMsg), 150);
+        // Create a new tab on the EDITOR panel provider (not sidebar)
+        editorChatProvider!.createTab(fileName);
+        editorPanel!.title = `Cdoing — ${fileName}`;
+        setTimeout(() => editorChatProvider!.postMessage(contextMsg), 150);
       } else {
+        editorPanel!.title = `Cdoing — ${fileName}`;
         pendingFileContext = contextMsg;
       }
     }),
@@ -448,12 +460,16 @@ class CdoingCodeActionProvider implements vscode.CodeActionProvider {
 
 /**
  * Opens the chat as an editor panel in column 2 (right of code).
+ * Each editor panel gets its own independent ChatPanelProvider instance.
  */
 function openEditorPanel(context: vscode.ExtensionContext) {
   if (editorPanel) {
     editorPanel.reveal(vscode.ViewColumn.Beside);
     return;
   }
+
+  // Create a dedicated chat provider for this editor panel (independent from sidebar)
+  editorChatProvider = new ChatPanelProvider(context);
 
   editorPanel = vscode.window.createWebviewPanel(
     "cdoing.editorPanel",
@@ -469,64 +485,77 @@ function openEditorPanel(context: vscode.ExtensionContext) {
   editorPanel.iconPath = vscode.Uri.joinPath(context.extensionUri, "media", "icon.svg");
   editorPanel.webview.html = getWebviewContent(editorPanel.webview, context.extensionUri);
 
-  // Bridge: editor panel ↔ chat provider
+  // Resolve the webview for the editor chat provider
+  editorChatProvider.resolveWebviewView(
+    {
+      webview: editorPanel.webview,
+      visible: true,
+      onDidChangeVisibility: new vscode.EventEmitter<boolean>().event,
+      onDidDispose: editorPanel.onDidDispose,
+      show: () => {},
+    } as any,
+    {} as any,
+    {} as any
+  );
+
+  // Handle messages from the editor panel webview
   editorPanel.webview.onDidReceiveMessage(async (message) => {
     switch (message.type) {
       case "sendMessage":
-        chatProvider.postMessage({ type: "startResponse" });
-        (chatProvider as any).handleUserMessage?.(message.text, message.context);
+        editorChatProvider!.postMessage({ type: "startResponse" });
+        (editorChatProvider as any).handleUserMessage?.(message.text, message.context);
         break;
       case "command":
         if (message.command === "openFile" && message.args?.[0]) {
-          (chatProvider as any).openFileInEditor?.(message.args[0]);
+          (editorChatProvider as any).openFileInEditor?.(message.args[0]);
         } else {
-          (chatProvider as any).handleCommand?.(message.command, message.args);
+          (editorChatProvider as any).handleCommand?.(message.command, message.args);
         }
         break;
       case "newTab":
-        chatProvider.createTab();
+        editorChatProvider!.createTab();
         break;
       case "switchTab":
         break;
       case "closeTab":
         break;
       case "pickFile":
-        (chatProvider as any).pickFileForContext?.();
+        (editorChatProvider as any).pickFileForContext?.();
         break;
       case "pickFolder":
-        (chatProvider as any).pickFolderForContext?.();
+        (editorChatProvider as any).pickFolderForContext?.();
         break;
       case "searchFiles":
-        (chatProvider as any).searchWorkspaceFiles?.(message.query);
+        (editorChatProvider as any).searchWorkspaceFiles?.(message.query);
         break;
       case "getActiveFile":
-        (chatProvider as any).sendActiveFileAsContext?.();
+        (editorChatProvider as any).sendActiveFileAsContext?.();
         break;
       case "listHistory":
-        (chatProvider as any).sendConversationList?.();
+        (editorChatProvider as any).sendConversationList?.();
         break;
       case "resumeConversation":
-        (chatProvider as any).resumeConversationById?.(message.id);
+        (editorChatProvider as any).resumeConversationById?.(message.id);
         break;
       case "deleteConversation":
-        (chatProvider as any).deleteConversation?.(message.id);
-        (chatProvider as any).sendConversationList?.();
+        (editorChatProvider as any).deleteConversation?.(message.id);
+        (editorChatProvider as any).sendConversationList?.();
         break;
       case "getConfig":
-        (chatProvider as any).sendFullConfig?.();
+        (editorChatProvider as any).sendFullConfig?.();
         break;
       case "updateConfig":
-        (chatProvider as any).updateConfigFromWebview?.(message.config);
+        (editorChatProvider as any).updateConfigFromWebview?.(message.config);
         break;
       case "openVscodeSettings":
         vscode.commands.executeCommand("workbench.action.openSettings", "cdoing");
         break;
       case "ready":
-        chatProvider.postMessage({ type: "configUpdated", provider: "anthropic", model: "" });
+        editorChatProvider!.postMessage({ type: "configUpdated", provider: "anthropic", model: "" });
         if (pendingFileContext) {
           setTimeout(() => {
             if (pendingFileContext) {
-              chatProvider.postMessage(pendingFileContext);
+              editorChatProvider!.postMessage(pendingFileContext);
               pendingFileContext = null;
             }
           }, 100);
@@ -535,16 +564,9 @@ function openEditorPanel(context: vscode.ExtensionContext) {
     }
   });
 
-  // Forward messages from provider to editor panel
-  const originalPostMessage = chatProvider.postMessage.bind(chatProvider);
-  chatProvider.postMessage = (msg: any) => {
-    originalPostMessage(msg);
-    editorPanel?.webview.postMessage(msg);
-  };
-
   editorPanel.onDidDispose(() => {
     editorPanel = undefined;
-    chatProvider.postMessage = originalPostMessage;
+    editorChatProvider = undefined;
   });
 }
 
@@ -681,7 +703,10 @@ function sendEditorSelection(prefix = "") {
   const filePath = vscode.workspace.asRelativePath(editor.document.uri);
   const lang = editor.document.languageId;
 
-  chatProvider.postMessage({
+  // Route to editor panel if open, otherwise sidebar
+  const provider = editorPanel ? editorChatProvider : chatProvider;
+
+  provider?.postMessage({
     type: "contextAttached",
     attachment: {
       type: "selection",
@@ -694,7 +719,7 @@ function sendEditorSelection(prefix = "") {
   });
 
   if (prefix) {
-    chatProvider.postMessage({ type: "insertMessage", message: prefix.trim() });
+    provider?.postMessage({ type: "insertMessage", message: prefix.trim() });
   }
 
   if (editorPanel) {

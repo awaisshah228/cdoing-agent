@@ -1061,6 +1061,21 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     this._onDidChangeState.fire();
     this.postTabMessage(tab.id, { type: "startResponse" });
 
+    // Warn if sending images to a potentially non-vision model
+    if (images.length > 0) {
+      const { provider, modelConfig } = this.getConfig();
+      const model = (modelConfig.model || "").toLowerCase();
+      const visionModels = ["claude", "gpt-4o", "gpt-4-turbo", "gpt-4-vision", "gemini", "llava", "pixtral"];
+      const isLikelyVision = provider === "anthropic" || provider === "openai" || provider === "google"
+        || visionModels.some(v => model.includes(v));
+      if (!isLikelyVision) {
+        this.postTabMessage(tab.id, {
+          type: "systemMessage",
+          text: `⚠️ Image attached — model \`${model || provider}\` may not support vision. If the model can't see the image, try a vision-capable model (Claude, GPT-4o, Gemini).`,
+        });
+      }
+    }
+
     // Ensure API key or OAuth token is available
     const { provider, modelConfig } = this.getConfig();
     if (!modelConfig.oauthToken && !modelConfig.apiKey) {
