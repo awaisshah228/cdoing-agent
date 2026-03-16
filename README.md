@@ -2,14 +2,23 @@
 
 > Built by [@awaisshah228](https://github.com/awaisshah228)
 
-Open-source, multi-provider AI coding assistant — **CLI + VS Code Extension**. Think Claude Code, but open source and multi-provider.
+Open-source, multi-provider AI coding assistant — **CLI + TUI + VS Code Extension**. Think Claude Code, but open source and multi-provider.
 
 [![npm @cdoing/core](https://img.shields.io/npm/v/@cdoing/core?label=%40cdoing%2Fcore)](https://www.npmjs.com/package/@cdoing/core)
 [![npm @cdoing/cli](https://img.shields.io/npm/v/@cdoing/cli?label=%40cdoing%2Fcli)](https://www.npmjs.com/package/@cdoing/cli)
+[![npm @cdoing/opentuicli](https://img.shields.io/npm/v/@cdoing/opentuicli?label=%40cdoing%2Fopentuicli)](https://www.npmjs.com/package/@cdoing/opentuicli)
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/awaisshah228.cdoing-vscode?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=awaisshah228.cdoing-vscode)
 [![CI](https://github.com/awaisshah228/cdoing-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/awaisshah228/cdoing-agent/actions/workflows/ci.yml)
 
+### VS Code Extension
+
 ![Cdoing Agent — VS Code Extension](assets/image.png)
+
+### Terminal UI (TUI)
+
+![Cdoing Agent — TUI](assets/tui.png)
+
+### CLI
 
 ![Cdoing Agent — CLI](assets/cli.png)
 
@@ -33,20 +42,38 @@ Open-source, multi-provider AI coding assistant — **CLI + VS Code Extension**.
 
 ## Install
 
-**VS Code Extension** — [Install from Marketplace](https://marketplace.visualstudio.com/items?itemName=awaisshah228.cdoing-vscode)
+### VS Code Extension
 
-**CLI** — Install from npm:
+[Install from Marketplace](https://marketplace.visualstudio.com/items?itemName=awaisshah228.cdoing-vscode) or search **"Cdoing"** in the VS Code Extensions tab.
+
+### CLI (Ink React TUI)
+
 ```bash
 npm install -g @cdoing/cli
 cdoing
 ```
 
-**From source:**
+### TUI (OpenTUI-powered terminal UI)
+
+```bash
+npm install -g @cdoing/opentuicli
+cdoing-tui
+```
+
+### From source
+
 ```bash
 git clone https://github.com/awaisshah228/cdoing-agent.git
 cd cdoing-agent
 yarn install && yarn build
+
+# Run CLI
 yarn start
+
+# Run TUI
+cd packages/opentuicli && node dist/index.js
+
+# Run VS Code extension — open packages/vscode-extension in VS Code, press F5
 ```
 
 On first run, the CLI launches an interactive setup wizard. Run `/setup` at any time to reconfigure.
@@ -58,9 +85,12 @@ On first run, the CLI launches an interactive setup wizard. Run `/setup` at any 
 | Package | npm | Description |
 |---------|-----|-------------|
 | [`@cdoing/core`](packages/core/) | [![npm](https://img.shields.io/npm/v/@cdoing/core)](https://www.npmjs.com/package/@cdoing/core) | Tools, permissions, sandbox, hooks, context providers, indexing |
-| [`@cdoing/ai`](packages/ai/) | — | Agent runner, LLM providers, context/token management |
+| [`@cdoing/ai`](packages/ai/) | [![npm](https://img.shields.io/npm/v/@cdoing/ai)](https://www.npmjs.com/package/@cdoing/ai) | Agent runner, LLM providers, context/token management |
 | [`@cdoing/cli`](packages/cli/) | [![npm](https://img.shields.io/npm/v/@cdoing/cli)](https://www.npmjs.com/package/@cdoing/cli) | Terminal UI (Ink + React), slash commands, setup wizard |
-| [`vscode-extension`](packages/vscode-extension/) | — | VS Code sidebar chat, inline edit, inline autocomplete |
+| [`@cdoing/opentuicli`](packages/opentuicli/) | [![npm](https://img.shields.io/npm/v/@cdoing/opentuicli)](https://www.npmjs.com/package/@cdoing/opentuicli) | OpenTUI-powered terminal chat UI |
+| [`cdoing-vscode`](packages/vscode-extension/) | [![VS Code](https://img.shields.io/visual-studio-marketplace/v/awaisshah228.cdoing-vscode)](https://marketplace.visualstudio.com/items?itemName=awaisshah228.cdoing-vscode) | VS Code sidebar chat, inline edit, inline autocomplete |
+| [`@cdoing/dashboard`](packages/dashboard/) | — | Next.js monitoring dashboard |
+| [`@cdoing/remote-coding-agent`](packages/remote-coding-agent/) | [![npm](https://img.shields.io/npm/v/@cdoing/remote-coding-agent)](https://www.npmjs.com/package/@cdoing/remote-coding-agent) | Headless remote agent runner |
 
 ---
 
@@ -74,6 +104,17 @@ cdoing --login                  # OAuth login (Claude Pro/Max)
 ```
 
 **Slash commands:** `/setup`, `/plan`, `/compact`, `/clear`, `/help`, `/history`, `/effort`, `/btw`
+
+---
+
+## TUI (OpenTUI)
+
+```bash
+cdoing-tui                      # Launch OpenTUI chat
+cdoing-tui --provider openai    # Use a different provider
+```
+
+The TUI provides a rich terminal UI powered by [OpenTUI](https://github.com/nichochar/opentui) with mouse support, scrollable panels, and a modern terminal experience.
 
 ---
 
@@ -179,18 +220,21 @@ See [OAuth Guide](docs/guides/OAUTH.md) for full details.
 ```
 cdoing-agent/
 ├── packages/
-│   ├── core/           # @cdoing/core — tools, permissions, sandbox, hooks, indexing
-│   ├── ai/             # @cdoing/ai — agent runner, LLM providers, context manager
-│   ├── cli/            # @cdoing/cli — Ink React TUI, Commander.js CLI
-│   └── vscode-extension/ # VS Code extension (React webview, esbuild)
-├── docs/               # Next.js documentation site
-│   └── guides/         # Detailed guides (OAuth, comparison, roadmap, CLI guide)
-└── .github/workflows/  # CI/CD (build + npm publish)
+│   ├── core/              # @cdoing/core — tools, permissions, sandbox, hooks, indexing
+│   ├── ai/                # @cdoing/ai — agent runner, LLM providers, context manager
+│   ├── cli/               # @cdoing/cli — Ink React TUI, Commander.js CLI
+│   ├── opentuicli/        # @cdoing/opentuicli — OpenTUI terminal chat
+│   ├── vscode-extension/  # VS Code extension (React webview, esbuild)
+│   ├── dashboard/         # Next.js monitoring dashboard
+│   └── remote-coding-agent/ # Headless remote agent
+├── docs/                  # Next.js documentation site
+│   └── guides/            # Detailed guides (OAuth, comparison, roadmap, CLI guide)
+└── .github/workflows/     # CI/CD (build + npm publish)
 ```
 
 **Build orchestration:** Turbo + Yarn workspaces
 
-**Dependency chain:** `core` ← `ai` ← `cli` / `vscode-extension`
+**Dependency chain:** `core` ← `ai` ← `cli` / `opentuicli` / `vscode-extension` / `remote-coding-agent`
 
 ---
 
@@ -202,6 +246,21 @@ yarn build          # Build all packages
 yarn start          # Run CLI
 yarn dev            # Watch mode
 ```
+
+---
+
+## Links
+
+| Resource | URL |
+|----------|-----|
+| GitHub | [github.com/awaisshah228/cdoing-agent](https://github.com/awaisshah228/cdoing-agent) |
+| VS Code Extension | [marketplace.visualstudio.com](https://marketplace.visualstudio.com/items?itemName=awaisshah228.cdoing-vscode) |
+| @cdoing/cli (npm) | [npmjs.com/@cdoing/cli](https://www.npmjs.com/package/@cdoing/cli) |
+| @cdoing/opentuicli (npm) | [npmjs.com/@cdoing/opentuicli](https://www.npmjs.com/package/@cdoing/opentuicli) |
+| @cdoing/core (npm) | [npmjs.com/@cdoing/core](https://www.npmjs.com/package/@cdoing/core) |
+| @cdoing/ai (npm) | [npmjs.com/@cdoing/ai](https://www.npmjs.com/package/@cdoing/ai) |
+| @cdoing/remote-coding-agent (npm) | [npmjs.com/@cdoing/remote-coding-agent](https://www.npmjs.com/package/@cdoing/remote-coding-agent) |
+| Documentation | [docs/](docs/) |
 
 ---
 
