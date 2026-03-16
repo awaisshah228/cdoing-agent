@@ -27,8 +27,8 @@ Thumbs.db
 # Claude
 .claude/
 
-# Yarn
-yarn.lock
+# VSIX
+*.vsix
 
 client
 continue/
