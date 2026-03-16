@@ -123,6 +123,8 @@ export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system" | "error";
   content: string;
+  /** Attached context (files, folders, selections, images) — rendered as chips in user messages */
+  context?: ContextAttachment[];
 }
 
 /** A tool step — merged call + result in a single entry */

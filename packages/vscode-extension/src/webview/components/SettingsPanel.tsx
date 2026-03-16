@@ -1,14 +1,14 @@
 /**
  * SettingsPanel.tsx — In-Panel Model & Config Settings
  *
- * A friendly settings overlay that lets users configure
- * provider, model, API key, and other options without
- * leaving the chat panel.
+ * Local state initializes ONCE from fresh config (stale config is cleared on open).
+ * OAuth status is read from Zustand store. Config-file API key detection included.
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import type { ExtensionConfig } from "../types";
 import { useVsCode } from "../hooks/useVsCode";
+import { useChatStore } from "../store/chatStore";
 
 interface SettingsPanelProps {
   config: ExtensionConfig | null;
@@ -46,36 +46,50 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onClose,
 }) => {
   const vscode = useVsCode();
-  const [provider, setProvider] = useState(config?.provider || "anthropic");
-  const [model, setModel] = useState(config?.model || "");
-  const [customProviderName, setCustomProviderName] = useState(config?.customProviderName || "");
-  const [customBaseURL, setCustomBaseURL] = useState(config?.customBaseURL || "");
-  const [apiKey, setApiKey] = useState(config?.apiKey || "");
-  // Default to oauth if no API key is set (matches auto-detect behavior)
-  const [authMethod, setAuthMethod] = useState(config?.authMethod || (config?.apiKey ? "apiKey" : "oauth"));
-  const [temperature, setTemperature] = useState(config?.temperature ?? 0);
-  const [maxTokens, setMaxTokens] = useState(config?.maxTokens ?? 8096);
-  const [permissionMode, setPermissionMode] = useState(config?.permissionMode || "ask");
-  const [sandboxEnabled, setSandboxEnabled] = useState(config?.sandboxEnabled ?? false);
-  const [sandboxMode, setSandboxMode] = useState(config?.sandboxMode || "regular");
-  const [indexerEmbeddingModel, setIndexerEmbeddingModel] = useState(config?.indexerEmbeddingModel || "");
-  const [indexerEmbeddingProvider, setIndexerEmbeddingProvider] = useState(config?.indexerEmbeddingProvider || "none");
-  const [indexerEmbeddingBaseUrl, setIndexerEmbeddingBaseUrl] = useState(config?.indexerEmbeddingBaseUrl || "");
-  const [indexerAutoIndex, setIndexerAutoIndex] = useState(config?.indexerAutoIndex ?? true);
 
-  // OAuth status
-  const [oauthStatus, setOauthStatus] = useState<"none" | "active" | "expired">("none");
-  const [oauthExpiresAt, setOauthExpiresAt] = useState<number | undefined>();
+  // OAuth status from store
+  const oauthStatus = useChatStore((s) => s.oauthStatus);
+  const oauthExpiresAt = useChatStore((s) => s.oauthExpiresAt);
 
-  // Update local state when config comes in
+  // Local form state — starts with defaults, populated from fresh config
+  const [provider, setProvider] = useState("anthropic");
+  const [model, setModel] = useState("");
+  const [customProviderName, setCustomProviderName] = useState("");
+  const [customBaseURL, setCustomBaseURL] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [authMethod, setAuthMethod] = useState(oauthStatus === "active" ? "oauth" : "apiKey");
+  const [temperature, setTemperature] = useState(0);
+  const [maxTokens, setMaxTokens] = useState(8096);
+  const [permissionMode, setPermissionMode] = useState("ask");
+  const [sandboxEnabled, setSandboxEnabled] = useState(false);
+  const [sandboxMode, setSandboxMode] = useState("regular");
+  const [indexerEmbeddingModel, setIndexerEmbeddingModel] = useState("");
+  const [indexerEmbeddingProvider, setIndexerEmbeddingProvider] = useState("none");
+  const [indexerEmbeddingBaseUrl, setIndexerEmbeddingBaseUrl] = useState("");
+  const [indexerAutoIndex, setIndexerAutoIndex] = useState(true);
+  const [hasConfigFileApiKey, setHasConfigFileApiKey] = useState(false);
+
+  const initializedRef = useRef(false);
+
+  // Initialize once from fresh config
+  // Initialize form from fresh config (once)
   useEffect(() => {
-    if (config) {
+    if (config && !initializedRef.current) {
+      initializedRef.current = true;
       setProvider(config.provider || "anthropic");
       setModel(config.model || "");
       setCustomProviderName(config.customProviderName || "");
       setCustomBaseURL(config.customBaseURL || "");
       setApiKey(config.apiKey || "");
-      setAuthMethod(config.authMethod || (config.apiKey ? "apiKey" : "oauth"));
+      setHasConfigFileApiKey(!!(config as any).hasConfigFileApiKey);
+      // Auth method: prefer whatever is actually active
+      if (oauthStatus === "active") {
+        setAuthMethod("oauth");
+      } else if (config.authMethod === "oauth") {
+        setAuthMethod("oauth");
+      } else {
+        setAuthMethod("apiKey");
+      }
       setTemperature(config.temperature ?? 0);
       setMaxTokens(config.maxTokens ?? 8096);
       setPermissionMode(config.permissionMode || "ask");
@@ -86,22 +100,16 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       setIndexerEmbeddingBaseUrl(config.indexerEmbeddingBaseUrl || "");
       setIndexerAutoIndex(config.indexerAutoIndex ?? true);
     }
-  }, [config]);
+  }, [config]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Listen for OAuth status messages
+  // If oauthStatus arrives late (after config init), auto-switch to OAuth tab
+  const prevOauthRef = useRef(oauthStatus);
   useEffect(() => {
-    function handler(event: MessageEvent) {
-      const msg = event.data;
-      if (msg.type === "oauthStatus") {
-        setOauthStatus(msg.status);
-        setOauthExpiresAt(msg.expiresAt);
-      }
+    if (oauthStatus === "active" && prevOauthRef.current !== "active") {
+      setAuthMethod("oauth");
     }
-    window.addEventListener("message", handler);
-    // Request current OAuth status on mount
-    vscode.postMessage({ type: "getOAuthStatus" } as any);
-    return () => window.removeEventListener("message", handler);
-  }, [vscode]);
+    prevOauthRef.current = oauthStatus;
+  }, [oauthStatus]);
 
   const handleStartOAuth = useCallback(() => {
     vscode.postMessage({ type: "startOAuth" } as any);
@@ -131,6 +139,13 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     });
     onClose();
   };
+
+  // Determine API key status text for the hint
+  const apiKeyHint = apiKey
+    ? "API key set in VS Code settings"
+    : hasConfigFileApiKey
+    ? "Using API key from ~/.cdoing/config.json"
+    : "No API key found. Set one here or in ~/.cdoing/config.json";
 
   return (
     <div className="settings-overlay">
@@ -221,11 +236,17 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     type="password"
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
-                    placeholder="Leave empty to use env variable"
+                    placeholder={hasConfigFileApiKey ? "Using key from ~/.cdoing/config.json" : "Enter API key or leave empty for env variable"}
                     style={{ marginTop: 8 }}
                   />
                   <span className="settings-hint">
-                    Overrides ANTHROPIC_API_KEY environment variable if set
+                    {hasConfigFileApiKey && !apiKey ? (
+                      <><span style={{ color: "var(--success)" }}>Active</span> — {apiKeyHint}</>
+                    ) : apiKey ? (
+                      <><span style={{ color: "var(--success)" }}>Active</span> — {apiKeyHint}</>
+                    ) : (
+                      apiKeyHint
+                    )}
                   </span>
                 </>
               ) : (
@@ -268,10 +289,16 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 type="password"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                placeholder="Leave empty to use env variable"
+                placeholder={hasConfigFileApiKey ? "Using key from ~/.cdoing/config.json" : "Enter API key or leave empty for env variable"}
               />
               <span className="settings-hint">
-                Overrides environment variable if set
+                {hasConfigFileApiKey && !apiKey ? (
+                  <><span style={{ color: "var(--success)" }}>Active</span> — Using API key from ~/.cdoing/config.json</>
+                ) : apiKey ? (
+                  <><span style={{ color: "var(--success)" }}>Active</span> — API key set in VS Code settings</>
+                ) : (
+                  "No API key found. Set one here or in ~/.cdoing/config.json"
+                )}
               </span>
             </div>
           )}

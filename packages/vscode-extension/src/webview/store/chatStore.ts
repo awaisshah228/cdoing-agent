@@ -60,11 +60,15 @@ interface ChatState {
     message: string;
     hasProject: boolean;
   } | null;
+
+  // OAuth status (captured from extension host, survives SettingsPanel mount/unmount)
+  oauthStatus: "none" | "active" | "expired";
+  oauthExpiresAt: number | undefined;
 }
 
 interface ChatActions {
   // Entry mutators
-  addUserMessage: (text: string) => void;
+  addUserMessage: (text: string, context?: ContextAttachment[]) => void;
   addSystemMessage: (text: string, role?: "system" | "error") => void;
   addToolCall: (name: string, input: string, description?: string) => void;
   addToolResult: (name: string, result: string, isError: boolean) => void;
@@ -217,12 +221,19 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
     showSettings: false,
     extensionConfig: null,
     permissionRequest: null,
+    oauthStatus: "none",
+    oauthExpiresAt: undefined,
 
     // ── Entry Mutators ──────────────────────────────
 
-    addUserMessage: (text) => {
+    addUserMessage: (text, context) => {
       set((s) => ({
-        entries: [...s.entries, { id: nextId(), role: "user" as const, content: text }],
+        entries: [...s.entries, {
+          id: nextId(),
+          role: "user" as const,
+          content: text,
+          ...(context && context.length > 0 ? { context } : {}),
+        }],
       }));
     },
 
@@ -301,17 +312,7 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
 
     sendMessage: (text, context) => {
       if (!text.trim() && (!context || context.length === 0)) return;
-      let displayText = text;
-      if (context && context.length > 0) {
-        const labels = context.map((c) => {
-          const name = c.path.split("/").pop() || c.path;
-          if (c.type === "selection" && c.startLine)
-            return `[${name}:${c.startLine}${c.endLine ? `-${c.endLine}` : ""}]`;
-          return `[${name}]`;
-        });
-        displayText = labels.join(" ") + (text ? "\n" + text : "");
-      }
-      get().addUserMessage(displayText);
+      get().addUserMessage(text, context);
       getVsCode().postMessage({
         type: "sendMessage",
         text,
@@ -388,8 +389,10 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
     // ── Settings ────────────────────────────────────
 
     openSettings: () => {
+      // Clear stale config so SettingsPanel waits for fresh data
+      set({ showSettings: true, extensionConfig: null });
       getVsCode().postMessage({ type: "getConfig" });
-      set({ showSettings: true });
+      getVsCode().postMessage({ type: "getOAuthStatus" });
     },
 
     closeSettings: () => set({ showSettings: false }),
@@ -540,6 +543,13 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
 
         case "configData":
           set({ extensionConfig: (msg as any).config || null });
+          break;
+
+        case "oauthStatus":
+          set({
+            oauthStatus: (msg as any).status || "none",
+            oauthExpiresAt: (msg as any).expiresAt,
+          });
           break;
 
         case "conversationList":

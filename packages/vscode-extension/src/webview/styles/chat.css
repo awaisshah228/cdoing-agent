@@ -312,6 +312,103 @@ body {
   font-weight: 600;
 }
 
+/* ═══ Message Context Chips (attached files in user messages) ═══ */
+.msg-context-area {
+  padding-left: 30px;
+  margin-bottom: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.msg-context-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.msg-context-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px 4px 7px;
+  background: var(--surface);
+  border: 1px solid var(--subtle-border);
+  border-radius: var(--radius-md);
+  font-size: 11.5px;
+  color: var(--fg);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  max-width: 260px;
+}
+.msg-context-chip:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.msg-context-chip-icon {
+  display: flex;
+  align-items: center;
+  color: var(--desc-fg);
+  flex-shrink: 0;
+}
+.msg-context-chip:hover .msg-context-chip-icon {
+  color: var(--accent);
+}
+
+.msg-context-chip-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.msg-context-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--vscode-editor-font-family);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+/* ═══ Image Thumbnails in Messages ═══ */
+.msg-image-thumb {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 200px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--subtle-border);
+  background: var(--surface);
+  transition: border-color var(--transition-fast);
+}
+.msg-image-thumb:hover {
+  border-color: var(--accent);
+}
+
+.msg-image-thumb img {
+  width: 100%;
+  max-height: 160px;
+  object-fit: cover;
+  display: block;
+}
+
+.msg-image-thumb-label {
+  padding: 4px 8px;
+  font-size: 10px;
+  color: var(--desc-fg);
+  font-family: var(--vscode-editor-font-family);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ═══ System & Error Messages ═══ */
 .message-row.system {
   background: transparent;

@@ -935,22 +935,40 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   /** Send full config to the webview for the settings panel */
   private sendFullConfig() {
     const vsConfig = vscode.workspace.getConfiguration("cdoing");
+    const provider = vsConfig.get<string>("provider") || "anthropic";
+
+    // Check all API key sources: VS Code setting, config file, env var
+    const vsApiKey = vsConfig.get<string>("apiKey") || "";
+    const configApiKey = this.loadApiKeyFromConfig(provider) || "";
+    // Auto-detect auth method
+    let authMethod = vsConfig.get<string>("authMethod") || "";
+    if (!authMethod) {
+      const oauthInfo = getOAuthStatus(provider);
+      if (oauthInfo.status === "active") {
+        authMethod = "oauth";
+      } else {
+        authMethod = "apiKey";
+      }
+    }
+
     this.postMessage({
       type: "configData" as any,
       config: {
-        provider: vsConfig.get<string>("provider") || "anthropic",
+        provider,
         model: vsConfig.get<string>("model") || "",
         customProviderName: vsConfig.get<string>("customProviderName") || "",
         customBaseURL: vsConfig.get<string>("customBaseURL") || "",
-        apiKey: vsConfig.get<string>("apiKey") || "",
-        authMethod: vsConfig.get<string>("authMethod") || "apiKey",
+        apiKey: vsApiKey,
+        authMethod,
         temperature: vsConfig.get<number>("temperature") ?? 0,
         maxTokens: vsConfig.get<number>("maxTokens") ?? 8096,
         permissionMode: vsConfig.get<string>("permissionMode") || "ask",
+        // Extra info for settings panel to show correct status
+        hasConfigFileApiKey: !!configApiKey,
       },
     });
     // Also send OAuth status
-    this.postMessage({ type: "oauthStatus", ...getOAuthStatus() } as any);
+    this.postMessage({ type: "oauthStatus", ...getOAuthStatus(provider) } as any);
   }
 
   /** Update config from the webview settings panel */
