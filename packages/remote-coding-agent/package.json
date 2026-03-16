@@ -1,6 +1,6 @@
 {
   "name": "@cdoing/remote-coding-agent",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Multi-channel remote coding agent — control your AI coding assistant from Telegram, Discord, WhatsApp, or any channel",
   "main": "dist/index.js",
@@ -15,8 +15,8 @@
     "start": "node dist/cli.js"
   },
   "dependencies": {
-    "@cdoing/core": "*",
-    "@cdoing/ai": "*",
+    "@cdoing/core": "0.1.6",
+    "@cdoing/ai": "0.1.3",
     "express": "^4.21.0",
     "helmet": "^8.0.0",
     "cors": "^2.8.5",
@@ -36,6 +36,15 @@
     "@types/react": "^18.2.0",
     "typescript": "^5.8.2"
   },
-  "keywords": ["remote", "coding-agent", "telegram", "discord", "ai", "cli", "bot", "multi-channel"],
+  "keywords": [
+    "remote",
+    "coding-agent",
+    "telegram",
+    "discord",
+    "ai",
+    "cli",
+    "bot",
+    "multi-channel"
+  ],
   "license": "MIT"
 }
