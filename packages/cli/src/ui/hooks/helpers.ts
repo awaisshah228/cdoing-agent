@@ -44,7 +44,7 @@ export function getContextWindowMax(provider: string, model: string): number {
  * Emoji icon shown next to each tool name in the terminal scrollback.
  * Keeping this as a plain object (not a Map) makes it easy to extend.
  */
-const TOOL_ICONS: Record<string, string> = {
+export const TOOL_ICONS: Record<string, string> = {
   file_read:       "📖",
   file_write:      "✏️ ",
   file_edit:       "🔧",
@@ -228,6 +228,7 @@ export function getHelpText(): string {
     "  /ls             — browse sessions (interactive TUI)",
     "  /history        — list saved conversations (text)",
     "  /resume <id>    — resume a conversation",
+    "  /view <id>      — view messages in a conversation",
     "  /fork [id]      — fork current or given conversation",
     "  /delete <id>    — delete a conversation",
     "  /config         — view config",

@@ -38,6 +38,9 @@ import * as fs from "fs";
 import chalk from "chalk";
 import { getDefaultModel } from "@cdoing/ai";
 import type { ModelConfig } from "@cdoing/ai";
+import {
+  ShellExecTool,
+} from "@cdoing/core";
 import type {
   ToolRegistry,
   PermissionManager,
@@ -74,10 +77,11 @@ import { setTheme, getThemeName, getAvailableThemes } from "../theme";
 import { useAgent }            from "./useAgent";
 import {
   getContextWindowMax,
-  printToolCall,
-  printToolResult,
   getHelpText,
   getConversationListText,
+  TOOL_ICONS,
+  getToolHint,
+  printFileDiff,
 } from "./helpers";
 
 import type { ChatMessage, ToolActivity, UsageInfo, ContextUsage, BackgroundJob } from "../types";
@@ -318,10 +322,7 @@ export function useChat(opts: UseChatOptions) {
 
       // ── Optimistic UI update ─────────────────────────────────────────────
       setIsProcessing(true);
-      setMessages((prev) => [
-        ...prev,
-        { id: nextId(), role: "user", content: text },
-      ]);
+      setMessages((prev) => [...prev, { id: nextId(), role: "user", content: text }]);
       addMessage(conversationRef.current, "user", text);
 
       const ctrl = new AbortController();
@@ -341,7 +342,10 @@ export function useChat(opts: UseChatOptions) {
        */
       function flushStreamingText(): void {
         const pending = fullReply.slice(flushedPos);
-        if (pending.trim()) process.stdout.write("\n" + pending + "\n");
+        if (pending.trim()) {
+          // "shell" role = no separator. Only onComplete uses "assistant" for final separator.
+          setMessages((prev) => [...prev, { id: nextId(), role: "shell" as const, content: pending }]);
+        }
         flushedPos = fullReply.length;
         setStreamingContent("");
       }
@@ -351,38 +355,61 @@ export function useChat(opts: UseChatOptions) {
 
         onToken: (token) => {
           fullReply += token;
-          // Show only the part not yet flushed to stdout
-          setStreamingContent(fullReply.slice(flushedPos));
+          const unflushed = fullReply.slice(flushedPos);
+          // Flush completed lines to Static immediately.
+          // Only keep the last partial line in the dynamic area.
+          // This prevents the dynamic area from growing tall and
+          // causing scroll-to-top when cleared on completion.
+          const lastNewline = unflushed.lastIndexOf("\n");
+          if (lastNewline >= 0) {
+            const completedLines = unflushed.slice(0, lastNewline);
+            if (completedLines.trim()) {
+              // Use "shell" role for streamed chunks — no separator line.
+              // Only the final chunk in onComplete uses "assistant" (with separator).
+              setMessages((prev) => [...prev, {
+                id: nextId(), role: "shell" as const, content: completedLines,
+              }]);
+            }
+            flushedPos += lastNewline + 1;
+            setStreamingContent(fullReply.slice(flushedPos));
+          } else {
+            setStreamingContent(unflushed);
+          }
         },
 
         onToolCall: (name, input) => {
           flushStreamingText();
           lastToolInputRef.current = input;
-          printToolCall(name, input);          // permanent stdout line
+          const icon = TOOL_ICONS[name] || "⚡";
+          const hint = getToolHint(name, input);
+          setMessages((prev) => [...prev, {
+            id: nextId(), role: "system",
+            content: chalk.yellow(`  ▶ ${icon} ${name}`) + (hint ? chalk.gray("  " + hint) : ""),
+          }]);
           const preview = JSON.stringify(input).substring(0, 60);
           setToolActivity({ name, preview, status: "running" });
         },
 
         onToolResult: (_name, _result, isError) => {
-          printToolResult(_name, isError, lastToolInputRef.current);
+          const icon = TOOL_ICONS[_name] || "⚡";
+          const line = isError
+            ? chalk.red(`  ✗ ${icon} ${_name}`)
+            : chalk.green("  ✓ ") + chalk.cyan(`${icon} ${_name}`);
+          setMessages((prev) => [...prev, { id: nextId(), role: "system", content: line }]);
+          // Show diff for file edits/writes
+          if (!isError && (_name === "file_edit" || _name === "file_write")) {
+            printFileDiff(_name, lastToolInputRef.current);
+          }
           lastToolInputRef.current = {};
           setToolActivity(null);
         },
 
         onComplete: () => {
-          // Commit only the portion NOT already flushed to stdout
           const remaining = fullReply.slice(flushedPos);
           if (remaining.trim()) {
-            setMessages((prev) => [
-              ...prev,
-              { id: nextId(), role: "assistant", content: remaining },
-            ]);
+            setMessages((prev) => [...prev, { id: nextId(), role: "assistant", content: remaining }]);
             addMessage(conversationRef.current, "assistant", remaining);
-          } else if (flushedPos > 0) {
-            // All text was flushed — print a separator to mark the end
-            process.stdout.write(chalk.gray("─".repeat(40)) + "\n");
           }
-          // Save the full reply to the conversation for the non-flushed case
           if (flushedPos === 0 && fullReply.trim()) {
             addMessage(conversationRef.current, "assistant", fullReply);
           }
@@ -390,6 +417,18 @@ export function useChat(opts: UseChatOptions) {
           setStreamingContent("");
           setIsProcessing(false);
           abortRef.current = null;
+
+          // Kill all background processes spawned during this agent run
+          const shellTool = opts.toolRegistry.get("shell_exec") as ShellExecTool | undefined;
+          if (shellTool?.getProcessManager) {
+            const killed = shellTool.getProcessManager().killAll();
+            if (killed > 0) {
+              setMessages((prev) => [...prev, {
+                id: nextId(), role: "system",
+                content: chalk.yellow(`[auto-killed ${killed} background process${killed > 1 ? "es" : ""}]`),
+              }]);
+            }
+          }
 
           // Auto-generate a title after the first exchange
           const conv = conversationRef.current;
@@ -484,6 +523,35 @@ export function useChat(opts: UseChatOptions) {
           // Open the interactive TUI session browser (App.tsx renders it)
           setShowSessionBrowser(true);
           return null;
+
+        case "/view": {
+          if (!arg) return "Usage: /view <id>  — view messages in a conversation";
+          const viewConv = loadConversation(arg);
+          if (!viewConv) return `Conversation not found: ${arg}`;
+          const viewMsgs = viewConv.messages.filter((m) => m.role !== "tool");
+          if (viewMsgs.length === 0) return `No messages in conversation: ${arg}`;
+          const lines: string[] = [
+            chalk.cyan.bold(`💬 ${viewConv.title}`),
+            chalk.gray(`   ${viewMsgs.length} messages  ·  ${viewConv.provider}/${viewConv.model}`),
+            chalk.gray("─".repeat(60)),
+          ];
+          for (const m of viewMsgs) {
+            const time = new Date(m.timestamp).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+            const isUser = m.role === "user";
+            const label = isUser ? chalk.green.bold("❯ You") : chalk.cyan.bold("◆ Assistant");
+            const content = m.content.trim();
+            // Truncate very long messages
+            const display = content.length > 500 ? content.substring(0, 497) + "..." : content;
+            lines.push(`${label}  ${chalk.gray(time)}`);
+            for (const line of display.split("\n").slice(0, 8)) {
+              lines.push(`    ${line}`);
+            }
+            if (display.split("\n").length > 8) lines.push(chalk.gray("    ..."));
+          }
+          lines.push(chalk.gray("─".repeat(60)));
+          lines.push(chalk.gray(`Use /resume ${arg} to continue this conversation.`));
+          return lines.join("\n");
+        }
 
         case "/resume": {
           if (!arg) return "Usage: /resume <id>";
@@ -887,8 +955,17 @@ export function useChat(opts: UseChatOptions) {
           return oauthStatus();
 
         case "/exit":
-        case "/quit":
+        case "/quit": {
+          // Kill all background processes before exiting
+          const shellTool = opts.toolRegistry.get("shell_exec") as ShellExecTool | undefined;
+          if (shellTool?.getProcessManager) {
+            const killed = shellTool.getProcessManager().killAll();
+            if (killed > 0) {
+              process.stdout.write(chalk.yellow(`[killed ${killed} background process${killed > 1 ? "es" : ""}]\n`));
+            }
+          }
           process.exit(0);
+        }
 
         default:
           return `Unknown command: ${cmd}\nType /help for available commands.`;

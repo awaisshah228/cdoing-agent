@@ -16,6 +16,11 @@ export { SubAgentManager } from "./tools/sub-agent-manager";
 export type { SubAgentStatus, SubAgentEntry } from "./tools/sub-agent-manager";
 export { SubAgentStatusTool } from "./tools/sub-agent-status";
 export { SubAgentTerminateTool } from "./tools/sub-agent-terminate";
+
+// Background process management (used internally by ShellExecTool)
+export { ProcessManager } from "./tools/process-manager";
+export type { ProcessStatus, ProcessEntry } from "./tools/process-manager";
+
 export { TodoTool } from "./tools/todo";
 export { SystemInfoTool } from "./tools/system-info";
 export { MultiEditTool } from "./tools/multi-edit";

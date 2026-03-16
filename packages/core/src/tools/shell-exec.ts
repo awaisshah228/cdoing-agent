@@ -4,25 +4,9 @@ import type { BaseTool, ToolDefinition, ToolResult } from "./types";
 import type { SandboxManager } from "../sandbox";
 import type { PermissionManager } from "../permissions";
 import { extractShellPaths } from "../utils/shell-paths";
+import { ProcessManager } from "./process-manager";
 
 const IS_WINDOWS = os.platform() === "win32";
-
-/**
- * Get the shell command and args for the current platform.
- * - Windows: PowerShell (more capable than cmd.exe)
- * - macOS: user's shell with login flag (loads .zshrc/.bashrc for PATH, nvm, pyenv, etc.)
- * - Linux: user's shell with login flag
- */
-function getShellCommand(command: string): { shell: string; args: string[] } {
-  if (IS_WINDOWS) {
-    return {
-      shell: "powershell.exe",
-      args: ["-NoLogo", "-ExecutionPolicy", "Bypass", "-Command", command],
-    };
-  }
-  const userShell = process.env.SHELL || (os.platform() === "darwin" ? "/bin/zsh" : "/bin/bash");
-  return { shell: userShell, args: ["-l", "-c", command] };
-}
 
 /** For exec() — the shell to use */
 const SHELL = IS_WINDOWS ? "powershell.exe" : process.env.SHELL || "/bin/sh";
@@ -87,23 +71,36 @@ export class ShellExecTool implements BaseTool {
   definition: ToolDefinition = {
     name: "shell_exec",
     description:
-      `Execute a shell command and return its output. Use for builds, tests, git commands, etc. Requires user permission before execution.
+      `Execute a shell command and return its output. Use for builds, tests, git commands, etc.
 
-All file paths in commands are checked against permission rules:
-- Read paths (cat, less, grep, etc.) are checked against Read deny rules.
-- Write paths (cp, mv, redirect >, tee, etc.) are checked against Edit deny rules.
-- Delete paths (rm, rmdir, unlink, etc.) are checked against Delete deny rules.
-- Destructive commands are flagged as high-risk in the permission prompt.
+Background mode: Set background=true to spawn a detached process (server, watcher). Returns a process_id. Use action="status" to read output, action="kill" to stop it, action="kill_all" to cleanup all.
 
-Commands are also subject to sandbox restrictions.`,
+Actions:
+- "run" (default): Execute command and wait for result.
+- "status": Check a background process. Requires process_id (or omit for all).
+- "kill": Kill a background process by process_id.
+- "kill_all": Kill all running background processes.`,
     inputSchema: {
       type: "object",
       properties: {
-        command: { type: "string", description: "The shell command to execute" },
+        command: { type: "string", description: "The shell command to execute (required for run/background)" },
         timeout: { type: "number", description: "Timeout in ms. Default: 120000" },
         background: {
           type: "boolean",
-          description: "Run in background. Returns immediately with PID. Use for servers/watchers. Default: false.",
+          description: "Run as detached background process. Returns process_id for later status/kill. Use for servers, watchers, dev tools. Default: false.",
+        },
+        action: {
+          type: "string",
+          enum: ["run", "status", "kill", "kill_all"],
+          description: "Action to perform. 'run' (default): execute command. 'status': check background process. 'kill': stop background process. 'kill_all': stop all background processes.",
+        },
+        process_id: {
+          type: "string",
+          description: "Background process ID (from background=true). Required for action=status/kill.",
+        },
+        wait_for_ready: {
+          type: "number",
+          description: "When background=true, ms to wait before returning (lets process start). Default: 1000.",
         },
         env_vars: {
           type: "object",
@@ -119,11 +116,16 @@ Commands are also subject to sandbox restrictions.`,
           description: "Set to true to run this command outside the sandbox. Requires permission approval.",
         },
       },
-      required: ["command"],
+      required: [],
     },
     requiresPermission: true,
     permissionMessage: (input) => {
+      const action = String(input.action || "run");
+      if (action === "status") return `Check background process status`;
+      if (action === "kill") return `Kill background process: ${input.process_id || "unknown"}`;
+      if (action === "kill_all") return `Kill all background processes`;
       const cmd = String(input.command || "");
+      if (input.background) return `Start background process: ${cmd.slice(0, 200)}`;
       if (DESTRUCTIVE_PATTERNS.some((p) => p.test(cmd))) {
         return `⚠ DESTRUCTIVE command: ${cmd}`;
       }
@@ -134,15 +136,50 @@ Commands are also subject to sandbox restrictions.`,
   private workingDir: string;
   private sandboxManager?: SandboxManager;
   private permissionManager?: PermissionManager;
+  private processManager: ProcessManager;
 
-  constructor(workingDir: string, sandboxManager?: SandboxManager, permissionManager?: PermissionManager) {
+  constructor(workingDir: string, sandboxManager?: SandboxManager, permissionManager?: PermissionManager, processManager?: ProcessManager) {
     this.workingDir = workingDir;
     this.sandboxManager = sandboxManager;
     this.permissionManager = permissionManager;
+    this.processManager = processManager || new ProcessManager();
+  }
+
+  /** Get the process manager (for cleanup on chat exit) */
+  getProcessManager(): ProcessManager {
+    return this.processManager;
   }
 
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
+    const action = (input.action as string) || "run";
+
+    // ── Action: status — check background process ───────────────────────────
+    if (action === "status") {
+      return this.handleStatus(input);
+    }
+
+    // ── Action: kill — stop a background process ────────────────────────────
+    if (action === "kill") {
+      return this.handleKill(input);
+    }
+
+    // ── Action: kill_all — stop all background processes ────────────────────
+    if (action === "kill_all") {
+      const count = this.processManager.killAll();
+      return {
+        success: true,
+        output: count > 0
+          ? `Killed ${count} running process${count > 1 ? "es" : ""}.`
+          : "No running processes to kill.",
+      };
+    }
+
+    // ── Action: run (default) — execute command ─────────────────────────────
     const command = input.command as string;
+    if (!command || command.trim().length === 0) {
+      return { success: false, output: "", error: "command is required for action=run" };
+    }
+
     const timeout = (input.timeout as number) || 120000;
     const dangerouslyDisableSandbox = (input.dangerouslyDisableSandbox as boolean) || false;
 
@@ -214,20 +251,39 @@ Commands are also subject to sandbox restrictions.`,
     // Merge color env for better terminal output
     Object.assign(env, COLOR_ENV);
 
-    // Background mode: spawn detached, return immediately with PID
+    // ── Background mode: spawn detached, track with ProcessManager ──────────
     if (background) {
-      const { spawn } = require("child_process") as typeof import("child_process");
-      const { shell, args } = getShellCommand(command);
-      const child = spawn(shell, args, {
-        cwd: this.workingDir,
-        env,
-        detached: !IS_WINDOWS,
-        stdio: "ignore",
-      });
-      child.unref();
-      return { success: true, output: `Started in background (PID: ${child.pid})` };
+      const waitForReady = (input.wait_for_ready as number) || 1000;
+      const { id, pid } = this.processManager.spawn(command, this.workingDir, envVars);
+
+      // Wait for process to start and produce initial output
+      if (waitForReady > 0) {
+        await new Promise((resolve) => setTimeout(resolve, Math.min(waitForReady, 10000)));
+      }
+
+      // Check if it crashed immediately
+      const status = this.processManager.getStatus(id);
+      if (status && status.status !== "running") {
+        return {
+          success: false,
+          output: status.output || "(no output)",
+          error: `Process exited immediately (${status.status}${status.exitCode !== undefined ? `, exit code: ${status.exitCode}` : ""})`,
+        };
+      }
+
+      return {
+        success: true,
+        output: JSON.stringify({
+          process_id: id,
+          pid,
+          status: "running",
+          initial_output: status?.output ? status.output.slice(0, 2000) : "(no output yet)",
+          hint: `Use shell_exec({ action: "status", process_id: "${id}" }) to read output. Use shell_exec({ action: "kill", process_id: "${id}" }) to stop.`,
+        }, null, 2),
+      };
     }
 
+    // ── Foreground mode: exec and wait ──────────────────────────────────────
     return new Promise((resolve) => {
       exec(command, { cwd: this.workingDir, timeout, maxBuffer: 10 * 1024 * 1024, env, shell: SHELL },
         (error, stdout, stderr) => {
@@ -247,5 +303,62 @@ Commands are also subject to sandbox restrictions.`,
           }
         });
     });
+  }
+
+  /** Handle action=status */
+  private handleStatus(input: Record<string, unknown>): ToolResult {
+    const processId = input.process_id as string | undefined;
+
+    if (processId) {
+      const status = this.processManager.getStatus(processId);
+      if (!status) {
+        return { success: false, output: "", error: `No process found with ID "${processId}". Use action="status" without process_id to list all.` };
+      }
+
+      // Tail output to keep response size reasonable
+      let output = status.output;
+      if (output.length > 8192) {
+        output = "...[truncated]...\n" + output.slice(-8192);
+      }
+
+      return {
+        success: true,
+        output: JSON.stringify({
+          process_id: status.id,
+          command: status.command,
+          status: status.status,
+          pid: status.pid,
+          exit_code: status.exitCode,
+          duration_ms: status.durationMs,
+          output: output || "(no output)",
+        }, null, 2),
+      };
+    }
+
+    // List all processes
+    const all = this.processManager.listAll();
+    if (all.length === 0) {
+      return { success: true, output: "No background processes tracked." };
+    }
+    return { success: true, output: JSON.stringify(all, null, 2) };
+  }
+
+  /** Handle action=kill */
+  private handleKill(input: Record<string, unknown>): ToolResult {
+    const processId = input.process_id as string | undefined;
+    if (!processId) {
+      return { success: false, output: "", error: "process_id is required for action=kill. Use action=kill_all to stop all." };
+    }
+
+    const killed = this.processManager.kill(processId);
+    if (!killed) {
+      const status = this.processManager.getStatus(processId);
+      if (!status) {
+        return { success: false, output: "", error: `No process found with ID "${processId}".` };
+      }
+      return { success: false, output: "", error: `Process "${processId}" is not running (status: ${status.status}).` };
+    }
+
+    return { success: true, output: `Process "${processId}" killed successfully.` };
   }
 }

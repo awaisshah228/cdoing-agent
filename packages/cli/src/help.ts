@@ -60,6 +60,7 @@ export function printHelp(): void {
     ["/new", "Start a new conversation"],
     ["/history", "List saved conversations"],
     ["/resume <id>", "Resume a saved conversation"],
+    ["/view <id>", "View messages in a conversation"],
     ["/delete <id>", "Delete a saved conversation"],
     ["/clear", "Clear current conversation"],
     ["/config", "Show current configuration"],
