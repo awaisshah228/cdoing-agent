@@ -25,7 +25,7 @@ const TOOL_CONFIG: Record<string, { label: string; icon: string }> = {
   file_write: { label: "Write", icon: "✏️" },
   file_edit: { label: "Edit", icon: "🔧" },
   multi_edit: { label: "MultiEdit", icon: "🔧" },
-  file_delete: { label: "Delete", icon: "🗑️" },
+
   ast_edit: { label: "AST Edit", icon: "🌳" },
   notebook_edit: { label: "Notebook", icon: "📓" },
   glob_search: { label: "Search files", icon: "🔍" },
@@ -68,10 +68,7 @@ function getToolDescription(name: string, input: string, description?: string): 
       const path = shortPath(String(p.file_path || p.path || ""));
       return path ? `Edit ${path}` : "Edit file";
     }
-    case "file_delete": {
-      const path = shortPath(String(p.file_path || p.path || ""));
-      return path ? `Delete ${path}` : "Delete file";
-    }
+
     case "glob_search": {
       const pattern = String(p.pattern || "");
       return pattern ? `Find files matching "${pattern}"` : "Search files";

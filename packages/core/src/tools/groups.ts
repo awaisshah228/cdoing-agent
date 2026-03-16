@@ -35,7 +35,7 @@ export interface ToolGroupOptions {
 
 /** Tool category names */
 export type ToolCategory =
-  | "file"        // file_read, file_write, file_edit, multi_edit, apply_patch, file_delete
+  | "file"        // file_read, file_write, file_edit, multi_edit, apply_patch
   | "search"      // glob_search, grep_search, codebase_search, list_dir
   | "execution"   // shell_exec, file_run, code_verify
   | "web"         // web_fetch, web_search

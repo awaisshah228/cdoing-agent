@@ -49,7 +49,7 @@ export const TOOL_ICONS: Record<string, string> = {
   file_write:      "✏️ ",
   file_edit:       "🔧",
   multi_edit:      "🔧",
-  file_delete:     "🗑️",
+
   ast_edit:        "🌳",
   notebook_edit:   "📓",
   glob_search:     "🔍",

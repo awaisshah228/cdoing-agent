@@ -111,7 +111,7 @@ const TOOL_CATEGORY: Record<string, string> = {
   file_edit:    "Edit",
   multi_edit:   "Edit",
   apply_patch:  "Edit",
-  file_delete:  "Delete",
+
   web_fetch:    "WebFetch",
   web_search:   "WebSearch",
   sub_agent:    "Agent",
@@ -121,7 +121,7 @@ const TOOL_CATEGORY: Record<string, string> = {
 };
 
 /** Write/exec tools that are blocked in Plan mode */
-const PLAN_BLOCKED = new Set(["shell_exec", "file_run", "file_write", "file_edit", "multi_edit", "file_delete", "apply_patch", "batch", "question"]);
+const PLAN_BLOCKED = new Set(["shell_exec", "file_run", "file_write", "file_edit", "multi_edit", "apply_patch", "batch", "question"]);
 
 /** File-edit tools that are auto-allowed in acceptEdits mode */
 const ACCEPT_EDITS_AUTO = new Set(["file_write", "file_edit", "multi_edit", "apply_patch"]);
