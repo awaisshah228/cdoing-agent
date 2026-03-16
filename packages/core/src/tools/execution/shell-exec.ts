@@ -69,6 +69,113 @@ const DESTRUCTIVE_PATTERNS = [
 ];
 
 
+// ── Output Summarization (token-saving) ─────────────────────────────────────
+// Inspired by OpenCode (2000 lines / 50KB limit, temp file for full output)
+// and Continue (line-boundary snapping, status field verdict).
+
+/** Max lines to send back to LLM */
+const MAX_OUTPUT_LINES = 200;
+/** Max bytes to send back to LLM (~50KB like OpenCode) */
+const MAX_OUTPUT_BYTES = 50_000;
+
+/** Patterns for noisy lines we can strip (progress bars, spinners, etc.) */
+const NOISE_PATTERNS = [
+  /^\s*[\|\/\-\\]\s*$/, // spinner chars
+  /^[\s░▒▓█▓▒░⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]+$/, // progress bar chars
+  /^\s*\r/, // carriage return lines (overwritten progress)
+  /^npm warn\s/, // npm warnings (noisy, rarely useful)
+  /^npm notice\s/, // npm notices
+  /^warning\s.*peer\s*dep/i, // yarn peer dep warnings
+  /^\s*$/, // blank lines (collapse them)
+];
+
+/**
+ * Summarize command output to save tokens.
+ *
+ * Strategy (combines best of OpenCode, Continue, and Claude Code):
+ *  1. Strip noisy lines (progress bars, npm warnings, blank lines)
+ *  2. On error: show stderr first (the actual error), then last N stdout lines for context
+ *  3. On success: truncate keeping head + tail (like Claude Code), respect byte limit (like OpenCode)
+ *  4. Append a clear verdict line so LLM instantly knows result (like Continue's status field)
+ *  5. If truncated, tell LLM it can use file_read/grep_search for full output
+ */
+function summarizeOutput(
+  _command: string,
+  stdout: string,
+  stderr: string,
+  exitCode: number | null,
+  killed: boolean,
+  timeout: number,
+): string {
+  const success = exitCode === 0 || exitCode === null;
+
+  // ── Verdict line (like Continue's status field) ────────────────────────
+  let verdict: string;
+  if (killed) {
+    verdict = `<status>Command timed out after ${timeout}ms</status>`;
+  } else if (success) {
+    verdict = `<status>Command completed successfully (exit code 0)</status>`;
+  } else {
+    verdict = `<status>Command failed (exit code ${exitCode})</status>`;
+  }
+
+  // ── Filter noisy lines ─────────────────────────────────────────────────
+  const filterNoise = (text: string): string[] => {
+    return text.split("\n").filter(line =>
+      !NOISE_PATTERNS.some(p => p.test(line))
+    );
+  };
+
+  const stdoutLines = filterNoise(stdout);
+  const parts: string[] = [];
+  let wasTruncated = false;
+
+  // ── Error path: prioritize stderr ──────────────────────────────────────
+  if (!success && stderr && stderr.trim()) {
+    const stderrLines = filterNoise(stderr);
+    // Show last 20 stdout lines for context
+    const contextLines = stdoutLines.slice(-20);
+    if (contextLines.length > 0) {
+      parts.push(contextLines.join("\n").trim());
+    }
+    // Show stderr (the actual error — keep more of it)
+    if (stderrLines.length > 80) {
+      parts.push(`\nSTDERR (last 80 of ${stderrLines.length} lines):\n${stderrLines.slice(-80).join("\n")}`);
+      wasTruncated = true;
+    } else {
+      parts.push(`\nSTDERR:\n${stderrLines.join("\n")}`);
+    }
+  }
+  // ── Success path: truncate stdout ──────────────────────────────────────
+  else {
+    if (stdoutLines.length <= MAX_OUTPUT_LINES) {
+      parts.push(stdoutLines.join("\n").trim());
+    } else {
+      // Keep first 15 + last 80 lines (like Claude Code: head + tail)
+      const head = stdoutLines.slice(0, 15).join("\n");
+      const tail = stdoutLines.slice(-80).join("\n");
+      const skipped = stdoutLines.length - 95;
+      parts.push(`${head}\n\n... (${skipped} lines omitted — use grep_search or file_read for full output) ...\n\n${tail}`);
+      wasTruncated = true;
+    }
+  }
+
+  let output = parts.join("\n").trim() || "(no output)";
+
+  // ── Byte limit (like OpenCode's 50KB) ──────────────────────────────────
+  if (Buffer.byteLength(output, "utf-8") > MAX_OUTPUT_BYTES) {
+    // Snap to line boundary (like Continue's TRUNCATION_LINE_SNAP_THRESHOLD)
+    const truncated = output.slice(0, MAX_OUTPUT_BYTES);
+    const lastNewline = truncated.lastIndexOf("\n");
+    output = (lastNewline > 0 ? truncated.slice(0, lastNewline) : truncated)
+      + `\n\n... (output truncated at ${MAX_OUTPUT_BYTES} bytes — use grep_search or file_read for full content) ...`;
+    wasTruncated = true;
+  }
+
+  // ── Assemble final result ──────────────────────────────────────────────
+  return `${output}\n\n${verdict}`;
+}
+
 export class ShellExecTool implements BaseTool {
   definition: ToolDefinition = {
     name: "shell_exec",
@@ -359,22 +466,18 @@ Actions:
       child.on("close", (code) => {
         clearTimeout(timer);
 
-        const outputParts: string[] = [];
-        if (stdout) outputParts.push(stdout.trimEnd());
-        if (stderr) outputParts.push(`STDERR:\n${stderr.trimEnd()}`);
-        const output = outputParts.join("\n\n") || "(no output)";
+        const success = code === 0 || code === null;
+        const output = summarizeOutput(actualCommand, stdout, stderr, code, killed, timeout);
 
         if (killed) {
           return resolve({ success: false, output, error: `Timed out after ${timeout}ms` });
         }
 
-        if (code !== 0 && code !== null) {
-          const exitInfo = `\n\nExit code: ${code}`;
-          // Follow Continue's pattern: only mark as failure if stderr has content.
+        if (!success) {
           if (stderr && stderr.trim()) {
-            resolve({ success: false, output: output + exitInfo, error: `Exit code: ${code}` });
+            resolve({ success: false, output, error: `Exit code: ${code}` });
           } else {
-            resolve({ success: true, output: output + exitInfo });
+            resolve({ success: true, output });
           }
         } else {
           resolve({ success: true, output });
