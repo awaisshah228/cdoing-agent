@@ -216,7 +216,7 @@ function AppShell(props: {
   return (
     <box width={dims.width} height={dims.height} flexDirection="column">
       {/* Header bar */}
-      <box height={1} flexDirection="row" paddingX={1}>
+      <box height={1} flexDirection="row" paddingX={1} flexShrink={0}>
         <text fg={t.primary} attributes={TextAttributes.BOLD}>{"cdoing"}</text>
         <text fg={t.border}>{" │ "}</text>
         <text fg={t.textMuted}>{model}</text>
@@ -239,7 +239,7 @@ function AppShell(props: {
       )}
 
       {/* Separator */}
-      <box height={1}>
+      <box height={1} flexShrink={0}>
         <text fg={t.border}>{"─".repeat(Math.max(dims.width, 40))}</text>
       </box>
 
@@ -307,7 +307,7 @@ function AppShell(props: {
       </box>
 
       {/* Separator */}
-      <box height={1}>
+      <box height={1} flexShrink={0}>
         <text fg={t.border}>{"─".repeat(Math.max(dims.width, 40))}</text>
       </box>
 

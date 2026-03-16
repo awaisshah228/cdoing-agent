@@ -81,7 +81,7 @@ export function InputArea(props: InputAreaProps) {
   const showDropdown = dropdownOpen && suggestions.length > 0;
 
   useKeyboard((key: any) => {
-    if (props.disabled) return;
+    // Allow typing even when disabled (streaming) — submit handler decides what to do
 
     // ── Dropdown navigation ──
     if (showDropdown) {
@@ -219,7 +219,7 @@ export function InputArea(props: InputAreaProps) {
   const hasBelow = windowStart + MAX_VISIBLE < suggestions.length;
 
   return (
-    <box flexDirection="column">
+    <box flexDirection="column" flexShrink={0}>
       {/* Autocomplete dropdown (above input) */}
       {showDropdown && (
         <box flexDirection="column" paddingX={1}>

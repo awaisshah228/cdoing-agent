@@ -17,6 +17,8 @@
  */
 
 import { useState, useRef } from "react";
+import { TextAttributes } from "@opentui/core";
+import { useKeyboard } from "@opentui/react";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
@@ -80,6 +82,53 @@ interface BackgroundJob {
   completedAt?: number;
 }
 
+// ── Interrupt/Queue Prompt ────────────────────────────
+
+function InterruptPrompt(props: {
+  message: string;
+  onInterrupt: () => void;
+  onQueue: () => void;
+  onCancel: () => void;
+}) {
+  const { theme } = useTheme();
+  const t = theme;
+  const [selected, setSelected] = useState(0);
+  const options = [
+    { label: "Interrupt — stop current response and send new message", action: props.onInterrupt },
+    { label: "Queue — wait for current response, then send", action: props.onQueue },
+    { label: "Cancel — discard new message", action: props.onCancel },
+  ];
+
+  useKeyboard((key: any) => {
+    if (key.name === "escape") { props.onCancel(); return; }
+    if (key.name === "up" || key.name === "k") { setSelected((s) => Math.max(0, s - 1)); return; }
+    if (key.name === "down" || key.name === "j") { setSelected((s) => Math.min(options.length - 1, s + 1)); return; }
+    if (key.name === "return") { options[selected].action(); return; }
+    // Quick keys
+    if (key.sequence === "1" || key.sequence === "i") { props.onInterrupt(); return; }
+    if (key.sequence === "2" || key.sequence === "q") { props.onQueue(); return; }
+    if (key.sequence === "3") { props.onCancel(); return; }
+  });
+
+  const preview = props.message.length > 50 ? props.message.slice(0, 47) + "..." : props.message;
+
+  return (
+    <box flexDirection="column" flexShrink={0} paddingX={1}>
+      <text fg={t.warning} attributes={TextAttributes.BOLD}>
+        {"  Agent is streaming. What to do with your message?"}
+      </text>
+      <text fg={t.textDim}>{`  "${preview}"`}</text>
+      <text>{""}</text>
+      {options.map((opt, i) => (
+        <text key={i} fg={i === selected ? t.primary : t.textMuted} attributes={i === selected ? TextAttributes.BOLD : undefined}>
+          {`  ${i === selected ? "❯" : " "} ${i + 1}. ${opt.label}`}
+        </text>
+      ))}
+      <text fg={t.textDim}>{"  ↑↓ Navigate  Enter Select  i/q/Esc Quick keys"}</text>
+    </box>
+  );
+}
+
 // ── Session View ────────────────────────────────────
 
 export function SessionView(props: {
@@ -107,6 +156,13 @@ export function SessionView(props: {
     message: string;
     resolve: (decision: "allow" | "always" | "deny") => void;
   } | null>(null);
+
+  // Interrupt/queue prompt state
+  const [pendingInterrupt, setPendingInterrupt] = useState<{
+    text: string;
+    images?: ImageAttachment[];
+  } | null>(null);
+  const queuedMessagesRef = useRef<string[]>([]);
 
   const totalInputRef = useRef(0);
   const totalOutputRef = useRef(0);
@@ -868,6 +924,51 @@ export function SessionView(props: {
     pushTerminalOutput(`$ ${shellCmd}\n${result}`);
   };
 
+  // ── Interrupt: stop streaming, flush partial, send new message with context ──
+
+  const handleInterrupt = (text: string, images?: ImageAttachment[]) => {
+    // Capture partial response before cancelling
+    const partialResponse = streamingTextRef.current.trim();
+
+    // Cancel the agent
+    sdk.agent.cancel();
+
+    // Flush partial streaming text as a message
+    if (partialResponse) {
+      addMessage("assistant", partialResponse + "\n\n*(interrupted)*");
+      setStreamingText("");
+    }
+
+    setIsStreaming(false);
+    props.onStatus("Ready");
+    setActiveTool(undefined);
+    props.onActiveTool(undefined);
+    setPendingInterrupt(null);
+
+    // Send the new message — agent.cancel() calls onComplete which resets state,
+    // so we use a small delay to let that settle
+    setTimeout(() => {
+      doSendMessage(text, images);
+    }, 100);
+  };
+
+  // ── Queue: add to queue, process after current stream finishes ──
+
+  const handleQueue = (text: string) => {
+    queuedMessagesRef.current.push(text);
+    addMessage("system", `📬 Queued message (${queuedMessagesRef.current.length} in queue)`);
+    setPendingInterrupt(null);
+  };
+
+  // ── Process queued messages after streaming completes ──
+
+  const processQueue = () => {
+    if (queuedMessagesRef.current.length > 0) {
+      const next = queuedMessagesRef.current.shift()!;
+      setTimeout(() => doSendMessage(next), 100);
+    }
+  };
+
   // ── Send Message ────────────────────────────────────
 
   const sendMessage = async (text: string, images?: ImageAttachment[]) => {
@@ -876,7 +977,7 @@ export function SessionView(props: {
       return;
     }
 
-    // Shell command: explicit ! prefix or auto-detected
+    // Shell commands always run immediately
     const shellCmd = text.startsWith("!")
       ? text.slice(1).trim()
       : detectShellCommand(text);
@@ -886,6 +987,16 @@ export function SessionView(props: {
       return;
     }
 
+    // If currently streaming, show interrupt/queue prompt
+    if (isStreaming) {
+      setPendingInterrupt({ text, images });
+      return;
+    }
+
+    await doSendMessage(text, images);
+  };
+
+  const doSendMessage = async (text: string, images?: ImageAttachment[]) => {
     // Resolve @mention context providers
     let expandedText = text;
     if (hasContextMentions(text)) {
@@ -951,6 +1062,8 @@ export function SessionView(props: {
         setActiveTool(undefined);
         props.onActiveTool(undefined);
         props.onTokens(totalInputRef.current, totalOutputRef.current);
+        // Process queued messages
+        processQueue();
       },
 
       onError: (error) => {
@@ -991,37 +1104,50 @@ export function SessionView(props: {
 
   return (
     <box flexDirection="column" width="100%" flexGrow={1}>
-      {/* Message list */}
+      {/* Message list — scrollable, takes all available space */}
       <MessageList
         messages={messages}
         streamingText={streamingText}
         isStreaming={isStreaming}
       />
 
-      {/* Permission prompt overlay */}
-      {pendingPermission && (
-        <PermissionPrompt
-          toolName={pendingPermission.toolName}
-          message={pendingPermission.message}
-          onDecision={(decision) => {
-            pendingPermission.resolve(decision);
-            setPendingPermission(null);
-          }}
+      {/* Fixed bottom area — never pushed off screen */}
+      <box flexDirection="column" flexShrink={0}>
+        {/* Permission prompt overlay */}
+        {pendingPermission && (
+          <PermissionPrompt
+            toolName={pendingPermission.toolName}
+            message={pendingPermission.message}
+            onDecision={(decision) => {
+              pendingPermission.resolve(decision);
+              setPendingPermission(null);
+            }}
+          />
+        )}
+
+        {/* Interrupt/Queue prompt */}
+        {pendingInterrupt && (
+          <InterruptPrompt
+            message={pendingInterrupt.text}
+            onInterrupt={() => handleInterrupt(pendingInterrupt.text, pendingInterrupt.images)}
+            onQueue={() => handleQueue(pendingInterrupt.text)}
+            onCancel={() => setPendingInterrupt(null)}
+          />
+        )}
+
+        {/* Loading spinner */}
+        {isStreaming && !streamingText && !pendingInterrupt && (
+          <LoadingSpinner label={activeTool || "Thinking..."} />
+        )}
+
+        {/* Input area */}
+        <InputArea
+          onSubmit={sendMessage}
+          disabled={false}
+          placeholder={isStreaming ? "Type to interrupt or queue..." : undefined}
+          workingDir={sdk.workingDir}
         />
-      )}
-
-      {/* Loading spinner */}
-      {isStreaming && !streamingText && (
-        <LoadingSpinner label={activeTool || "Thinking..."} />
-      )}
-
-      {/* Input area */}
-      <InputArea
-        onSubmit={sendMessage}
-        disabled={isStreaming}
-        placeholder={isStreaming ? "Agent is working..." : undefined}
-        workingDir={sdk.workingDir}
-      />
+      </box>
     </box>
   );
 }
