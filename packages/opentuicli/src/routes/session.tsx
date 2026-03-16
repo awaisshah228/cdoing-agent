@@ -981,6 +981,19 @@ export function SessionView(props: {
       : detectShellCommand(text);
 
     if (shellCmd) {
+      // Intercept "cd" — execSync runs in a child process, so cd has no effect there
+      const shellParts = shellCmd.trim().split(/\s+/);
+      if (shellParts[0] === "cd") {
+        const target = shellParts.slice(1).join(" ") || process.env.HOME || "/";
+        const resolved = path.resolve(sdk.workingDir, target);
+        if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
+          if (sdk.setWorkingDir) sdk.setWorkingDir(resolved);
+          addMessage("system", `Working directory changed to: ${resolved}`);
+        } else {
+          addMessage("system", `cd: no such directory: ${resolved}`);
+        }
+        return;
+      }
       runShellCommand(shellCmd);
       return;
     }

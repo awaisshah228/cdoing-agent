@@ -151,6 +151,19 @@ export function getCompletions(input: string, workingDir: string): Suggestion[] 
     }
   }
 
+  // Path completion for shell commands (cd, ls, cat, etc.)
+  if (parts.length >= 2) {
+    const pathResults = getPathCompletions(input, workingDir);
+    if (pathResults.length > 0) {
+      const prefix = parts.slice(0, -1).join(" ") + " ";
+      return pathResults.map((p) => ({
+        text: prefix + p,
+        description: p.endsWith("/") ? "directory" : "file",
+        type: "file" as const,
+      }));
+    }
+  }
+
   return [];
 }
 

@@ -65,10 +65,15 @@ export function InputArea(props: InputAreaProps) {
   valueRef.current = value;
   const imageCountRef = useRef(0);
 
-  // Compute suggestions based on current input
+  // Compute suggestions based on current input, with a leading "(none)" option for path completions
   const suggestions = useMemo(() => {
     if (!value) return [];
-    return getCompletions(value, props.workingDir);
+    const completions = getCompletions(value, props.workingDir);
+    // Add a "none" option at the top for file/subcommand completions so user can submit as-is
+    if (completions.length > 0 && completions[0].type === "file") {
+      return [{ text: value, description: "submit as typed", type: "file" as const }, ...completions];
+    }
+    return completions;
   }, [value, props.workingDir]);
 
   // Compute ghost text
@@ -96,7 +101,13 @@ export function InputArea(props: InputAreaProps) {
       if (key.name === "return") {
         const s = suggestions[selectedIdx];
         if (s) {
-          setValue(s.text + " ");
+          const text = s.text.trim();
+          if (text) {
+            // Execute the command directly
+            props.onSubmit(text, pendingImages.length > 0 ? [...pendingImages] : undefined);
+            setValue("");
+            setPendingImages([]);
+          }
           setDropdownOpen(false);
           setSelectedIdx(0);
         }
@@ -171,7 +182,7 @@ export function InputArea(props: InputAreaProps) {
       setValue((v) => {
         const next = v.slice(0, -1);
         // Re-evaluate dropdown
-        if (next.startsWith("/") || next.includes("@")) {
+        if (next.startsWith("/") || next.includes("@") || getCompletions(next, props.workingDir).length > 0) {
           setDropdownOpen(true);
           setSelectedIdx(0);
         } else {
@@ -190,9 +201,17 @@ export function InputArea(props: InputAreaProps) {
 
     // Space
     if (key.name === "space") {
-      setValue((v) => v + " ");
-      // Close dropdown on space (command completed)
-      if (value.startsWith("/")) setDropdownOpen(false);
+      setValue((v) => {
+        const next = v + " ";
+        // Close dropdown on space for slash commands, but check for path completions
+        if (v.startsWith("/")) {
+          setDropdownOpen(false);
+        } else if (getCompletions(next, props.workingDir).length > 0) {
+          setDropdownOpen(true);
+          setSelectedIdx(0);
+        }
+        return next;
+      });
       return;
     }
 
@@ -200,8 +219,11 @@ export function InputArea(props: InputAreaProps) {
     if (key.name && key.name.length === 1 && !key.ctrl && !key.meta) {
       setValue((v) => {
         const next = v + key.name;
-        // Auto-open dropdown for / and @
+        // Auto-open dropdown for /, @, and path completions
         if (next.startsWith("/") || next.includes("@")) {
+          setDropdownOpen(true);
+          setSelectedIdx(0);
+        } else if (getCompletions(next, props.workingDir).length > 0) {
           setDropdownOpen(true);
           setSelectedIdx(0);
         }
