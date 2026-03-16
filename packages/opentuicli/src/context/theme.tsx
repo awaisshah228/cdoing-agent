@@ -371,24 +371,45 @@ export function restoreTerminalBackground(): void {
 // ── Syntax Style Generation ───────────────────────────────
 
 function generateSyntaxStyle(theme: Theme): SyntaxStyle {
-  return SyntaxStyle.fromTheme([
-    { scope: ["default"], style: { foreground: theme.text } },
-    { scope: ["keyword", "keyword.control", "keyword.operator"], style: { foreground: theme.secondary, bold: true } },
-    { scope: ["string", "string.quoted"], style: { foreground: theme.success } },
-    { scope: ["comment", "comment.line", "comment.block"], style: { foreground: theme.textDim, italic: true } },
-    { scope: ["constant", "constant.numeric", "number"], style: { foreground: theme.warning } },
-    { scope: ["variable", "variable.parameter"], style: { foreground: theme.text } },
-    { scope: ["function", "entity.name.function", "support.function"], style: { foreground: theme.info } },
-    { scope: ["type", "entity.name.type", "support.type"], style: { foreground: theme.primary } },
-    { scope: ["operator"], style: { foreground: theme.textMuted } },
-    { scope: ["punctuation"], style: { foreground: theme.textMuted } },
-    { scope: ["markup.heading"], style: { foreground: theme.primary, bold: true } },
-    { scope: ["markup.bold"], style: { bold: true } },
-    { scope: ["markup.italic"], style: { italic: true } },
-    { scope: ["markup.list"], style: { foreground: theme.text } },
-    { scope: ["markup.link"], style: { foreground: theme.info, underline: true } },
-    { scope: ["markup.raw", "markup.inline"], style: { foreground: theme.warning } },
-  ]);
+  return SyntaxStyle.fromStyles({
+    // Default text
+    "default": { fg: theme.text },
+    // Markdown-specific scopes (used by <markdown> component)
+    "markup.heading.1": { fg: theme.primary, bold: true },
+    "markup.heading.2": { fg: theme.primary, bold: true },
+    "markup.heading.3": { fg: theme.info, bold: true },
+    "markup.heading.4": { fg: theme.info, bold: true },
+    "markup.heading.5": { fg: theme.info },
+    "markup.heading.6": { fg: theme.info },
+    "markup.bold": { bold: true },
+    "markup.italic": { italic: true },
+    "markup.list": { fg: theme.warning },
+    "markup.link": { fg: theme.info, underline: true },
+    "markup.raw": { fg: theme.warning },
+    "markup.quote": { fg: theme.textMuted, italic: true },
+    // Code block syntax highlighting
+    "keyword": { fg: theme.secondary, bold: true },
+    "keyword.control": { fg: theme.secondary, bold: true },
+    "keyword.operator": { fg: theme.secondary },
+    "string": { fg: theme.success },
+    "string.quoted": { fg: theme.success },
+    "comment": { fg: theme.textDim, italic: true },
+    "comment.line": { fg: theme.textDim, italic: true },
+    "comment.block": { fg: theme.textDim, italic: true },
+    "constant": { fg: theme.warning },
+    "constant.numeric": { fg: theme.warning },
+    "number": { fg: theme.warning },
+    "variable": { fg: theme.text },
+    "variable.parameter": { fg: theme.text },
+    "function": { fg: theme.info },
+    "entity.name.function": { fg: theme.info },
+    "support.function": { fg: theme.info },
+    "type": { fg: theme.primary },
+    "entity.name.type": { fg: theme.primary },
+    "support.type": { fg: theme.primary },
+    "operator": { fg: theme.textMuted },
+    "punctuation": { fg: theme.textMuted },
+  });
 }
 
 // ── Theme Context ─────────────────────────────────────────

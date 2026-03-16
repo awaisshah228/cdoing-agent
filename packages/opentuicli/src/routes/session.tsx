@@ -1102,13 +1102,20 @@ export function SessionView(props: {
   };
 
   return (
-    <box flexDirection="column" width="100%" flexGrow={1} gap={1}>
-      {/* Message list — scrollable, takes all available space */}
-      <MessageList
-        messages={messages}
-        streamingText={streamingText}
-        isStreaming={isStreaming}
-      />
+    <box flexDirection="column" flexGrow={1} paddingLeft={2} paddingRight={2} paddingTop={1} paddingBottom={1} gap={1}>
+      {/* Scrollable message area — directly in layout for proper flex height (like OpenCode) */}
+      <scrollbox
+        stickyScroll={true}
+        stickyStart="bottom"
+        flexGrow={1}
+        scrollY={true}
+      >
+        <MessageList
+          messages={messages}
+          streamingText={streamingText}
+          isStreaming={isStreaming}
+        />
+      </scrollbox>
 
       {/* Fixed bottom area — never pushed off screen */}
       <box flexDirection="column" flexShrink={0}>

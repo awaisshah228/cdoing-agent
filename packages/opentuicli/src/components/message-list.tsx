@@ -1,9 +1,9 @@
 /**
  * MessageList — renders chat messages with tool calls, streaming, and markdown
  *
- * Uses OpenTUI's <scrollbox> for smooth scrolling with sticky-to-bottom,
- * <code filetype="markdown"> for assistant message rendering (like OpenCode),
- * and custom tool call display.
+ * Uses OpenTUI's <markdown> for assistant message rendering with concealment,
+ * and custom tool call display. The scrollbox is managed by the parent (session.tsx)
+ * to ensure proper flex height calculation (matching OpenCode's pattern).
  */
 
 import { TextAttributes } from "@opentui/core";
@@ -42,6 +42,10 @@ function formatTimestamp(ts: number): string {
   return `${h}:${m.toString().padStart(2, "0")} ${ampm}`;
 }
 
+/**
+ * Renders message content only (no scrollbox wrapper).
+ * Parent should wrap this in a <scrollbox> for proper flex height.
+ */
 export function MessageList(props: {
   messages: Message[];
   streamingText?: string;
@@ -52,114 +56,102 @@ export function MessageList(props: {
   const t = theme;
 
   return (
-    <scrollbox
-      scrollY={true}
-      stickyScroll={true}
-      stickyStart="bottom"
-      flexGrow={1}
-      flexDirection="column"
-    >
-      <box flexDirection="column">
-        {/* Empty state */}
-        {props.messages.length === 0 && !props.isStreaming && (
-          <box paddingX={2} paddingY={1}>
-            <text fg={t.textMuted}>
-              {"Type a message to start chatting. Use / for commands, @ for context."}
-            </text>
-          </box>
-        )}
+    <>
+      {/* Empty state */}
+      {props.messages.length === 0 && !props.isStreaming && (
+        <box paddingX={2} paddingY={1}>
+          <text fg={t.textMuted}>
+            {"Type a message to start chatting. Use / for commands, @ for context."}
+          </text>
+        </box>
+      )}
 
-        {/* Messages */}
-        {props.messages.map((msg) => {
-          if (msg.role === "user") {
-            return (
-              <box key={msg.id} paddingX={1} paddingY={0} flexDirection="row">
-                <text fg={t.userText} attributes={TextAttributes.BOLD}>
-                  {"❯ "}
-                </text>
-                <text fg={t.userText} flexGrow={1}>{msg.content}</text>
-                {props.showTimestamps && msg.timestamp && (
-                  <text fg={t.textDim}>{`  ${formatTimestamp(msg.timestamp)}`}</text>
-                )}
-              </box>
-            );
-          }
-
-          if (msg.role === "assistant") {
-            return (
-              <box key={msg.id} paddingLeft={1} marginTop={1} flexShrink={0} flexDirection="column">
-                <box flexDirection="row">
-                  <text fg={t.primary} attributes={TextAttributes.BOLD}>
-                    {"◆ "}
-                  </text>
-                  {props.showTimestamps && msg.timestamp && (
-                    <text fg={t.textDim}>{`  ${formatTimestamp(msg.timestamp)}`}</text>
-                  )}
-                </box>
-                <box paddingLeft={2}>
-                  <code
-                    filetype="markdown"
-                    drawUnstyledText={false}
-                    streaming={false}
-                    syntaxStyle={syntaxStyle}
-                    content={msg.content.trim()}
-                    fg={t.assistantText}
-                  />
-                </box>
-              </box>
-            );
-          }
-
-          if (msg.role === "system") {
-            return (
-              <box key={msg.id} paddingX={1} flexDirection="row">
-                <text fg={t.systemText} flexGrow={1}>{`⚡ ${msg.content}`}</text>
-                {props.showTimestamps && msg.timestamp && (
-                  <text fg={t.textDim}>{`  ${formatTimestamp(msg.timestamp)}`}</text>
-                )}
-              </box>
-            );
-          }
-
-          if (msg.role === "tool") {
-            return (
-              <ToolCallRow
-                key={msg.id}
-                name={msg.toolName || "unknown"}
-                content={msg.content}
-                status={msg.toolStatus || (msg.isError ? "error" : "done")}
-              />
-            );
-          }
-
-          return null;
-        })}
-
-        {/* Streaming indicator — uses <code> with streaming={true} like OpenCode */}
-        {props.isStreaming && (
-          <box paddingLeft={1} marginTop={1} flexShrink={0} flexDirection="column">
-            <box flexDirection="row">
-              <text fg={t.primary} attributes={TextAttributes.BOLD}>
-                {"◆ "}
+      {/* Messages */}
+      {props.messages.map((msg) => {
+        if (msg.role === "user") {
+          return (
+            <box key={msg.id} paddingX={1} paddingY={0} flexDirection="row">
+              <text fg={t.userText} attributes={TextAttributes.BOLD}>
+                {"❯ "}
               </text>
-              <text fg={t.primary}>{"▊"}</text>
+              <text fg={t.userText} flexGrow={1}>{msg.content}</text>
+              {props.showTimestamps && msg.timestamp && (
+                <text fg={t.textDim}>{`  ${formatTimestamp(msg.timestamp)}`}</text>
+              )}
             </box>
-            {(props.streamingText || "").trim() && (
+          );
+        }
+
+        if (msg.role === "assistant") {
+          return (
+            <box key={msg.id} paddingLeft={1} marginTop={1} flexShrink={0} flexDirection="column">
+              <box flexDirection="row">
+                <text fg={t.primary} attributes={TextAttributes.BOLD}>
+                  {"◆ "}
+                </text>
+                {props.showTimestamps && msg.timestamp && (
+                  <text fg={t.textDim}>{`  ${formatTimestamp(msg.timestamp)}`}</text>
+                )}
+              </box>
               <box paddingLeft={2}>
-                <code
-                  filetype="markdown"
-                  drawUnstyledText={false}
-                  streaming={true}
+                <markdown
                   syntaxStyle={syntaxStyle}
-                  content={(props.streamingText || "").trim()}
-                  fg={t.assistantText}
+                  streaming={false}
+                  content={msg.content.trim()}
+                  conceal={true}
                 />
               </box>
-            )}
+            </box>
+          );
+        }
+
+        if (msg.role === "system") {
+          return (
+            <box key={msg.id} paddingX={1} flexDirection="row">
+              <text fg={t.systemText} flexGrow={1}>{`⚡ ${msg.content}`}</text>
+              {props.showTimestamps && msg.timestamp && (
+                <text fg={t.textDim}>{`  ${formatTimestamp(msg.timestamp)}`}</text>
+              )}
+            </box>
+          );
+        }
+
+        if (msg.role === "tool") {
+          return (
+            <ToolCallRow
+              key={msg.id}
+              name={msg.toolName || "unknown"}
+              content={msg.content}
+              status={msg.toolStatus || (msg.isError ? "error" : "done")}
+            />
+          );
+        }
+
+        return null;
+      })}
+
+      {/* Streaming indicator — uses <markdown> with streaming={true} */}
+      {props.isStreaming && (
+        <box paddingLeft={1} marginTop={1} flexShrink={0} flexDirection="column">
+          <box flexDirection="row">
+            <text fg={t.primary} attributes={TextAttributes.BOLD}>
+              {"◆ "}
+            </text>
+            <text fg={t.primary}>{"▊"}</text>
           </box>
-        )}
-      </box>
-    </scrollbox>
+          {(props.streamingText || "").trim() && (
+            <box paddingLeft={2}>
+              <markdown
+                syntaxStyle={syntaxStyle}
+                streaming={true}
+                content={(props.streamingText || "").trim()}
+                conceal={true}
+              />
+            </box>
+          )}
+        </box>
+      )}
+    </>
   );
 }
 
