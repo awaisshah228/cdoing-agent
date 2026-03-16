@@ -31,13 +31,18 @@ Open-source, multi-provider AI coding assistant — **CLI + VS Code Extension**.
 
 ---
 
-## Quick Start
+## Install
 
+**VS Code Extension** — [Install from Marketplace](https://marketplace.visualstudio.com/items?itemName=awaisshah228.cdoing-vscode)
+
+**CLI** — Install from npm:
 ```bash
-# Install from npm
 npm install -g @cdoing/cli
+cdoing
+```
 
-# Or clone and build
+**From source:**
+```bash
 git clone https://github.com/awaisshah228/cdoing-agent.git
 cd cdoing-agent
 yarn install && yarn build
