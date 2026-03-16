@@ -3,7 +3,7 @@
   "displayName": "Cdoing Agent",
   "description": "AI-powered coding assistant with multi-model support — chat, instruct, and run commands right from VS Code",
   "version": "0.1.0",
-  "publisher": "cdoing",
+  "publisher": "awaisshah228",
   "engines": {
     "vscode": "^1.95.0"
   },
