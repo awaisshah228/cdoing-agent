@@ -9,6 +9,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { ChatOpenAI } from "@langchain/openai";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
+import { getOAuthProvider } from "@cdoing/core";
 
 export enum ModelProvider {
   ANTHROPIC = "anthropic",
@@ -138,6 +139,37 @@ export function getApiKeyEnvVar(provider: string): string {
   }
 }
 
+/**
+ * Resolve the actual model name and auth method that will be used for a given config.
+ * Use this to display the correct model in the UI — no hardcoding needed.
+ */
+export function resolveModelInfo(config: Partial<ModelConfig> = {}): {
+  provider: string;
+  model: string;
+  authMethod: "oauth" | "apiKey";
+} {
+  const provider = (config.provider || ModelProvider.ANTHROPIC).toString().toLowerCase();
+  let model = config.model || DEFAULT_MODELS[provider] || "";
+  let authMethod: "oauth" | "apiKey" = "apiKey";
+
+  if (config.oauthToken) {
+    // OAuth active — read the model from the provider's OAuth config
+    const oauthConfig = getOAuthProvider(provider);
+    if (oauthConfig?.defaultModel) {
+      model = oauthConfig.defaultModel;
+    }
+    authMethod = "oauth";
+  } else {
+    // Custom providers: resolve default model from registry
+    const custom = customProviders.get(provider);
+    if (!model && custom) {
+      model = custom.defaultModel;
+    }
+  }
+
+  return { provider, model, authMethod };
+}
+
 export function createModel(config: Partial<ModelConfig> = {}) {
   const provider = (config.provider || ModelProvider.ANTHROPIC).toString().toLowerCase();
   const modelName = config.model || DEFAULT_MODELS[provider] || "";
@@ -149,10 +181,11 @@ export function createModel(config: Partial<ModelConfig> = {}) {
       // OAuth token: use Bearer auth with Anthropic beta headers (not x-api-key)
       if (config.oauthToken) {
         const oauthToken = config.oauthToken;
-        // OAuth only supports claude-haiku-4-5 — override model if needed
-        const oauthModel = "claude-haiku-4-5-20251001";
-        if (modelName !== oauthModel) {
-          console.log(`[cdoing] OAuth only supports ${oauthModel}, overriding "${modelName}"`);
+        // Use the model from OAuth provider config (not hardcoded)
+        const oauthConfig = getOAuthProvider(provider);
+        const oauthModel = oauthConfig?.defaultModel || modelName;
+        if (modelName && modelName !== oauthModel) {
+          console.log(`[cdoing] OAuth uses ${oauthModel}, overriding "${modelName}"`);
         }
         const arch = process.arch === "arm64" ? "arm64" : "x64";
         const osPlatform = process.platform === "darwin" ? "Darwin"

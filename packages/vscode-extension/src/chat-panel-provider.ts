@@ -23,7 +23,7 @@ import {
   type ModelConfig,
   type ImageAttachment,
   getApiKeyEnvVar,
-  getDefaultModel,
+  resolveModelInfo,
 } from "@cdoing/ai";
 import { getWebviewContent } from "./webview-content";
 import {
@@ -438,7 +438,12 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       const status = getOAuthStatus();
       if (status.status === "active") {
         const tokens = loadOAuthTokens();
-        if (tokens) modelConfig.oauthToken = tokens.access_token;
+        if (tokens) {
+          modelConfig.oauthToken = tokens.access_token;
+          // OAuth forces claude-haiku-4-5 — clear any user-set API key
+          // so the agent doesn't accidentally use API key auth
+          modelConfig.apiKey = undefined;
+        }
       }
     }
 
@@ -930,9 +935,11 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   }
 
   private sendCurrentConfig() {
-    const { provider, model } = this.getConfig();
-    const displayModel = model || getDefaultModel(provider) || provider;
-    this.postMessage({ type: "configUpdated", provider, model: displayModel });
+    const { modelConfig } = this.getConfig();
+    // resolveModelInfo returns the exact model the LLM provider will actually use
+    const resolved = resolveModelInfo(modelConfig);
+    const displayModel = resolved.model || resolved.provider;
+    this.postMessage({ type: "configUpdated", provider: resolved.provider, model: displayModel });
   }
 
   /** Send full config to the webview for the settings panel */
@@ -954,11 +961,15 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       }
     }
 
+    // Resolve actual model being used (respects OAuth overrides, defaults, etc.)
+    const { modelConfig: resolvedMc } = this.getConfig();
+    const resolved = resolveModelInfo(resolvedMc);
+
     this.postMessage({
       type: "configData" as any,
       config: {
         provider,
-        model: vsConfig.get<string>("model") || "",
+        model: resolved.model,
         customProviderName: vsConfig.get<string>("customProviderName") || "",
         customBaseURL: vsConfig.get<string>("customBaseURL") || "",
         apiKey: vsApiKey,
@@ -1063,15 +1074,16 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
     // Warn if sending images to a potentially non-vision model
     if (images.length > 0) {
-      const { provider, modelConfig } = this.getConfig();
-      const model = (modelConfig.model || "").toLowerCase();
+      const { modelConfig: mc } = this.getConfig();
+      const resolved = resolveModelInfo(mc);
+      const m = resolved.model.toLowerCase();
       const visionModels = ["claude", "gpt-4o", "gpt-4-turbo", "gpt-4-vision", "gemini", "llava", "pixtral"];
-      const isLikelyVision = provider === "anthropic" || provider === "openai" || provider === "google"
-        || visionModels.some(v => model.includes(v));
+      const isLikelyVision = resolved.provider === "anthropic" || resolved.provider === "openai" || resolved.provider === "google"
+        || visionModels.some(v => m.includes(v));
       if (!isLikelyVision) {
         this.postTabMessage(tab.id, {
           type: "systemMessage",
-          text: `⚠️ Image attached — model \`${model || provider}\` may not support vision. If the model can't see the image, try a vision-capable model (Claude, GPT-4o, Gemini).`,
+          text: `⚠️ Image attached — model \`${resolved.model}\` may not support vision. If the model can't see the image, try a vision-capable model (Claude, GPT-4o, Gemini).`,
         });
       }
     }
@@ -1157,8 +1169,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
             if (lower.includes("400") || lower.includes("invalid") || lower.includes("image") ||
                 lower.includes("multimodal") || lower.includes("vision") || lower.includes("content type") ||
                 lower.includes("unsupported") || lower.includes("does not support")) {
-              const { modelConfig } = this.getConfig();
-              errMsg = `This model (${modelConfig.model || "unknown"}) does not support image/vision input.\n\n${errMsg}\n\nSwitch to a vision-capable model: Claude Sonnet/Haiku, GPT-4o, or Gemini.`;
+              const resolved = resolveModelInfo(this.getConfig().modelConfig);
+              errMsg = `This model (${resolved.model}) does not support image/vision input.\n\n${errMsg}\n\nSwitch to a vision-capable model: Claude Sonnet/Haiku, GPT-4o, or Gemini.`;
             }
           }
           this.postTabMessage(tabId, { type: "error", text: errMsg });

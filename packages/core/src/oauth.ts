@@ -40,6 +40,8 @@ export interface OAuthProviderConfig {
   usePkce?: boolean;
   /** Additional auth URL parameters */
   extraParams?: Record<string, string>;
+  /** Default model to use with OAuth for this provider */
+  defaultModel?: string;
 }
 
 /** Built-in OAuth provider configs */
@@ -54,6 +56,7 @@ const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
     scopes: "org:create_api_key user:profile user:inference",
     usePkce: true,
     extraParams: { code: "true" },
+    defaultModel: "claude-haiku-4-5-20251001",
   },
   "github-copilot": {
     id: "github-copilot",

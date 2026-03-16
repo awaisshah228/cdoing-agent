@@ -3,6 +3,7 @@ export { buildSystemPrompt } from "./system-prompt";
 export { ContextManager, type TokenUsage, type TurnUsage } from "./context-manager";
 export {
   createModel,
+  resolveModelInfo,
   registerCustomProvider,
   getApiKeyEnvVar,
   getDefaultModel,

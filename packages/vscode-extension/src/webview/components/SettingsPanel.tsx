@@ -119,6 +119,16 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     vscode.postMessage({ type: "oauthLogout" } as any);
   }, [vscode]);
 
+  const handleFullLogout = useCallback(() => {
+    // Clear API key from local state
+    setApiKey("");
+    setHasConfigFileApiKey(false);
+    // Clear OAuth tokens + API keys on the extension host
+    vscode.postMessage({ type: "oauthLogout" } as any);
+    vscode.postMessage({ type: "updateConfig", config: { apiKey: "" } } as any);
+    setAuthMethod("apiKey");
+  }, [vscode]);
+
   const handleSave = () => {
     onSave({
       provider,
@@ -152,7 +162,18 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       <div className="settings-panel">
         <div className="settings-header">
           <span className="settings-title">Settings</span>
-          <button className="icon-btn" onClick={onClose} title="Close">&times;</button>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            {(apiKey || hasConfigFileApiKey || oauthStatus === "active") && (
+              <button
+                className="settings-logout-btn"
+                onClick={handleFullLogout}
+                title="Clear all API keys and OAuth tokens"
+              >
+                Logout
+              </button>
+            )}
+            <button className="icon-btn" onClick={onClose} title="Close">&times;</button>
+          </div>
         </div>
 
         <div className="settings-body">
@@ -199,15 +220,31 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
           {/* Model */}
           <div className="settings-group">
             <label className="settings-label">Model</label>
-            <input
-              className="settings-input"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder={DEFAULT_MODELS[provider] || "model-name"}
-            />
-            <span className="settings-hint">
-              Leave empty for default: {DEFAULT_MODELS[provider] || "—"}
-            </span>
+            {provider === "anthropic" && authMethod === "oauth" && oauthStatus === "active" ? (
+              <>
+                <input
+                  className="settings-input"
+                  value={model}
+                  disabled
+                  style={{ opacity: 0.6 }}
+                />
+                <span className="settings-hint">
+                  Model is set by OAuth provider. Change auth method to API Key to use a different model.
+                </span>
+              </>
+            ) : (
+              <>
+                <input
+                  className="settings-input"
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  placeholder={DEFAULT_MODELS[provider] || "model-name"}
+                />
+                <span className="settings-hint">
+                  Leave empty for default: {DEFAULT_MODELS[provider] || "—"}
+                </span>
+              </>
+            )}
           </div>
 
           {/* Authentication */}
@@ -276,7 +313,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     )}
                   </div>
                   <span className="settings-hint">
-                    Sign in with your Claude account. Uses claude-haiku-4-5 (only model supported with OAuth).
+                    Sign in with your Claude account. The model is determined by the OAuth provider.
                   </span>
                 </div>
               )}
