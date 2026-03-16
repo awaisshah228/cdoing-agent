@@ -1,7 +1,30 @@
-<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="128" height="128" rx="16" fill="#1a1a2e"/>
-  <rect x="4" y="4" width="120" height="120" rx="14" stroke="#6c63ff" stroke-width="3"/>
-  <path d="M42 42L24 64L42 86" stroke="#6c63ff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M86 42L104 64L86 86" stroke="#6c63ff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M72 34L56 94" stroke="#e94560" stroke-width="5" stroke-linecap="round"/>
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="256" y2="256" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0f0c29"/>
+      <stop offset="50%" stop-color="#302b63"/>
+      <stop offset="100%" stop-color="#24243e"/>
+    </linearGradient>
+    <linearGradient id="bracket" x1="40" y1="60" x2="216" y2="196" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00d2ff"/>
+      <stop offset="100%" stop-color="#7b2ff7"/>
+    </linearGradient>
+    <linearGradient id="slash" x1="128" y1="50" x2="128" y2="206" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#f857a6"/>
+      <stop offset="100%" stop-color="#ff5858"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect width="256" height="256" rx="48" fill="url(#bg)"/>
+  <g filter="url(#glow)">
+    <path d="M88 80L44 128L88 176" stroke="url(#bracket)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M168 80L212 128L168 176" stroke="url(#bracket)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M148 56L108 200" stroke="url(#slash)" stroke-width="12" stroke-linecap="round"/>
+  </g>
 </svg>
