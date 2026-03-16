@@ -1,6 +1,6 @@
 {
   "name": "@cdoing/dashboard",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "scripts": {
     "dev": "next dev --port 3456",
@@ -23,5 +23,6 @@
     "tailwindcss": "^3.4.0",
     "postcss": "^8.4.35",
     "autoprefixer": "^10.4.18"
-  }
+  },
+  "license": "Apache-2.0"
 }

@@ -1,6 +1,6 @@
 {
   "name": "@cdoing/core",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
@@ -19,5 +19,6 @@
     "@types/minimatch": "^5.1.2",
     "@types/node": "^22.13.10",
     "typescript": "^5.8.2"
-  }
+  },
+  "license": "Apache-2.0"
 }

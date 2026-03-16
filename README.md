@@ -9,6 +9,7 @@ Open-source, multi-provider AI coding assistant — **CLI + TUI + VS Code Extens
 [![npm @cdoing/opentuicli](https://img.shields.io/npm/v/@cdoing/opentuicli?label=%40cdoing%2Fopentuicli)](https://www.npmjs.com/package/@cdoing/opentuicli)
 [![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/awaisshah228.cdoing-vscode?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=awaisshah228.cdoing-vscode)
 [![CI](https://github.com/awaisshah228/cdoing-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/awaisshah228/cdoing-agent/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 ### VS Code Extension
 
