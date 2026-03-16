@@ -1,7 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "commonjs",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
     "outDir": "dist",
     "rootDir": "src",
     "strict": true,
@@ -11,14 +12,11 @@
     "declarationMap": true,
     "sourceMap": true,
     "resolveJsonModule": true,
-    "jsx": "preserve",
-    "jsxImportSource": "solid-js",
-    "paths": {
-      "@ui/*": ["./src/ui/*"],
-      "@components/*": ["./src/components/*"],
-      "@context/*": ["./src/context/*"],
-      "@routes/*": ["./src/routes/*"]
-    }
+    "jsx": "react-jsx",
+    "jsxImportSource": "@opentui/react",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "types": [],
+    "noEmit": true
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

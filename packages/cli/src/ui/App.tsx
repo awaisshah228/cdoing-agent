@@ -133,8 +133,8 @@ export const App: React.FC<AppProps> = ({
   }, [exit]);
 
   const handleSubmit = useCallback(
-    async (value: string) => {
-      if (!value.trim()) return;
+    async (value: string, images?: import("@cdoing/ai").ImageAttachment[]) => {
+      if (!value.trim() && (!images || images.length === 0)) return;
 
       const shellCmd = value.startsWith("!")
         ? value.slice(1).trim()
@@ -195,7 +195,7 @@ export const App: React.FC<AppProps> = ({
         return;
       }
 
-      await sendMessage(value);
+      await sendMessage(value, images);
     },
     [workingDir, handleSlashCommand, sendMessage, addSystemMessage, setMessages],
   );

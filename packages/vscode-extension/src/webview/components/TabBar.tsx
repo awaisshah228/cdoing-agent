@@ -7,7 +7,7 @@
  */
 
 import React from "react";
-import type { Tab } from "../hooks/useChatState";
+import type { Tab } from "../store/chatStore";
 
 interface TabBarProps {
   tabs: Tab[];

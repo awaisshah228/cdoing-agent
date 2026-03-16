@@ -199,6 +199,69 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
     }
   }, [selectedIndex, showDropdown]);
 
+  // ── Image paste (Ctrl+V) ──
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (const item of Array.from(items)) {
+      if (item.type.startsWith("image/")) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) continue;
+
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = reader.result as string;
+          // dataUrl format: "data:image/png;base64,iVBOR..."
+          const base64 = dataUrl.split(",")[1];
+          const mimeType = file.type || "image/png";
+          const name = file.name || `pasted-image.${mimeType.split("/")[1]}`;
+
+          setAttachments((prev) => [
+            ...prev,
+            {
+              type: "image" as const,
+              path: name,
+              base64,
+              mimeType,
+            },
+          ]);
+        };
+        reader.readAsDataURL(file);
+      }
+    }
+  }, []);
+
+  // ── Image file picker ──
+  const pickImage = useCallback(() => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.multiple = true;
+    input.onchange = () => {
+      if (!input.files) return;
+      for (const file of Array.from(input.files)) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = reader.result as string;
+          const base64 = dataUrl.split(",")[1];
+          setAttachments((prev) => [
+            ...prev,
+            {
+              type: "image" as const,
+              path: file.name,
+              base64,
+              mimeType: file.type || "image/png",
+            },
+          ]);
+        };
+        reader.readAsDataURL(file);
+      }
+    };
+    input.click();
+  }, []);
+
   // Cleanup debounce
   useEffect(() => {
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
@@ -298,6 +361,7 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
           value={text}
           onChange={(e) => handleTextChange(e.target.value)}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           placeholder={placeholder}
           rows={1}
         />
@@ -336,6 +400,7 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
           <div className="input-toolbar-left">
             <button className="input-tool-btn" onClick={pickFile} title="Attach file (+)">+</button>
             <button className="input-tool-btn" onClick={pickFolder} title="Attach folder">📎</button>
+            <button className="input-tool-btn" onClick={pickImage} title="Attach image (or Ctrl+V to paste)">🖼</button>
           </div>
           <div className="input-toolbar-right">
             {queueCount > 0 && <span className="input-queue-badge">{queueCount} queued</span>}
@@ -375,11 +440,15 @@ const ContextChip: React.FC<{ attachment: ContextAttachment; onRemove: () => voi
     label = `${fileName}:${attachment.startLine}${attachment.endLine && attachment.endLine !== attachment.startLine ? `-${attachment.endLine}` : ""}`;
   } else if (attachment.type === "folder") {
     label = `${fileName}/`;
+  } else if (attachment.type === "image") {
+    label = fileName;
   }
+
+  const icon = attachment.type === "folder" ? "📁" : attachment.type === "image" ? "🖼" : langIcon;
 
   return (
     <div className="context-chip" title={attachment.path}>
-      <span className="context-chip-lang">{attachment.type === "folder" ? "📁" : langIcon}</span>
+      <span className="context-chip-lang">{icon}</span>
       <span className="context-chip-label">{label}</span>
       <button className="context-chip-remove" onClick={onRemove}>×</button>
     </div>

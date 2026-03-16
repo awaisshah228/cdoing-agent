@@ -33,6 +33,9 @@ let editorPanel: vscode.WebviewPanel | undefined;
 /** Pending file context to send once the webview is ready */
 let pendingFileContext: any = null;
 
+/** Status bar item showing model + agent state */
+let statusBarItem: vscode.StatusBarItem;
+
 /**
  * Get the current model configuration from VS Code settings.
  * Used by inline edit and autocomplete features.
@@ -55,6 +58,17 @@ function getModelConfig(): Partial<ModelConfig> {
 
 export function activate(context: vscode.ExtensionContext) {
   chatProvider = new ChatPanelProvider(context);
+
+  // ── Status Bar Item (shows model + agent processing state) ──
+  statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+  statusBarItem.command = "cdoing.selectModel";
+  statusBarItem.tooltip = "Cdoing Agent — Click to change model";
+  updateStatusBar();
+  statusBarItem.show();
+  context.subscriptions.push(statusBarItem);
+
+  // Listen for agent state changes from the chat provider
+  chatProvider.onDidChangeState(() => updateStatusBar());
 
   // Register sidebar webview (left activity bar — always available)
   context.subscriptions.push(
@@ -172,6 +186,30 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.commands.registerCommand("cdoing.fixSelection", () => {
       sendEditorSelection("Fix any issues in this code:\n\n");
+    }),
+
+    // ── Fix Diagnostics (triggered from quick-fix lightbulb) ──
+    vscode.commands.registerCommand("cdoing.fixDiagnostics", (filePath: string, lang: string, code: string, errors: string, line: number) => {
+      chatProvider.postMessage({
+        type: "contextAttached",
+        attachment: {
+          type: "selection",
+          path: filePath,
+          language: lang,
+          content: code,
+          startLine: Math.max(1, line - 3),
+          endLine: line + 3,
+        },
+      });
+
+      const prompt = `Fix the following ${errors.includes("\n") ? "issues" : "issue"} in \`${filePath}\` around line ${line}:\n\n${errors}`;
+      chatProvider.postMessage({ type: "insertMessage", message: prompt });
+
+      if (editorPanel) {
+        editorPanel.reveal(vscode.ViewColumn.Beside);
+      } else {
+        vscode.commands.executeCommand("cdoing.chatPanel.focus");
+      }
     }),
 
     // ── Open File Button (editor title bar icon) ──
@@ -294,6 +332,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("cdoing")) {
         chatProvider.refreshConfig();
+        updateStatusBar();
       }
     })
   );
@@ -303,6 +342,47 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.languages.registerCodeActionsProvider("*", new CdoingCodeActionProvider(), {
       providedCodeActionKinds: [vscode.CodeActionKind.RefactorRewrite],
     })
+  );
+
+  // ── Diagnostics Code Actions (Fix with AI on errors/warnings) ──
+  context.subscriptions.push(
+    vscode.languages.registerCodeActionsProvider("*", new CdoingDiagnosticsActionProvider(), {
+      providedCodeActionKinds: [vscode.CodeActionKind.QuickFix],
+    })
+  );
+
+  // ── Terminal Context Sharing (opencode-style @file#L10-20) ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand("cdoing.addFileRefToChat", () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) return;
+      const filePath = vscode.workspace.asRelativePath(editor.document.uri);
+      const selection = editor.selection;
+      let ref = `@${filePath}`;
+      if (!selection.isEmpty) {
+        const startLine = selection.start.line + 1;
+        const endLine = selection.end.line + 1;
+        ref += startLine === endLine ? `#L${startLine}` : `#L${startLine}-${endLine}`;
+      }
+      chatProvider.postMessage({
+        type: "insertMessage",
+        message: ref,
+      });
+      if (editorPanel) {
+        editorPanel.reveal(vscode.ViewColumn.Beside);
+      } else {
+        vscode.commands.executeCommand("cdoing.chatPanel.focus");
+      }
+    }),
+
+    // ── Focus Chat (Cmd+L) ──
+    vscode.commands.registerCommand("cdoing.focusChat", () => {
+      if (editorPanel) {
+        editorPanel.reveal(vscode.ViewColumn.Beside);
+      } else {
+        vscode.commands.executeCommand("cdoing.chatPanel.focus");
+      }
+    }),
   );
 }
 
@@ -503,6 +583,74 @@ async function showInlineDiff(filePath: string, originalContent: string, newCont
   );
 
   setTimeout(() => disposable.dispose(), 60000);
+}
+
+// ── Status Bar ───────────────────────────────────────────
+
+function updateStatusBar() {
+  if (!statusBarItem) return;
+  const config = vscode.workspace.getConfiguration("cdoing");
+  const provider = config.get<string>("provider") || "anthropic";
+  const model = config.get<string>("model") || getDefaultModelPlaceholder(provider);
+  const shortModel = model.length > 20 ? model.substring(0, 18) + ".." : model;
+
+  if (chatProvider?.isProcessing) {
+    statusBarItem.text = `$(loading~spin) Cdoing: ${shortModel}`;
+    statusBarItem.tooltip = "Cdoing Agent — Processing...";
+    statusBarItem.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+  } else {
+    statusBarItem.text = `$(comment-discussion) Cdoing: ${shortModel}`;
+    statusBarItem.tooltip = "Cdoing Agent — Click to change model";
+    statusBarItem.backgroundColor = undefined;
+  }
+}
+
+// ── Diagnostics Code Actions ─────────────────────────────
+
+/**
+ * Provides "Fix with Cdoing" quick-fix actions on lines with diagnostics.
+ * When a file has errors/warnings, this appears in the lightbulb menu.
+ */
+class CdoingDiagnosticsActionProvider implements vscode.CodeActionProvider {
+  provideCodeActions(
+    document: vscode.TextDocument,
+    range: vscode.Range | vscode.Selection,
+  ): vscode.CodeAction[] {
+    const diagnostics = vscode.languages.getDiagnostics(document.uri)
+      .filter(d => d.range.intersection(range));
+
+    if (diagnostics.length === 0) return [];
+
+    const actions: vscode.CodeAction[] = [];
+
+    // Single "Fix with Cdoing" action for all diagnostics on the range
+    const errorMessages = diagnostics
+      .map(d => `${d.severity === vscode.DiagnosticSeverity.Error ? "Error" : "Warning"}: ${d.message}`)
+      .join("\n");
+
+    const fix = new vscode.CodeAction(
+      `Cdoing: Fix ${diagnostics.length > 1 ? `${diagnostics.length} issues` : "this issue"}`,
+      vscode.CodeActionKind.QuickFix
+    );
+
+    // Get the code around the diagnostic range for context
+    const startLine = Math.max(0, range.start.line - 3);
+    const endLine = Math.min(document.lineCount - 1, range.end.line + 3);
+    const contextRange = new vscode.Range(startLine, 0, endLine, document.lineAt(endLine).text.length);
+    const codeContext = document.getText(contextRange);
+    const filePath = vscode.workspace.asRelativePath(document.uri);
+    const lang = document.languageId;
+
+    fix.command = {
+      command: "cdoing.fixDiagnostics",
+      title: "Fix with Cdoing",
+      arguments: [filePath, lang, codeContext, errorMessages, range.start.line + 1],
+    };
+    fix.diagnostics = diagnostics;
+    actions.push(fix);
+
+    return actions;
+  }
 }
 
 // ── Helpers ──────────────────────────────────────────────

@@ -1,4 +1,4 @@
-export { AgentRunner, type AgentCallbacks, type AgentRunnerOptions } from "./agent-runner";
+export { AgentRunner, type AgentCallbacks, type AgentRunnerOptions, type ImageAttachment } from "./agent-runner";
 export { buildSystemPrompt } from "./system-prompt";
 export { ContextManager, type TokenUsage, type TurnUsage } from "./context-manager";
 export {

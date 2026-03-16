@@ -30,6 +30,14 @@ import type { ToolRegistry, PermissionManager, HookManager } from "@cdoing/core"
 import type { DiffChunk } from "@cdoing/core";
 import { streamDeterministicDiff } from "@cdoing/core";
 
+/** An image attachment to include in a message to the LLM */
+export interface ImageAttachment {
+  /** Base64-encoded image data */
+  data: string;
+  /** MIME type (e.g. "image/png", "image/jpeg", "image/gif", "image/webp") */
+  mimeType: string;
+}
+
 export interface AgentCallbacks {
   onToken: (token: string) => void;
   onToolCall: (name: string, input: Record<string, unknown>) => void;
@@ -389,10 +397,25 @@ export class AgentRunner {
 
   /**
    * Run the agentic loop with real streaming, context management, and hooks.
+   * Accepts optional image attachments for multimodal messages.
    */
-  async run(userMessage: string, callbacks: AgentCallbacks): Promise<string> {
+  async run(userMessage: string, callbacks: AgentCallbacks, images?: ImageAttachment[]): Promise<string> {
     this.isCancelled = false;
-    this.messages.push(new HumanMessage(userMessage));
+
+    // Build multimodal content if images are provided
+    if (images && images.length > 0) {
+      const content: Array<{ type: string; text?: string; image_url?: { url: string } }> = [];
+      for (const img of images) {
+        content.push({
+          type: "image_url",
+          image_url: { url: `data:${img.mimeType};base64,${img.data}` },
+        });
+      }
+      content.push({ type: "text", text: userMessage });
+      this.messages.push(new HumanMessage({ content }));
+    } else {
+      this.messages.push(new HumanMessage(userMessage));
+    }
     this.currentTurns = 0;
 
     let fullResponse = "";

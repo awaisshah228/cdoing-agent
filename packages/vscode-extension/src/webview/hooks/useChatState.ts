@@ -24,6 +24,11 @@ export interface Tab {
 interface TabData {
   entries: ChatEntry[];
   streamingId: string | null;
+  isProcessing: boolean;
+  /** Per-tab tool call ID mapping so background tabs don't lose call→result links */
+  toolCallMap: Map<string, string>;
+  /** Per-tab token buffer for background streaming */
+  tokenBuffer: string;
 }
 
 export function useChatState() {
@@ -92,19 +97,21 @@ export function useChatState() {
   const getTabData = useCallback((tabId: string): TabData => {
     let data = tabDataRef.current.get(tabId);
     if (!data) {
-      data = { entries: [], streamingId: null };
+      data = { entries: [], streamingId: null, isProcessing: false, toolCallMap: new Map(), tokenBuffer: "" };
       tabDataRef.current.set(tabId, data);
     }
     return data;
   }, []);
 
-  // Keep tab data in sync
+  // Keep tab data in sync with active tab's React state
   useEffect(() => {
     if (activeTabId) {
       const data = getTabData(activeTabId);
       data.entries = entries;
+      data.isProcessing = isProcessing;
+      data.streamingId = streamingRef.current;
     }
-  }, [entries, activeTabId, getTabData]);
+  }, [entries, isProcessing, activeTabId, getTabData]);
 
   // ── Entry Mutators ───────────────────────────────────
 
@@ -166,8 +173,8 @@ export function useChatState() {
       displayText = labels.join(" ") + (text ? "\n" + text : "");
     }
     addUserMessage(displayText);
-    vscode.postMessage({ type: "sendMessage", text, context });
-  }, [addUserMessage, vscode]);
+    vscode.postMessage({ type: "sendMessage", text, tabId: activeTabId || undefined, context });
+  }, [addUserMessage, vscode, activeTabId]);
 
   const sendCommand = useCallback((command: string) => {
     vscode.postMessage({ type: "command", command });
@@ -178,10 +185,12 @@ export function useChatState() {
   }, [vscode]);
 
   const switchToTab = useCallback((tabId: string) => {
-    // Save current tab before switch
+    // Save current tab state before switch
     if (activeTabId) {
       const data = getTabData(activeTabId);
       data.streamingId = streamingRef.current;
+      data.toolCallMap = new Map(toolCallMapRef.current);
+      data.tokenBuffer = tokenBufferRef.current;
     }
     vscode.postMessage({ type: "switchTab", tabId });
   }, [vscode, activeTabId, getTabData]);
@@ -305,18 +314,29 @@ export function useChatState() {
           setTabs((prev) => prev.some((t) => t.id === msg.tabId) ? prev : [...prev, { id: msg.tabId, title: msg.title }]);
           break;
         case "tabSwitched": {
+          // Flush any pending tokens for the old tab before switching
+          if (tokenBufferRef.current) flushTokenBuffer();
           setEntries((currentEntries) => {
             if (activeTabId) {
+              // Save all per-tab state for the outgoing tab
               const data = getTabData(activeTabId);
               data.entries = currentEntries;
               data.streamingId = streamingRef.current;
+              data.toolCallMap = new Map(toolCallMapRef.current);
+              data.tokenBuffer = tokenBufferRef.current;
+              // isProcessing is saved via the sync effect, but also use the
+              // authoritative value from the extension host when available
             }
+            // Restore state for the incoming tab
             const newData = getTabData(msg.tabId);
             streamingRef.current = newData.streamingId;
+            toolCallMapRef.current = new Map(newData.toolCallMap);
+            tokenBufferRef.current = newData.tokenBuffer;
             return newData.entries;
           });
           setActiveTabId(msg.tabId);
-          setIsProcessing(false);
+          // Use the authoritative isProcessing from the extension host (it tracks per-tab)
+          setIsProcessing((msg as any).isProcessing ?? getTabData(msg.tabId).isProcessing ?? false);
           break;
         }
         case "tabClosed":

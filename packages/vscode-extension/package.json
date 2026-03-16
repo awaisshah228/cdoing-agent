@@ -2,7 +2,7 @@
   "name": "cdoing-vscode",
   "displayName": "Cdoing Agent",
   "description": "AI-powered coding assistant with multi-model support — chat, instruct, and run commands right from VS Code",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "awaisshah228",
   "engines": {
     "vscode": "^1.95.0"
@@ -132,6 +132,24 @@
       {
         "command": "cdoing.focusSidebar",
         "title": "Cdoing: Focus Chat Sidebar"
+      },
+      {
+        "command": "cdoing.focusChat",
+        "title": "Cdoing: Focus Chat",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "cdoing.addFileRefToChat",
+        "title": "Cdoing: Add File Reference to Chat",
+        "icon": "$(references)"
+      },
+      {
+        "command": "cdoing.fixDiagnostics",
+        "title": "Cdoing: Fix Diagnostics with AI"
+      },
+      {
+        "command": "cdoing.toggleAutocomplete",
+        "title": "Cdoing: Toggle Autocomplete"
       }
     ],
     "menus": {
@@ -225,7 +243,10 @@
         "cdoing.authMethod": {
           "type": "string",
           "default": "apiKey",
-          "enum": ["apiKey", "oauth"],
+          "enum": [
+            "apiKey",
+            "oauth"
+          ],
           "enumDescriptions": [
             "Use an API key (from settings or environment variable)",
             "Use Claude OAuth login (free tier, Haiku only)"
@@ -258,6 +279,16 @@
             "Auto-approve all operations"
           ],
           "description": "Permission mode for tool execution"
+        },
+        "cdoing.autocomplete.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable inline code completions (ghost text suggestions as you type)"
+        },
+        "cdoing.autocomplete.model": {
+          "type": "string",
+          "default": "",
+          "description": "Model for autocomplete (leave empty to use a fast default like claude-haiku-4-5). A smaller/faster model is recommended."
         }
       }
     },
@@ -272,6 +303,17 @@
         "key": "ctrl+shift+enter",
         "mac": "cmd+shift+enter",
         "when": "editorHasSelection"
+      },
+      {
+        "command": "cdoing.focusChat",
+        "key": "ctrl+l",
+        "mac": "cmd+l"
+      },
+      {
+        "command": "cdoing.addFileRefToChat",
+        "key": "ctrl+shift+k",
+        "mac": "cmd+shift+k",
+        "when": "editorIsOpen"
       }
     ]
   },
@@ -287,7 +329,8 @@
     "highlight.js": "^11.11.1",
     "marked": "^17.0.4",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react-dom": "^19.2.4",
+    "zustand": "^5.0.12"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",

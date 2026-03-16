@@ -21,6 +21,7 @@ import {
   AgentRunner,
   type AgentCallbacks,
   type ModelConfig,
+  type ImageAttachment,
   getApiKeyEnvVar,
   getDefaultModel,
 } from "@cdoing/ai";
@@ -44,6 +45,8 @@ interface TabState {
   agent: AgentRunner;
   isProcessing: boolean;
   messageQueue: string[];
+  /** Buffered UI messages for when this tab is in the background */
+  pendingUiMessages: any[];
 }
 
 export class ChatPanelProvider implements vscode.WebviewViewProvider {
@@ -58,7 +61,19 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private activeTabId: string | null = null;
   private nextTabNum = 1;
 
-  constructor(private context: vscode.ExtensionContext) {}
+  // State change event (for status bar updates)
+  private _onDidChangeState = new vscode.EventEmitter<void>();
+  readonly onDidChangeState = this._onDidChangeState.event;
+
+  /** Whether the active tab is currently processing */
+  get isProcessing(): boolean {
+    const tab = this.getTab();
+    return tab?.isProcessing ?? false;
+  }
+
+  constructor(private context: vscode.ExtensionContext) {
+    context.subscriptions.push(this._onDidChangeState);
+  }
 
   // ── Helpers ─────────────────────────────────────────────
 
@@ -74,6 +89,45 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
   private generateTabId(): string {
     return `tab-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  }
+
+  /** Send a UI message for a specific tab: post immediately if active, otherwise buffer */
+  private postTabMessage(tabId: string, message: any) {
+    if (this.activeTabId === tabId) {
+      this.postMessage(message);
+    } else {
+      const tab = this.tabs.get(tabId);
+      if (tab) tab.pendingUiMessages.push(message);
+    }
+  }
+
+  /** Replay buffered UI messages when switching to a tab */
+  private replayPendingMessages(tabId: string) {
+    const tab = this.tabs.get(tabId);
+    if (!tab || tab.pendingUiMessages.length === 0) return;
+
+    // Consolidate consecutive token messages into one for performance
+    const consolidated: any[] = [];
+    let tokenBuffer = "";
+    for (const msg of tab.pendingUiMessages) {
+      if (msg.type === "token") {
+        tokenBuffer += msg.text;
+      } else {
+        if (tokenBuffer) {
+          consolidated.push({ type: "token", text: tokenBuffer });
+          tokenBuffer = "";
+        }
+        consolidated.push(msg);
+      }
+    }
+    if (tokenBuffer) {
+      consolidated.push({ type: "token", text: tokenBuffer });
+    }
+
+    tab.pendingUiMessages = [];
+    for (const msg of consolidated) {
+      this.postMessage(msg);
+    }
   }
 
   // ── Webview Setup ──────────────────────────────────────
@@ -95,7 +149,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage(async (message) => {
       switch (message.type) {
         case "sendMessage":
-          await this.handleUserMessage(message.text, message.context);
+          await this.handleUserMessage(message.text, message.context, message.tabId);
           break;
         case "command":
           if (message.command === "openFile" && message.args?.[0]) {
@@ -255,6 +309,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       agent,
       isProcessing: false,
       messageQueue: [],
+      pendingUiMessages: [],
     };
 
     this.tabs.set(id, tab);
@@ -276,13 +331,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     if (!tab) return;
 
     this.activeTabId = tabId;
-    this.postMessage({ type: "tabSwitched", tabId });
-    // Clear webview and let it restore from its own state
-    this.postMessage({ type: "clear" });
-    // Tell webview if this tab is currently processing
-    if (tab.isProcessing) {
-      this.postMessage({ type: "startResponse" });
-    }
+    this.postMessage({ type: "tabSwitched", tabId, isProcessing: tab.isProcessing } as any);
+    // Replay any buffered messages from background processing
+    this.replayPendingMessages(tabId);
   }
 
   /** Close a tab */
@@ -308,7 +359,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       this.postMessage({ type: "tabCreated", tabId: tab.id, title: tab.title });
     }
     if (this.activeTabId) {
-      this.postMessage({ type: "tabSwitched", tabId: this.activeTabId });
+      const activeTab = this.tabs.get(this.activeTabId);
+      this.postMessage({ type: "tabSwitched", tabId: this.activeTabId, isProcessing: activeTab?.isProcessing ?? false } as any);
     }
   }
 
@@ -900,7 +952,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   // ── Message Handling ───────────────────────────────────
 
   /** Handle user messages — slash commands or agent messages */
-  private async handleUserMessage(text: string, context?: Array<{ type: string; path: string; language?: string; content?: string; startLine?: number; endLine?: number }>) {
+  private async handleUserMessage(text: string, context?: Array<{ type: string; path: string; language?: string; content?: string; startLine?: number; endLine?: number; base64?: string; mimeType?: string }>, requestTabId?: string) {
     if (text.startsWith("/")) {
       const [cmd, ...args] = text.split(" ");
       await this.handleCommand(cmd, args);
@@ -909,10 +961,15 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
     // Build full message with context attachments
     let fullMessage = text;
+    const images: ImageAttachment[] = [];
+
     if (context && context.length > 0) {
       const contextParts: string[] = [];
       for (const att of context) {
-        if (att.type === "selection" && att.content) {
+        if (att.type === "image" && att.base64 && att.mimeType) {
+          // Collect images for multimodal message
+          images.push({ data: att.base64, mimeType: att.mimeType });
+        } else if (att.type === "selection" && att.content) {
           contextParts.push(`\`\`\`${att.language || ""} (${att.path}${att.startLine ? `:${att.startLine}-${att.endLine}` : ""})\n${att.content}\n\`\`\``);
         } else if (att.type === "file") {
           // Use provided content or read from disk
@@ -934,10 +991,10 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       }
     }
 
-    const tab = this.getTab();
+    const tab = this.getTab(requestTabId);
     if (!tab) {
       this.createTab();
-      setTimeout(() => this.handleUserMessage(fullMessage), 50);
+      setTimeout(() => this.handleUserMessage(fullMessage, undefined, requestTabId), 50);
       return;
     }
 
@@ -958,7 +1015,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     }
 
     tab.isProcessing = true;
-    this.postMessage({ type: "startResponse" });
+    this._onDidChangeState.fire();
+    this.postTabMessage(tab.id, { type: "startResponse" });
 
     // Ensure API key or OAuth token is available
     const { provider, modelConfig } = this.getConfig();
@@ -980,53 +1038,47 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
     const callbacks: AgentCallbacks = {
       onToken: (token) => {
-        if (this.activeTabId === tabId) {
-          this.postMessage({ type: "token", text: token });
-        }
+        this.postTabMessage(tabId, { type: "token", text: token });
       },
       onToolCall: (name, input) => {
-        if (this.activeTabId === tabId) {
-          // Finalize any streamed text so it stays visible above the tool calls
-          // (this is the LLM's thinking, e.g., "Let me search for the file...")
-          this.postMessage({ type: "finalizeStreaming" });
-          // Send full input JSON (up to 2KB) so the webview can render per-tool detail
-          const inputStr = JSON.stringify(input);
-          const description = (input as any).description as string | undefined;
-          this.postMessage({
-            type: "toolCall",
-            name,
-            input: inputStr.length > 2000 ? inputStr.substring(0, 2000) : inputStr,
-            description,
-          });
-        }
+        // Finalize any streamed text so it stays visible above the tool calls
+        this.postTabMessage(tabId, { type: "finalizeStreaming" });
+        // Send full input JSON (up to 2KB) so the webview can render per-tool detail
+        const inputStr = JSON.stringify(input);
+        const description = (input as any).description as string | undefined;
+        this.postTabMessage(tabId, {
+          type: "toolCall",
+          name,
+          input: inputStr.length > 2000 ? inputStr.substring(0, 2000) : inputStr,
+          description,
+        });
       },
       onToolResult: (name, result, isError) => {
-        if (this.activeTabId === tabId) {
-          // Send more output (up to 3KB) so the webview can render trimmed IN/OUT
-          this.postMessage({
-            type: "toolResult",
-            name,
-            result: result.length > 3000 ? result.substring(0, 3000) + `\n… (${result.length - 3000} more chars)` : result,
-            isError,
-          });
-        }
+        // Send more output (up to 3KB) so the webview can render trimmed IN/OUT
+        this.postTabMessage(tabId, {
+          type: "toolResult",
+          name,
+          result: result.length > 3000 ? result.substring(0, 3000) + `\n… (${result.length - 3000} more chars)` : result,
+          isError,
+        });
       },
       onComplete: () => {
         const t = this.tabs.get(tabId);
         if (t) {
           // Show accumulated usage once at the end
-          if (this.activeTabId === tabId && totalTokens > 0) {
+          if (totalTokens > 0) {
             const parts: string[] = [];
             if (totalInputTokens > 0 || totalOutputTokens > 0) {
               parts.push(`${totalInputTokens.toLocaleString()}→${totalOutputTokens.toLocaleString()}`);
             }
             parts.push(`${totalTokens.toLocaleString()} tokens`);
             if (totalCost > 0) parts.push(`$${totalCost.toFixed(4)}`);
-            this.postMessage({ type: "usageInfo", text: parts.join(" · ") });
+            this.postTabMessage(tabId, { type: "usageInfo", text: parts.join(" · ") });
           }
 
           t.isProcessing = false;
-          if (this.activeTabId === tabId) this.postMessage({ type: "endResponse" });
+          this._onDidChangeState.fire();
+          this.postTabMessage(tabId, { type: "endResponse" });
           // Auto-save conversation after each completed turn
           this.saveConversation(tabId);
           this.processTabQueue(tabId);
@@ -1036,7 +1088,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         const t = this.tabs.get(tabId);
         if (t) {
           t.isProcessing = false;
-          if (this.activeTabId === tabId) this.postMessage({ type: "error", text: error.message });
+          this._onDidChangeState.fire();
+          this.postTabMessage(tabId, { type: "error", text: error.message });
           this.processTabQueue(tabId);
         }
       },
@@ -1050,11 +1103,12 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     };
 
     try {
-      await tab.agent.run(text, callbacks);
+      await tab.agent.run(fullMessage, callbacks, images.length > 0 ? images : undefined);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       tab.isProcessing = false;
-      if (this.activeTabId === tabId) this.postMessage({ type: "error", text: msg });
+      this._onDidChangeState.fire();
+      this.postTabMessage(tabId, { type: "error", text: msg });
       this.processTabQueue(tabId);
     }
   }
@@ -1064,11 +1118,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     const tab = this.tabs.get(tabId);
     if (!tab || tab.messageQueue.length === 0) return;
     const next = tab.messageQueue.shift()!;
+    // Process regardless of which tab is active — each tab runs independently
     setTimeout(() => {
-      // Only process if this tab is still active
-      if (this.activeTabId === tabId) {
-        this.handleUserMessage(next);
-      }
+      this.handleUserMessage(next, undefined, tabId);
     }, 100);
   }
 

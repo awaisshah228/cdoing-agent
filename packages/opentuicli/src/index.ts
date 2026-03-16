@@ -1,8 +1,7 @@
-#!/usr/bin/env node
 /**
  * cdoing-tui — OpenTUI-based terminal interface for cdoing agent
  *
- * This is the advanced TUI (like opencode) using @opentui/solid for
+ * This is the advanced TUI (like opencode) using @opentui/react for
  * a rich, interactive terminal experience with:
  *   - Split panes (chat + file preview)
  *   - Dialog system (model picker, session list, command palette)

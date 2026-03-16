@@ -34,7 +34,7 @@ export type IncomingMessage =
   | { type: "conversationList"; conversations: ConversationSummary[] }   // Past conversations list
   | { type: "conversationMessages"; id: string; messages: Array<{ role: string; content: string }> } // Messages for a resumed conversation
   | { type: "tabCreated"; tabId: string; title: string }               // New tab created
-  | { type: "tabSwitched"; tabId: string }                             // Switched to a tab
+  | { type: "tabSwitched"; tabId: string; isProcessing?: boolean }      // Switched to a tab
   | { type: "tabClosed"; tabId: string }                               // Tab closed
   | { type: "tabTitleUpdated"; tabId: string; title: string }          // Tab title changed
   | { type: "permissionRequest"; id: string; toolName: string; message: string; hasProject: boolean } // Permission prompt
@@ -101,14 +101,18 @@ export interface ConversationSummary {
   msgCount: number;
 }
 
-/** A file/folder/selection attached as context */
+/** A file/folder/selection/image attached as context */
 export interface ContextAttachment {
-  type: "file" | "folder" | "selection";
+  type: "file" | "folder" | "selection" | "image";
   path: string;
   language?: string;
   content?: string;        // File content (filled by extension host)
   startLine?: number;
   endLine?: number;
+  /** Base64-encoded image data (for type: "image") */
+  base64?: string;
+  /** MIME type for images (e.g. "image/png") */
+  mimeType?: string;
 }
 
 // ─── UI Data Types ───

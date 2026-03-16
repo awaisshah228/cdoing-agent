@@ -25,7 +25,7 @@ import type {
 } from "@cdoing/core";
 import { App } from "./ui/App";
 import { printWelcome } from "./help";
-import { initTheme } from "./ui/theme";
+import { initThemeAsync, restoreTerminalBackground } from "./ui/theme";
 
 export class ChatInterface {
   private modelConfig: Partial<ModelConfig>;
@@ -52,8 +52,17 @@ export class ChatInterface {
   }
 
   async start(initialPrompt?: string): Promise<void> {
-    initTheme();
+    // Detect terminal background (OSC 11) and optionally sync bg color
+    await initThemeAsync({ syncTerminalBg: true });
     printWelcome();
+
+    // Restore terminal background on exit
+    const cleanup = () => {
+      restoreTerminalBackground();
+    };
+    process.on("exit", cleanup);
+    process.on("SIGINT", cleanup);
+    process.on("SIGTERM", cleanup);
 
     const { waitUntilExit } = render(
       React.createElement(App, {
@@ -68,5 +77,6 @@ export class ChatInterface {
     );
 
     await waitUntilExit();
+    restoreTerminalBackground();
   }
 }

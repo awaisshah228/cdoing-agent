@@ -37,7 +37,7 @@ import * as path from "path";
 import * as fs from "fs";
 import chalk from "chalk";
 import { getDefaultModel } from "@cdoing/ai";
-import type { ModelConfig } from "@cdoing/ai";
+import type { ModelConfig, ImageAttachment } from "@cdoing/ai";
 import {
   ShellExecTool,
 } from "@cdoing/core";
@@ -268,6 +268,8 @@ export function useChat(opts: UseChatOptions) {
   // cancelCurrent — abort the running agent
   // ─────────────────────────────────────────────────────────────────────────
 
+  const sendMessageRef = useRef<((text: string) => void) | null>(null);
+
   const cancelCurrent = useCallback(() => {
     if (abortRef.current) {
       abortRef.current.abort();
@@ -277,6 +279,12 @@ export function useChat(opts: UseChatOptions) {
     setStreamingContent("");
     setToolActivity(null);
     addSystemMessage("⏹  Cancelled.");
+
+    // Process next queued message (queue would otherwise be stuck since onComplete won't fire)
+    const next = queueRef.current.shift();
+    if (next && sendMessageRef.current) {
+      setTimeout(() => sendMessageRef.current!(next), 0);
+    }
   }, []);
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -299,7 +307,7 @@ export function useChat(opts: UseChatOptions) {
    *       onUsage      → update token counter and auto-compact if needed
    */
   const sendMessage = useCallback(
-    async (text: string) => {
+    async (text: string, images?: ImageAttachment[]) => {
       // ── Guard: no agent (no key configured) ─────────────────────────────
       if (!agentRef.current) {
         addSystemMessage("No API key configured. Run /setup to authenticate.");
@@ -470,11 +478,14 @@ export function useChat(opts: UseChatOptions) {
             }
           }
         },
-      });
+      }, images);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [isProcessing, resolveContextProviders],
   );
+
+  // Keep ref in sync so cancelCurrent (defined earlier) can dequeue
+  sendMessageRef.current = sendMessage;
 
   // ─────────────────────────────────────────────────────────────────────────
   // handleSlashCommand — dispatch /commands typed in the input

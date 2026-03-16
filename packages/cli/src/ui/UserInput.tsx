@@ -2,7 +2,9 @@ import React, { useState, useCallback, useRef } from "react";
 import { Box, Text, useInput } from "ink";
 import * as fs from "fs";
 import * as path from "path";
+import { execSync } from "child_process";
 import { getTheme } from "./theme";
+import type { ImageAttachment } from "@cdoing/ai";
 
 const SLASH_COMMANDS = [
   { cmd: "/help",        desc: "Show help" },
@@ -548,7 +550,7 @@ interface UserInputProps {
   queueLength: number;
   workingDir: string;
   permissionMode: string;
-  onSubmit: (value: string) => void;
+  onSubmit: (value: string, images?: ImageAttachment[]) => void;
   onCancel: () => void;
   onModeChange: (mode: string) => void;
 }
@@ -578,7 +580,8 @@ export const UserInput: React.FC<UserInputProps> = ({
   // Inline ghost
   const [ghost, setGhost] = useState<GhostResult | null>(null);
 
-  // Counter for clipboard image placeholders
+  // Clipboard images pending submission
+  const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([]);
   const imageCountRef = useRef(0);
 
   const clearAll = () => {
@@ -699,11 +702,39 @@ export const UserInput: React.FC<UserInputProps> = ({
       return;
     }
 
-    // Ctrl+V — paste from clipboard (text or image placeholder)
+    // Ctrl+V — paste from clipboard (text or image)
     if (key.ctrl && char === "v") {
       try {
-        const { execSync } = require("child_process") as typeof import("child_process");
-        // macOS: pbpaste, Linux: xclip -o or xsel -ob
+        // First, try to get clipboard image (macOS only for now)
+        if (process.platform === "darwin") {
+          try {
+            // Check if clipboard has image data
+            const hasImage = execSync(
+              `osascript -e 'clipboard info' 2>/dev/null | grep -q "TIFF\\|PNG\\|JPEG"  && echo "yes" || echo "no"`,
+              { encoding: "utf-8", timeout: 1000 },
+            ).trim();
+
+            if (hasImage === "yes") {
+              // Extract clipboard image as PNG base64
+              const base64 = execSync(
+                `osascript -e 'set theImage to the clipboard as «class PNGf»' -e 'return theImage' 2>/dev/null | base64`,
+                { encoding: "utf-8", timeout: 3000, maxBuffer: 20 * 1024 * 1024 },
+              ).trim();
+
+              if (base64 && base64.length > 100) {
+                imageCountRef.current += 1;
+                setPendingImages((prev) => [...prev, { data: base64, mimeType: "image/png" }]);
+                const placeholder = `[Image #${imageCountRef.current} pasted]`;
+                const next = input + placeholder;
+                setInput(next);
+                updateAll(next, history);
+                return;
+              }
+            }
+          } catch { /* not an image, fall through to text paste */ }
+        }
+
+        // Fall back to text paste
         let pasted = "";
         try {
           pasted = execSync("pbpaste", { encoding: "utf-8", timeout: 500 }).trim();
@@ -718,16 +749,8 @@ export const UserInput: React.FC<UserInputProps> = ({
         }
 
         if (pasted) {
-          // Replace newlines with spaces for single-line input
           const cleaned = pasted.replace(/\n/g, " ").replace(/\r/g, "");
           const next = input + cleaned;
-          setInput(next);
-          updateAll(next, history);
-        } else {
-          // Clipboard might contain an image — insert placeholder
-          imageCountRef.current += 1;
-          const placeholder = `[Image #${imageCountRef.current}]`;
-          const next = input + placeholder;
           setInput(next);
           updateAll(next, history);
         }
@@ -846,13 +869,15 @@ export const UserInput: React.FC<UserInputProps> = ({
     // Enter — submit
     if (key.return) {
       const trimmed = input.trim();
-      if (!trimmed) return;
+      if (!trimmed && pendingImages.length === 0) return;
       const newHistory = [trimmed, ...history].slice(0, 200);
+      const imgs = pendingImages.length > 0 ? [...pendingImages] : undefined;
       clearAll();
       setHistory(newHistory);
       setHistoryIdx(-1);
       setInput("");
-      onSubmit(trimmed);
+      setPendingImages([]);
+      onSubmit(trimmed || "Describe this image.", imgs);
       return;
     }
 
@@ -935,6 +960,13 @@ export const UserInput: React.FC<UserInputProps> = ({
           </Box>
         ) : null}
 
+        {/* Pending images indicator */}
+        {pendingImages.length > 0 && (
+          <Box>
+            <Text color={t.accent}>{`  🖼 ${pendingImages.length} image${pendingImages.length > 1 ? "s" : ""} attached`}</Text>
+          </Box>
+        )}
+
         {/* Input line */}
         <Box>
           <Text color={t.accent}>{"● "}</Text>
@@ -950,7 +982,7 @@ export const UserInput: React.FC<UserInputProps> = ({
 
       {/* Keyboard hints below input */}
       <Box paddingLeft={2}>
-        <Text color={t.accent} dimColor={t.useDim}>{"Ctrl+V paste  ·  Ctrl+L clear  ·  Shift+Tab cycle mode"}</Text>
+        <Text color={t.accent} dimColor={t.useDim}>{"Ctrl+V paste text/image  ·  Ctrl+L clear  ·  Shift+Tab cycle mode"}</Text>
       </Box>
 
     </Box>

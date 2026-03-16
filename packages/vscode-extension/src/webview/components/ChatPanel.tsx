@@ -14,43 +14,49 @@
  *   Overlays: ConversationHistory, SettingsPanel
  */
 
-import React from "react";
+import React, { useEffect } from "react";
 import { Header } from "./Header";
 import { TabBar } from "./TabBar";
 import { MessageList } from "./MessageList";
 import { InputArea } from "./InputArea";
 import { ConversationHistory } from "./ConversationHistory";
 import { SettingsPanel } from "./SettingsPanel";
-import { useChatState } from "../hooks/useChatState";
+import { useChatStore } from "../store/chatStore";
 
 export const ChatPanel: React.FC = () => {
-  const {
-    tabs,
-    activeTabId,
-    createNewTab,
-    switchToTab,
-    closeTab,
-    entries,
-    isProcessing,
-    queueCount,
-    modelLabel,
-    sendMessage,
-    conversations,
-    showHistory,
-    openHistory,
-    closeHistory,
-    resumeConversation,
-    deleteConversation,
-    showSettings,
-    extensionConfig,
-    openSettings,
-    closeSettings,
-    saveSettings,
-    openVscodeSettings,
-    cancelGeneration,
-    permissionRequest,
-    respondToPermission,
-  } = useChatState();
+  const init = useChatStore((s) => s.init);
+
+  // Initialize store + message listener once
+  useEffect(() => {
+    init();
+  }, [init]);
+
+  const tabs = useChatStore((s) => s.tabs);
+  const activeTabId = useChatStore((s) => s.activeTabId);
+  const entries = useChatStore((s) => s.entries);
+  const isProcessing = useChatStore((s) => s.isProcessing);
+  const queueCount = useChatStore((s) => s.queueCount);
+  const modelLabel = useChatStore((s) => s.modelLabel);
+  const conversations = useChatStore((s) => s.conversations);
+  const showHistory = useChatStore((s) => s.showHistory);
+  const showSettings = useChatStore((s) => s.showSettings);
+  const extensionConfig = useChatStore((s) => s.extensionConfig);
+  const permissionRequest = useChatStore((s) => s.permissionRequest);
+
+  const createNewTab = useChatStore((s) => s.createNewTab);
+  const switchToTab = useChatStore((s) => s.switchToTab);
+  const closeTab = useChatStore((s) => s.closeTab);
+  const sendMessage = useChatStore((s) => s.sendMessage);
+  const openHistory = useChatStore((s) => s.openHistory);
+  const closeHistory = useChatStore((s) => s.closeHistory);
+  const resumeConversation = useChatStore((s) => s.resumeConversation);
+  const deleteConversation = useChatStore((s) => s.deleteConversation);
+  const openSettings = useChatStore((s) => s.openSettings);
+  const closeSettings = useChatStore((s) => s.closeSettings);
+  const saveSettings = useChatStore((s) => s.saveSettings);
+  const openVscodeSettings = useChatStore((s) => s.openVscodeSettings);
+  const cancelGeneration = useChatStore((s) => s.cancelGeneration);
+  const respondToPermission = useChatStore((s) => s.respondToPermission);
 
   return (
     <div className="chat-container">
