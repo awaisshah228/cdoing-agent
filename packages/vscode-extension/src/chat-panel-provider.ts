@@ -1150,7 +1150,18 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         if (t) {
           t.isProcessing = false;
           this._onDidChangeState.fire();
-          this.postTabMessage(tabId, { type: "error", text: error.message });
+          let errMsg = error.message;
+          // Detect image-related errors
+          if (images.length > 0) {
+            const lower = errMsg.toLowerCase();
+            if (lower.includes("400") || lower.includes("invalid") || lower.includes("image") ||
+                lower.includes("multimodal") || lower.includes("vision") || lower.includes("content type") ||
+                lower.includes("unsupported") || lower.includes("does not support")) {
+              const { modelConfig } = this.getConfig();
+              errMsg = `This model (${modelConfig.model || "unknown"}) does not support image/vision input.\n\n${errMsg}\n\nSwitch to a vision-capable model: Claude Sonnet/Haiku, GPT-4o, or Gemini.`;
+            }
+          }
+          this.postTabMessage(tabId, { type: "error", text: errMsg });
           this.processTabQueue(tabId);
         }
       },
@@ -1166,7 +1177,17 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     try {
       await tab.agent.run(fullMessage, callbacks, images.length > 0 ? images : undefined);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      let msg = err instanceof Error ? err.message : String(err);
+      // Detect image-related errors and provide a clear message
+      if (images.length > 0) {
+        const lower = msg.toLowerCase();
+        if (lower.includes("400") || lower.includes("invalid") || lower.includes("image") ||
+            lower.includes("multimodal") || lower.includes("vision") || lower.includes("content type") ||
+            lower.includes("unsupported") || lower.includes("does not support")) {
+          const { modelConfig } = this.getConfig();
+          msg = `This model (${modelConfig.model || "unknown"}) does not support image/vision input.\n\n${msg}\n\nSwitch to a vision-capable model: Claude Sonnet/Haiku, GPT-4o, or Gemini.`;
+        }
+      }
       tab.isProcessing = false;
       this._onDidChangeState.fire();
       this.postTabMessage(tabId, { type: "error", text: msg });
