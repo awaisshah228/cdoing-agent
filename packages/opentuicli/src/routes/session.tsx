@@ -16,7 +16,7 @@
  *   - /config set support
  */
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { TextAttributes } from "@opentui/core";
 import { useKeyboard } from "@opentui/react";
 import * as fs from "fs";
@@ -137,6 +137,7 @@ export function SessionView(props: {
   onActiveTool: (tool: string | undefined) => void;
   onContextPercent: (pct: number) => void;
   onOpenDialog?: (dialog: string) => void;
+  initialMessage?: { text: string; images?: ImageAttachment[] } | null;
 }) {
   const sdk = useSDK();
   const { setMode } = useTheme();
@@ -1006,6 +1007,15 @@ export function SessionView(props: {
 
     await doSendMessage(text, images);
   };
+
+  // Auto-send initial message from home screen input
+  const initialMessageSentRef = useRef(false);
+  useEffect(() => {
+    if (props.initialMessage && !initialMessageSentRef.current) {
+      initialMessageSentRef.current = true;
+      sendMessage(props.initialMessage.text, props.initialMessage.images);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const doSendMessage = async (text: string, images?: ImageAttachment[]) => {
     // Resolve @mention context providers

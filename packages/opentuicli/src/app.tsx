@@ -93,6 +93,9 @@ function AppShell(props: {
   const registryRef = useRef(props.registry);
   const pmRef = useRef(props.permissionManager);
 
+  // Initial message from home screen input
+  const initialMessageRef = useRef<{ text: string; images?: import("@cdoing/ai").ImageAttachment[] } | null>(null);
+
   // ── Permission prompt bridge ────────────────────────
   // Store a pending permission resolve callback that the UI can call
   const permissionResolveRef = useRef<((decision: "allow" | "always" | "deny") => void) | null>(null);
@@ -195,10 +198,6 @@ function AppShell(props: {
     if (key.name === "f1") {
       setDialog((d) => (d === "help" ? "none" : "help"));
     }
-    // Enter on home → start session
-    if (key.name === "return" && route === "home" && dialog === "none") {
-      setRoute("session");
-    }
     // Escape — close any dialog
     if (key.name === "escape") {
       setDialog("none");
@@ -278,6 +277,10 @@ function AppShell(props: {
                 model={model}
                 workingDir={workingDir}
                 themeId={themeId}
+                onSubmit={(text, images) => {
+                  initialMessageRef.current = { text, images };
+                  setRoute("session");
+                }}
               />
             ) : (
               <SessionView
@@ -286,6 +289,7 @@ function AppShell(props: {
                 onActiveTool={setActiveTool}
                 onContextPercent={setContextPercent}
                 onOpenDialog={(d) => setDialog(d as Dialog)}
+                initialMessage={initialMessageRef.current}
               />
             )}
           </box>

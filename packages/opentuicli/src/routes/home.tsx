@@ -10,6 +10,8 @@
 import { TextAttributes } from "@opentui/core";
 import { useTerminalDimensions } from "@opentui/react";
 import { useTheme } from "../context/theme";
+import { InputArea } from "../components/input-area";
+import type { ImageAttachment } from "@cdoing/ai";
 
 // Full figlet logo (ANSI Shadow)
 const LOGO_FULL = [
@@ -34,6 +36,7 @@ export function Home(props: {
   workingDir: string;
   themeId: string;
   onAction?: (action: string) => void;
+  onSubmit?: (text: string, images?: ImageAttachment[]) => void;
 }) {
   const { theme } = useTheme();
   const t = theme;
@@ -68,7 +71,7 @@ export function Home(props: {
 
   // Quick actions
   const actions = [
-    { key: "Enter", label: "Start session", id: "start" },
+    { key: "Enter", label: "Send message / start session", id: "start" },
     { key: "Ctrl+P", label: "Switch model", id: "model" },
     { key: "Ctrl+T", label: "Change theme", id: "theme" },
     { key: "Ctrl+N", label: "New session", id: "new" },
@@ -80,7 +83,7 @@ export function Home(props: {
   const maxActionKey = Math.max(...actions.map((a) => a.key.length));
 
   return (
-    <box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden" justifyContent="center" alignItems="center">
+    <box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
       <box flexDirection="column" alignItems="center" justifyContent="center" flexGrow={1}>
         {/* Logo */}
         {logo && logo.map((line, i) => (
@@ -131,6 +134,15 @@ export function Home(props: {
           {"Powered by @opentui/react + @cdoing/ai"}
         </text>
       </box>
+
+      {/* Input bar at bottom — user can start typing immediately */}
+      {props.onSubmit && (
+        <InputArea
+          onSubmit={props.onSubmit}
+          workingDir={props.workingDir}
+          placeholder="Start typing to begin a session... (/ commands, @ context)"
+        />
+      )}
     </box>
   );
 }
