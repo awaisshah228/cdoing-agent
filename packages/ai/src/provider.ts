@@ -38,6 +38,8 @@ export interface CustomProviderConfig {
   apiKeyEnvVar?: string;
   baseURL: string;
   defaultModel: string;
+  defaultHeaders?: Record<string, string>;
+  extraBodyProperties?: Record<string, unknown>;
 }
 
 const DEFAULT_MODELS: Record<string, string> = {
@@ -91,7 +93,7 @@ export function getContextWindow(provider: string, _model?: string): number {
 
 function registerBuiltinProviders(): void {
   const builtins: CustomProviderConfig[] = [
-    { name: "openrouter", baseURL: "https://openrouter.ai/api/v1", apiKeyEnvVar: "OPENROUTER_API_KEY", defaultModel: "anthropic/claude-sonnet-4" },
+    { name: "openrouter", baseURL: "https://openrouter.ai/api/v1", apiKeyEnvVar: "OPENROUTER_API_KEY", defaultModel: "anthropic/claude-sonnet-4", defaultHeaders: { "HTTP-Referer": "https://github.com/awaisshah228/cdoing-agent", "X-Title": "Cdoing Agent" } },
     { name: "mistral", baseURL: "https://api.mistral.ai/v1", apiKeyEnvVar: "MISTRAL_API_KEY", defaultModel: "mistral-large-latest" },
     { name: "xai", baseURL: "https://api.x.ai/v1", apiKeyEnvVar: "XAI_API_KEY", defaultModel: "grok-3" },
     { name: "groq", baseURL: "https://api.groq.com/openai/v1", apiKeyEnvVar: "GROQ_API_KEY", defaultModel: "llama-3.3-70b-versatile" },
@@ -349,13 +351,18 @@ export function createModel(config: Partial<ModelConfig> = {}) {
       const baseURL = config.baseURL || custom?.baseURL;
       if (!baseURL) throw new Error(`Custom provider "${provider}" requires a baseURL.`);
       const apiKeyEnv = custom?.apiKeyEnvVar || `${provider.toUpperCase()}_API_KEY`;
+      const defaultHeaders = custom?.defaultHeaders;
 
       return new ChatOpenAI({
         model: modelName,
         openAIApiKey: config.apiKey || process.env[apiKeyEnv],
         temperature,
         maxTokens,
-        configuration: { baseURL },
+        configuration: {
+          baseURL,
+          ...(defaultHeaders ? { defaultHeaders } : {}),
+        },
+        ...(custom?.extraBodyProperties ? { modelKwargs: custom.extraBodyProperties } : {}),
       });
     }
   }
