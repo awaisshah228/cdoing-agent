@@ -247,6 +247,22 @@ yarn start          # Run CLI
 yarn dev            # Watch mode
 ```
 
+### Publishing
+
+```bash
+# Publish all npm packages (auto-detects version bumps)
+git push origin main
+
+# Publish VS Code extension manually
+gh workflow run "VS Code Extension" -f publish=true
+
+# Or tag-based publish
+git tag ext-v0.1.5
+git push origin ext-v0.1.5
+```
+
+The VS Code extension auto-publishes to the Marketplace when the version in `packages/vscode-extension/package.json` changes on push to `main`/`phase-1`.
+
 ---
 
 ## Links
