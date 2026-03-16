@@ -88,65 +88,60 @@ export function Home(props: {
   ];
   const maxActionKey = Math.max(...actions.map((a) => a.key.length));
 
-  // Vertical padding
-  const contentHeight = (logo ? logo.length : 0) + 2 + 1 + infoLines.length + 1 + 1 + actions.length + 1 + 1;
-  const topPad = Math.max(1, Math.floor((h - contentHeight - 4) / 3));
-
   return (
-    <box flexDirection="column" flexGrow={1}>
-      {/* Top padding */}
-      {Array.from({ length: topPad }, (_, i) => (
-        <text key={`pad-${i}`}>{""}</text>
-      ))}
+    <box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden" justifyContent="center" alignItems="center">
+      <scrollbox scrollY={true} flexGrow={1} flexShrink={1} flexDirection="column">
+        <box flexDirection="column" alignItems="center">
+          {/* Logo */}
+          {logo && logo.map((line, i) => (
+            <text key={`logo-${i}`} fg={t.primary} attributes={TextAttributes.BOLD}>
+              {centerPad(line, w, logoWidth)}
+            </text>
+          ))}
 
-      {/* Logo */}
-      {logo && logo.map((line, i) => (
-        <text key={`logo-${i}`} fg={t.primary} attributes={TextAttributes.BOLD}>
-          {centerPad(line, w, logoWidth)}
-        </text>
-      ))}
-
-      {/* Subtitle + version */}
-      <text fg={t.textDim}>
-        {centerPad(subtitle, w)}
-      </text>
-      <text fg={t.textMuted}>
-        {centerPad(version, w)}
-      </text>
-
-      <text>{""}</text>
-
-      {/* Info section */}
-      {infoLines.map(([key, val], i) => {
-        const line = `${key.padStart(maxKeyLen)}  ${val}`;
-        return (
-          <text key={`info-${i}`} fg={t.textDim}>
-            {centerPad(line, w)}
+          {/* Subtitle + version */}
+          <text fg={t.textDim}>
+            {centerPad(subtitle, w)}
           </text>
-        );
-      })}
-
-      <text>{""}</text>
-
-      {/* Actions */}
-      <text fg={t.primary} attributes={TextAttributes.BOLD}>
-        {centerPad("Actions", w)}
-      </text>
-      {actions.map((action, i) => {
-        const line = `${action.key.padStart(maxActionKey)}   ${action.label}`;
-        return (
-          <text key={`act-${i}`} fg={t.textMuted}>
-            {centerPad(line, w)}
+          <text fg={t.textMuted}>
+            {centerPad(version, w)}
           </text>
-        );
-      })}
 
-      <text>{""}</text>
+          <text>{""}</text>
 
-      {/* Footer */}
-      <text fg={t.textDim}>
-        {centerPad("Powered by @opentui/react + @cdoing/ai", w)}
-      </text>
+          {/* Info section */}
+          {infoLines.map(([key, val], i) => {
+            const line = `${key.padStart(maxKeyLen)}  ${val}`;
+            return (
+              <text key={`info-${i}`} fg={t.textDim}>
+                {centerPad(line, w)}
+              </text>
+            );
+          })}
+
+          <text>{""}</text>
+
+          {/* Actions */}
+          <text fg={t.primary} attributes={TextAttributes.BOLD}>
+            {centerPad("Actions", w)}
+          </text>
+          {actions.map((action, i) => {
+            const line = `${action.key.padStart(maxActionKey)}   ${action.label}`;
+            return (
+              <text key={`act-${i}`} fg={t.textMuted}>
+                {centerPad(line, w)}
+              </text>
+            );
+          })}
+
+          <text>{""}</text>
+
+          {/* Footer */}
+          <text fg={t.textDim}>
+            {centerPad("Powered by @opentui/react + @cdoing/ai", w)}
+          </text>
+        </box>
+      </scrollbox>
     </box>
   );
 }

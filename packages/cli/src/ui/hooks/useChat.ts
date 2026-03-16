@@ -139,6 +139,8 @@ export function useChat(opts: UseChatOptions) {
 
   /** Token stream currently being received — shown in the live streaming area */
   const [streamingContent, setStreamingContent] = useState("");
+  /** Full accumulated reply for the current turn (used by interrupt) */
+  const fullReplyRef = useRef("");
 
   /** Whether the agent is processing a request (disables input, shows spinner) */
   const [isProcessing, setIsProcessing] = useState(false);
@@ -287,6 +289,38 @@ export function useChat(opts: UseChatOptions) {
     }
   }, []);
 
+  /**
+   * Interrupt the current streaming and send a new message immediately.
+   * The partial response is preserved in agent history for context.
+   */
+  const interruptAndSend = useCallback((newMessage: string) => {
+    const agent = agentRef.current;
+    if (!agent) return;
+
+    // Capture partial response
+    const partial = fullReplyRef.current.trim();
+
+    // Interrupt agent — adds partial to history for context
+    agent.interrupt(partial);
+
+    // Flush partial response to UI
+    if (partial) {
+      setMessages((prev) => [
+        ...prev,
+        { id: nextId(), role: "assistant" as const, content: partial + "\n\n*(interrupted)*" },
+      ]);
+    }
+
+    setIsProcessing(false);
+    setStreamingContent("");
+    setToolActivity(null);
+
+    // Send new message after a brief delay for state to settle
+    setTimeout(() => {
+      if (sendMessageRef.current) sendMessageRef.current(newMessage);
+    }, 50);
+  }, []);
+
   // ─────────────────────────────────────────────────────────────────────────
   // sendMessage — the core function that runs the agent
   // ─────────────────────────────────────────────────────────────────────────
@@ -314,10 +348,10 @@ export function useChat(opts: UseChatOptions) {
         return;
       }
 
-      // ── Queue if busy ────────────────────────────────────────────────────
+      // ── Queue if busy (interrupt is handled externally via interruptAndSend) ──
       if (isProcessing) {
         queueRef.current.push(text);
-        addSystemMessage(`📬 Queued (${queueRef.current.length} waiting)`);
+        addSystemMessage(`📬 Queued (${queueRef.current.length} waiting). Use Escape to interrupt instead.`);
         return;
       }
 
@@ -342,6 +376,7 @@ export function useChat(opts: UseChatOptions) {
        */
       let fullReply  = "";
       let flushedPos = 0;
+      fullReplyRef.current = "";
 
       /**
        * Flush any un-printed streaming text to stdout BEFORE showing a tool
@@ -363,6 +398,7 @@ export function useChat(opts: UseChatOptions) {
 
         onToken: (token) => {
           fullReply += token;
+          fullReplyRef.current = fullReply;
           const unflushed = fullReply.slice(flushedPos);
           // Flush completed lines to Static immediately.
           // Only keep the last partial line in the dynamic area.

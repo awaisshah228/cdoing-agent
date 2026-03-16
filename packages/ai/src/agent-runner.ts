@@ -396,6 +396,20 @@ export class AgentRunner {
   }
 
   /**
+   * Interrupt the current run and prepare for a new message.
+   * Returns the partial response text accumulated so far (if any).
+   * The partial response is added to conversation history so the next
+   * message has full context of what was said before interruption.
+   */
+  interrupt(partialResponse?: string): void {
+    this.isCancelled = true;
+    // Add the partial response to history so the LLM sees it as context
+    if (partialResponse && partialResponse.trim()) {
+      this.messages.push(new AIMessage(partialResponse.trim() + "\n\n[Response interrupted by user]"));
+    }
+  }
+
+  /**
    * Run the agentic loop with real streaming, context management, and hooks.
    * Accepts optional image attachments for multimodal messages.
    */

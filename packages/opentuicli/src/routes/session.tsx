@@ -139,7 +139,7 @@ export function SessionView(props: {
   onOpenDialog?: (dialog: string) => void;
 }) {
   const sdk = useSDK();
-  const { setMode } = useTheme();
+  const { theme, setMode } = useTheme();
   const { toast } = useToast();
 
   // Set terminal title to indicate active session
@@ -927,11 +927,9 @@ export function SessionView(props: {
   // ── Interrupt: stop streaming, flush partial, send new message with context ──
 
   const handleInterrupt = (text: string, images?: ImageAttachment[]) => {
-    // Capture partial response before cancelling
+    // Capture partial response and interrupt — adds partial to agent history for context
     const partialResponse = streamingTextRef.current.trim();
-
-    // Cancel the agent
-    sdk.agent.cancel();
+    sdk.agent.interrupt(partialResponse);
 
     // Flush partial streaming text as a message
     if (partialResponse) {
@@ -1057,6 +1055,7 @@ export function SessionView(props: {
           addMessage("assistant", current);
           setStreamingText("");
         }
+        
         setIsStreaming(false);
         props.onStatus("Ready");
         setActiveTool(undefined);
@@ -1103,13 +1102,20 @@ export function SessionView(props: {
   };
 
   return (
-    <box flexDirection="column" width="100%" flexGrow={1}>
+    <box flexDirection="column" width="100%" flexGrow={1} flexShrink={1} overflow="hidden">
       {/* Message list — scrollable, takes all available space */}
-      <MessageList
-        messages={messages}
-        streamingText={streamingText}
-        isStreaming={isStreaming}
-      />
+      <box flexGrow={1} flexShrink={1} flexDirection="column" overflow="hidden">
+        <MessageList
+          messages={messages}
+          streamingText={streamingText}
+          isStreaming={isStreaming}
+        />
+      </box>
+
+      {/* Bottom border — shows where scrollable area ends */}
+      <box height={1} flexShrink={0}>
+        <text fg={theme.border}>{"─".repeat(200)}</text>
+      </box>
 
       {/* Fixed bottom area — never pushed off screen */}
       <box flexDirection="column" flexShrink={0}>

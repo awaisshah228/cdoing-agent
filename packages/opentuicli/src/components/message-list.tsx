@@ -55,7 +55,9 @@ export function MessageList(props: {
       scrollY={true}
       stickyScroll={true}
       flexGrow={1}
+      flexShrink={1}
       flexDirection="column"
+      overflow="hidden"
     >
       <box flexDirection="column">
         {/* Empty state */}
