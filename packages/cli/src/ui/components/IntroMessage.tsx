@@ -23,18 +23,6 @@ export const IntroMessage: React.FC<IntroMessageProps> = ({
 
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1}>
-      <Box flexDirection="column" marginBottom={1}>
-        <Text color="cyan" bold>
-          {"  ╭─────────────────────────────────╮"}
-        </Text>
-        <Text color="cyan" bold>
-          {"  │       Cdoing Agent  v0.1.3      │"}
-        </Text>
-        <Text color="cyan" bold>
-          {"  ╰─────────────────────────────────╯"}
-        </Text>
-      </Box>
-
       <Box flexDirection="column" paddingLeft={2}>
         <Box>
           <Text color="dim">{"Provider: "}</Text>
