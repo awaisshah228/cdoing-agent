@@ -23,13 +23,44 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      core_changed: ${{ steps.check_core.outputs.changed }}
+      cli_changed: ${{ steps.check_cli.outputs.changed }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
+
+      - name: Check if core version bumped
+        id: check_core
+        run: |
+          LOCAL_VERSION=$(node -p "require('./packages/core/package.json').version")
+          NPM_VERSION=$(npm view @cdoing/core version 2>/dev/null || echo "0.0.0")
+          if [ "$LOCAL_VERSION" != "$NPM_VERSION" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Core version changed: $NPM_VERSION -> $LOCAL_VERSION"
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "Core version unchanged: $LOCAL_VERSION"
+          fi
+
+      - name: Check if cli version bumped
+        id: check_cli
+        run: |
+          LOCAL_VERSION=$(node -p "require('./packages/cli/package.json').version")
+          NPM_VERSION=$(npm view @cdoing/cli version 2>/dev/null || echo "0.0.0")
+          if [ "$LOCAL_VERSION" != "$NPM_VERSION" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "CLI version changed: $NPM_VERSION -> $LOCAL_VERSION"
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "CLI version unchanged: $LOCAL_VERSION"
+          fi
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
@@ -50,9 +81,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     if: >
-      github.event_name == 'push' ||
-      github.event.inputs.package == 'core' ||
-      github.event.inputs.package == 'both'
+      needs.build.outputs.core_changed == 'true' &&
+      (github.event_name == 'push' ||
+       github.event.inputs.package == 'core' ||
+       github.event.inputs.package == 'both')
     steps:
       - uses: actions/checkout@v4
 
@@ -85,9 +117,12 @@ jobs:
     needs: [build, publish-core]
     runs-on: ubuntu-latest
     if: >
-      github.event_name == 'push' ||
-      github.event.inputs.package == 'cli' ||
-      github.event.inputs.package == 'both'
+      always() &&
+      needs.build.result == 'success' &&
+      needs.build.outputs.cli_changed == 'true' &&
+      (github.event_name == 'push' ||
+       github.event.inputs.package == 'cli' ||
+       github.event.inputs.package == 'both')
     steps:
       - uses: actions/checkout@v4
 
