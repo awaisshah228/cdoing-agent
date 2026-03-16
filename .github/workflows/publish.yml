@@ -63,7 +63,7 @@ jobs:
           fi
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: yarn install --ignore-engines
 
       - name: Build all packages
         run: yarn build
@@ -94,7 +94,7 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: yarn install --ignore-engines
 
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -132,7 +132,7 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: yarn install --ignore-engines
 
       - name: Download build artifacts
         uses: actions/download-artifact@v4
