@@ -1,7 +1,15 @@
+/**
+ * StatusBar — Bottom status bar like Continue's BottomStatusBar.
+ *
+ * Layout: [ModeIndicator • ContextPercentage • cost] [dir • tokens • hints]
+ */
+
 import React from "react";
 import { Box, Text } from "ink";
 import type { UsageInfo, ContextUsage } from "./types";
 import { getTheme } from "./theme";
+import { ModeIndicator } from "./components/ModeIndicator";
+import { ContextPercentageDisplay } from "./components/ContextPercentageDisplay";
 
 interface StatusBarProps {
   provider: string;
@@ -13,18 +21,6 @@ interface StatusBarProps {
   queueLength: number;
   contextUsage?: ContextUsage | null;
   backgroundJobs?: number;
-}
-
-/** Render a mini progress bar: ████░░ */
-function contextBar(percent: number, width = 8): string {
-  const filled = Math.round((percent / 100) * width);
-  return "█".repeat(filled) + "░".repeat(width - filled);
-}
-
-function contextColor(percent: number): string {
-  if (percent >= 90) return "red";
-  if (percent >= 75) return "yellow";
-  return "green";
 }
 
 export const StatusBar: React.FC<StatusBarProps> = ({
@@ -41,15 +37,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   const t = getTheme();
   const dir = workingDir.replace(process.env.HOME || "", "~");
   const modelDisplay = model || "(default)";
-  const modeColor =
-    mode === "auto" ? t.success : mode === "auto-edit" ? t.warning : t.info;
-  const hasUsage = !!lastUsage;
-  const usageText = hasUsage
-    ? ` · ${lastUsage!.totalTokens.toLocaleString()} tokens` +
-      (lastUsage!.cost !== undefined ? ` · $${lastUsage!.cost.toFixed(4)}` : "")
-    : "";
-
-  const ctxPercent = contextUsage?.percent ?? null;
+  const ctxPercent = contextUsage?.percent ?? 0;
 
   return (
     <Box
@@ -59,47 +47,42 @@ export const StatusBar: React.FC<StatusBarProps> = ({
       paddingRight={1}
       justifyContent="space-between"
     >
-      {/* Left side */}
+      {/* Left side: provider · model · mode · context */}
       <Box>
         <Text color={t.provider}>{provider}</Text>
-        <Text color={t.separator}> · </Text>
+        <Text color="dim">{" · "}</Text>
         <Text color={t.model}>{modelDisplay}</Text>
-        <Text color={t.separator}> · </Text>
-        <Text color={modeColor}>{mode}</Text>
 
-        {/* Context window usage bar */}
-        {ctxPercent !== null ? (
+        {/* Mode indicator */}
+        <ModeIndicator mode={mode} />
+
+        {/* Context percentage */}
+        {ctxPercent > 0 && (
           <>
-            <Text color={t.separator}> · </Text>
-            <Text color={contextColor(ctxPercent)}>
-              {contextBar(ctxPercent)}
-            </Text>
-            <Text color={contextColor(ctxPercent) as "red" | "yellow" | "green"}>
-              {` ${Math.round(ctxPercent)}%`}
-            </Text>
+            <Text color="dim">{" · "}</Text>
+            <ContextPercentageDisplay percentage={ctxPercent} />
           </>
-        ) : null}
+        )}
 
-        {/* Background jobs indicator */}
-        {backgroundJobs > 0 ? (
-          <Text color={t.bgJobs}>{` · ⚡${backgroundJobs} bg`}</Text>
-        ) : null}
+        {/* Background jobs */}
+        {backgroundJobs > 0 && (
+          <Text color="cyan">{` · ⚡${backgroundJobs} bg`}</Text>
+        )}
 
-        {queueLength > 0 ? (
-          <Text color={t.warning}> · {queueLength} queued</Text>
-        ) : null}
+        {queueLength > 0 && (
+          <Text color="yellow">{` · ${queueLength} queued`}</Text>
+        )}
       </Box>
 
-      {/* Right side */}
+      {/* Right side: dir · tokens · hints */}
       <Box>
-        <Text color={t.textDim}>{dir}</Text>
-        {isProcessing ? (
-          <Text color={t.warning}> · processing…</Text>
-        ) : null}
-        {hasUsage ? (
-          <Text color={t.textDim} dimColor={t.useDim}>{usageText}</Text>
-        ) : null}
-        <Text color={t.textDim} dimColor={t.useDim}>{"  ?=/help  ESC=cancel  ^C^C=exit"}</Text>
+        <Text color="dim">{dir}</Text>
+        {lastUsage && (
+          <Text color="dim">
+            {` · ${lastUsage.totalTokens.toLocaleString()} tokens`}
+          </Text>
+        )}
+        <Text color="dim">{"  ?=/help  ESC=cancel  ^C^C=exit"}</Text>
       </Box>
     </Box>
   );

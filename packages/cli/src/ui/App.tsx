@@ -1,12 +1,23 @@
 /**
  * App — root Ink component.
  *
- * Uses Ink's <Static> for past messages (written once, never cleared by Ink).
- * Ink manages only the dynamic bottom section (streaming, input, status bar).
+ * Layout modeled after Continue CLI:
+ *   <Box flexDirection="column" height="100%">
+ *     <Box flexGrow={1} overflow="hidden">     ← Chat history (Static + pending)
+ *       <StaticChatContent />
+ *     </Box>
+ *     <Box flexShrink={0}>                     ← Fixed bottom section
+ *       <ToolSpinner />                          - tool activity
+ *       <StreamingMessage />                     - live streaming
+ *       <Spinner />                              - thinking indicator
+ *       <UserInput />                            - input box
+ *       <StatusBar />                            - status bar
+ *     </Box>
+ *   </Box>
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Box, Text, Static, useApp } from "ink";
+import { Box, useApp } from "ink";
 import chalk from "chalk";
 
 import type { ModelConfig } from "@cdoing/ai";
@@ -20,52 +31,15 @@ import type {
 import { ShellExecTool } from "@cdoing/core";
 
 import { StreamingMessage } from "./MessageList";
-import { Spinner, ToolSpinner } from "./Spinner";
+import { ToolSpinner } from "./Spinner";
 import { UserInput } from "./UserInput";
 import { StatusBar } from "./StatusBar";
 import { SessionBrowser } from "./SessionBrowser";
 import { SetupWizard } from "./SetupWizard";
-import { RenderMarkdown } from "./MessageList";
+import { StaticChatContent } from "./components/StaticChatContent";
+import { ActionStatus } from "./components/ActionStatus";
+import { IntroMessage } from "./components/IntroMessage";
 import { useChat } from "./hooks/useChat";
-import { getTheme } from "./theme";
-import type { ChatMessage } from "./types";
-
-// ── Render a single message for Static ──────────────────────────────────────
-
-function renderStaticMessage(msg: ChatMessage): React.ReactElement {
-  const t = getTheme();
-  switch (msg.role) {
-    case "user":
-      return (
-        <Box key={msg.id} flexDirection="column">
-          <Text>{" "}</Text>
-          <Box>
-            <Text color={t.prompt} bold>{"❯ "}</Text>
-            <Text color={t.text}>{msg.content}</Text>
-          </Box>
-        </Box>
-      );
-    case "assistant":
-      return (
-        <Box key={msg.id} flexDirection="column">
-          <Text>{" "}</Text>
-          <RenderMarkdown text={msg.content} />
-          <Text color={t.separator}>{"─".repeat(process.stdout.columns > 0 ? Math.min(process.stdout.columns, 60) : 40)}</Text>
-        </Box>
-      );
-    case "system":
-      return (
-        <Box key={msg.id}>
-          {msg.isError ? <Text color={t.error}>{"  ❌ "}</Text> : <Text color={t.info}>{"  ▸ "}</Text>}
-          <Text>{msg.content}</Text>
-        </Box>
-      );
-    case "shell":
-      return <RenderMarkdown key={msg.id} text={msg.content.trimEnd()} />;
-    default:
-      return <Text key={msg.id}>{msg.content}</Text>;
-  }
-}
 
 // ── App component ──────────────────────────────────────────────────────────
 
@@ -90,8 +64,10 @@ export const App: React.FC<AppProps> = ({
 }) => {
   const { exit } = useApp();
 
-  const processingStartRef = useRef<number | null>(null);
+  const [responseStartTime, setResponseStartTime] = useState<number | null>(null);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [showIntro, setShowIntro] = useState(true);
 
   const {
     messages,
@@ -120,12 +96,13 @@ export const App: React.FC<AppProps> = ({
     todoStore,
   });
 
-  // Track when processing starts for the elapsed timer
+  // Track when processing starts for the ActionStatus timer
   useEffect(() => {
-    if (isProcessing && processingStartRef.current === null) {
-      processingStartRef.current = Date.now();
+    if (isProcessing && responseStartTime === null) {
+      setResponseStartTime(Date.now());
+      if (showIntro) setShowIntro(false); // hide intro after first message
     } else if (!isProcessing) {
-      processingStartRef.current = null;
+      setResponseStartTime(null);
     }
   }, [isProcessing]);
 
@@ -171,7 +148,7 @@ export const App: React.FC<AppProps> = ({
           return;
         }
 
-        // Shell command — capture output, combine label+output in one Static item
+        // Shell command — capture output, combine in one message
         {
           const { execSync } = require("child_process") as typeof import("child_process");
           let output = "";
@@ -204,6 +181,7 @@ export const App: React.FC<AppProps> = ({
       if (value.startsWith("/")) {
         if (value.trim() === "/clear") {
           setMessages([]);
+          setRefreshTrigger((prev) => prev + 1);
           return;
         }
         if (value.trim() === "/setup") {
@@ -275,58 +253,73 @@ export const App: React.FC<AppProps> = ({
     );
   }
 
-  // ── Main layout ─────────────────────────────────────────────────────────
+  // ── Main layout (Continue pattern) ──────────────────────────────────────
   return (
-    <Box flexDirection="column">
-      {/* Static: messages written once, never cleared by Ink */}
-      <Static items={messages}>
-        {(msg) => renderStaticMessage(msg)}
-      </Static>
+    <Box flexDirection="column" height="100%">
+      {/* Chat history — takes all available space, overflow hidden */}
+      <Box flexDirection="column" flexGrow={1}>
+        {/* Intro message — shown until first user message */}
+        {showIntro && messages.length === 0 && (
+          <IntroMessage
+            provider={String(liveModelConfig.provider || "anthropic")}
+            model={String(liveModelConfig.model || "")}
+            workingDir={workingDir}
+            mode={permissionManager.getMode()}
+          />
+        )}
 
-      {/* Tool activity spinner */}
-      {toolActivity ? (
-        <ToolSpinner
-          name={toolActivity.name}
-          preview={toolActivity.preview}
-          status={toolActivity.status}
+        <StaticChatContent
+          messages={messages}
+          refreshTrigger={refreshTrigger}
         />
-      ) : null}
+      </Box>
 
-      {/* Streaming response tokens */}
-      {streamingContent ? <StreamingMessage content={streamingContent} /> : null}
+      {/* Fixed bottom section — never scrolls away */}
+      <Box flexDirection="column" flexShrink={0}>
+        {/* Tool activity spinner */}
+        {toolActivity ? (
+          <ToolSpinner
+            name={toolActivity.name}
+            preview={toolActivity.preview}
+            status={toolActivity.status}
+          />
+        ) : null}
 
-      {/* Thinking spinner */}
-      {isProcessing && !streamingContent && !toolActivity ? (
-        <Spinner
-          label="Thinking…"
-          startTime={processingStartRef.current ?? undefined}
+        {/* Streaming response tokens (only partial line, rest in Static) */}
+        {streamingContent ? <StreamingMessage content={streamingContent} /> : null}
+
+        {/* Thinking indicator with braille spinner + timer */}
+        <ActionStatus
+          visible={isProcessing && !streamingContent && !toolActivity}
+          startTime={responseStartTime || Date.now()}
+          message="Thinking..."
         />
-      ) : null}
 
-      <UserInput
-        isProcessing={isProcessing}
-        queueLength={0}
-        workingDir={workingDir}
-        permissionMode={permissionManager.getMode()}
-        onSubmit={handleSubmit}
-        onCancel={cancelCurrent}
-        onModeChange={(mode) => {
-          const { parsePermissionMode } = require("../config") as typeof import("../config");
-          permissionManager.setMode(parsePermissionMode(mode) as any);
-        }}
-      />
+        <UserInput
+          isProcessing={isProcessing}
+          queueLength={0}
+          workingDir={workingDir}
+          permissionMode={permissionManager.getMode()}
+          onSubmit={handleSubmit}
+          onCancel={cancelCurrent}
+          onModeChange={(mode) => {
+            const { parsePermissionMode } = require("../config") as typeof import("../config");
+            permissionManager.setMode(parsePermissionMode(mode) as any);
+          }}
+        />
 
-      <StatusBar
-        provider={String(liveModelConfig.provider || "anthropic")}
-        model={String(liveModelConfig.model || "")}
-        mode={permissionManager.getMode()}
-        workingDir={workingDir}
-        isProcessing={isProcessing}
-        lastUsage={lastUsage}
-        queueLength={0}
-        contextUsage={contextUsage}
-        backgroundJobs={runningJobs}
-      />
+        <StatusBar
+          provider={String(liveModelConfig.provider || "anthropic")}
+          model={String(liveModelConfig.model || "")}
+          mode={permissionManager.getMode()}
+          workingDir={workingDir}
+          isProcessing={isProcessing}
+          lastUsage={lastUsage}
+          queueLength={0}
+          contextUsage={contextUsage}
+          backgroundJobs={runningJobs}
+        />
+      </Box>
     </Box>
   );
 };
@@ -347,23 +340,8 @@ const SHELL_COMMANDS = new Set([
   "vim", "vi", "nano", "less", "more", "man", "top", "htop",
 ]);
 
-const INTERACTIVE_COMMANDS = new Set([
-  "vim", "vi", "nvim", "nano", "pico",
-  "less", "more", "man", "info",
-  "top", "htop", "btop",
-  "ssh", "fzf", "ranger", "mc",
-]);
-
 function detectShellCommand(input: string): string | null {
   const trimmed = input.trim();
   const firstWord = trimmed.split(/\s+/)[0].toLowerCase();
   return SHELL_COMMANDS.has(firstWord) ? trimmed : null;
-}
-
-const SERVER_PATTERNS = /\b(run\s+(dev|start|serve|watch|preview)|nodemon|ts-node-dev|live-server|concurrently|turbo\s+dev|next\s+dev|vite|astro\s+dev|nuxt\s+dev|remix\s+dev)\b/i;
-
-function isInteractiveCommand(cmd: string): boolean {
-  const firstWord = cmd.trim().split(/\s+/)[0].toLowerCase();
-  if (INTERACTIVE_COMMANDS.has(firstWord)) return true;
-  return SERVER_PATTERNS.test(cmd);
 }
