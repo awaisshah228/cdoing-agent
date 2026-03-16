@@ -279,6 +279,10 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         }
         case "oauthLogout":
           oauthLogout();
+          // Invalidate all in-memory agents so they can't make further API calls
+          for (const tab of this.tabs.values()) {
+            tab.agent.invalidate();
+          }
           this.postMessage({ type: "oauthStatus", ...getOAuthStatus() } as any);
           this.refreshConfig();
           break;

@@ -19,9 +19,9 @@ export {
 } from "@cdoing/core";
 export type { OAuthTokens } from "@cdoing/core";
 
-import { clearOAuthTokens } from "@cdoing/core";
+import { fullLogout } from "@cdoing/core";
 
-/** VS Code-specific logout (returns void, no message) */
+/** VS Code-specific logout — clears OAuth tokens + stored API keys */
 export function oauthLogout(): void {
-  clearOAuthTokens();
+  fullLogout();
 }

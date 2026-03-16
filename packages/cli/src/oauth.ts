@@ -94,8 +94,8 @@ function openBrowser(urlToOpen: string): void {
 // ── CLI-specific: Logout with message ────────────────────
 
 export function oauthLogout(): string {
-  clearOAuthTokens();
-  return "Logged out. OAuth tokens cleared.";
+  const { fullLogout } = require("@cdoing/core");
+  return fullLogout();
 }
 
 // ── CLI-specific: Detailed status report ─────────────────
