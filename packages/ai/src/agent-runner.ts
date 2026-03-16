@@ -70,6 +70,7 @@ export class AgentRunner {
   private maxTurns: number;
   private currentTurns: number = 0;
   private isCancelled: boolean = false;
+  private abortController: AbortController | null = null;
   /** Tools that the LLM has requested via get_tool — kept for all subsequent turns */
   private activatedTools: Set<string> = new Set();
   /** Provider name for provider-specific optimizations (cache_control, etc.) */
@@ -345,7 +346,10 @@ export class AgentRunner {
       try {
         let accumulated: AIMessageChunk | null = null;
 
-        const stream = await modelWithTools.stream(allMessages);
+        this.abortController = new AbortController();
+        const stream = await modelWithTools.stream(allMessages, {
+          signal: this.abortController.signal,
+        });
 
         for await (const chunk of stream) {
           // Stop mid-stream if cancelled
@@ -374,9 +378,18 @@ export class AgentRunner {
         return accumulated;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
-        // Don't retry on auth errors, invalid requests, or client errors
+        // Treat abort as cancellation
+        if (this.isCancelled || lastError.name === "AbortError" || lastError.message.includes("aborted")) {
+          throw new Error("__cancelled__");
+        }
+        // Don't retry on auth errors, invalid requests, rate limits, or client errors
         const msg = lastError.message.toLowerCase();
-        if (msg.includes("401") || msg.includes("403") || msg.includes("400") || msg.includes("invalid_api_key") || msg.includes("authentication") || msg.includes("credit balance")) {
+        if (msg.includes("401") || msg.includes("403") || msg.includes("400") || msg.includes("429") || msg.includes("404") || msg.includes("invalid_api_key") || msg.includes("authentication") || msg.includes("credit balance") || msg.includes("rate") || msg.includes("quota")) {
+          // Try to extract a cleaner error message from JSON API responses
+          const cleaned = AgentRunner.extractApiErrorMessage(lastError.message);
+          if (cleaned !== lastError.message) {
+            throw new Error(cleaned);
+          }
           throw lastError;
         }
 
@@ -390,9 +403,33 @@ export class AgentRunner {
     throw lastError!;
   }
 
-  /** Cancel an in-progress run. The current streaming turn will stop gracefully. */
+  /** Extract a human-readable error message from JSON API error responses */
+  private static extractApiErrorMessage(raw: string): string {
+    try {
+      // Try to find JSON in the error message (LangChain often wraps it)
+      const jsonMatch = raw.match(/\{[\s\S]*"error"[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        const errObj = parsed.error || parsed;
+        const msg = errObj.message || errObj.msg || raw;
+        const code = errObj.code || errObj.status;
+        const metadata = errObj.metadata?.raw || errObj.metadata?.message;
+        if (metadata) return `API error ${code}: ${metadata}`;
+        if (code) return `API error ${code}: ${msg}`;
+        return msg;
+      }
+      // Try "API error NNN: ..." pattern
+      const apiMatch = raw.match(/API error (\d+): (.+)/);
+      if (apiMatch) return apiMatch[0];
+    } catch { /* ignore parse errors */ }
+    return raw;
+  }
+
+  /** Cancel an in-progress run. Aborts the HTTP request immediately. */
   cancel(): void {
     this.isCancelled = true;
+    this.abortController?.abort();
+    this.abortController = null;
   }
 
   /**

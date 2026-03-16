@@ -123,15 +123,14 @@ export function renderMarkdown(text: string): string {
 
 /**
  * Copy code block content to clipboard.
- * Injected as a global function in the webview.
+ * Registered as a global function on window in index.tsx.
  */
-export const COPY_CODE_SCRIPT = `
-function copyCode(btn) {
-  const pre = btn.closest('.code-block').querySelector('pre');
+export function copyCode(btn: HTMLElement): void {
+  const pre = btn.closest('.code-block')?.querySelector('pre');
+  if (!pre) return;
   const text = pre.textContent || pre.innerText;
   navigator.clipboard.writeText(text).then(() => {
     btn.textContent = '✓';
     setTimeout(() => { btn.textContent = '📋'; }, 1500);
   });
 }
-`;
