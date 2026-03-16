@@ -71,6 +71,7 @@ interface ChatActions {
   addUserMessage: (text: string, context?: ContextAttachment[]) => void;
   addSystemMessage: (text: string, role?: "system" | "error") => void;
   addToolCall: (name: string, input: string, description?: string) => void;
+  updateToolProgress: (name: string, chunk: string) => void;
   addToolResult: (name: string, result: string, isError: boolean) => void;
   clearAll: () => void;
 
@@ -252,6 +253,19 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
           { id, kind: "call" as const, name, input, output: "", description },
         ],
       }));
+    },
+
+    updateToolProgress: (name, chunk) => {
+      const callId = toolCallMap.get(name);
+      if (callId) {
+        set((s) => ({
+          entries: s.entries.map((e) =>
+            e.id === callId && "kind" in e && e.kind === "call"
+              ? { ...e, output: (e.output || "") + chunk }
+              : e
+          ),
+        }));
+      }
     },
 
     addToolResult: (name, result, isError) => {
@@ -444,6 +458,10 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
 
         case "toolCall":
           addToolCall(msg.name, msg.input, (msg as any).description);
+          break;
+
+        case "toolProgress":
+          get().updateToolProgress((msg as any).name, (msg as any).chunk);
           break;
 
         case "toolResult":

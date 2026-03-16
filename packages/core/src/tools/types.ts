@@ -14,8 +14,11 @@ export interface ToolResult {
   error?: string;
 }
 
+/** Optional callback for tools that produce streaming output (e.g., shell commands) */
+export type ToolProgressCallback = (chunk: string) => void;
+
 /** Every tool implements this interface */
 export interface BaseTool {
   definition: ToolDefinition;
-  execute(input: Record<string, unknown>): Promise<ToolResult>;
+  execute(input: Record<string, unknown>, onProgress?: ToolProgressCallback): Promise<ToolResult>;
 }

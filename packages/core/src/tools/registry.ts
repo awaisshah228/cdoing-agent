@@ -1,4 +1,4 @@
-import type { BaseTool, ToolResult } from "./types";
+import type { BaseTool, ToolResult, ToolProgressCallback } from "./types";
 
 /** Central registry of all available tools */
 export class ToolRegistry {
@@ -20,13 +20,13 @@ export class ToolRegistry {
     return this.getAll().map((t) => t.definition);
   }
 
-  async execute(name: string, input: Record<string, unknown>): Promise<ToolResult> {
+  async execute(name: string, input: Record<string, unknown>, onProgress?: ToolProgressCallback): Promise<ToolResult> {
     const tool = this.tools.get(name);
     if (!tool) {
       return { success: false, output: "", error: `Unknown tool: ${name}` };
     }
     try {
-      return await tool.execute(input);
+      return await tool.execute(input, onProgress);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return { success: false, output: "", error: message };

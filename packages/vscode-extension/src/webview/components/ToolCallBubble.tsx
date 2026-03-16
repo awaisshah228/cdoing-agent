@@ -10,7 +10,7 @@
  * Expanded:  IN: trimmed input / OUT: trimmed output
  */
 
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import type { ToolCallEntry } from "../types";
 import { useVsCode } from "../hooks/useVsCode";
 
@@ -318,8 +318,18 @@ const ToolCallBubbleInner: React.FC<ToolCallBubbleProps> = ({ entry }) => {
 
   const config = TOOL_CONFIG[entry.name] || { label: entry.name, icon: <ToolSvg d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.51-1" /> };
   const isRunning = entry.kind === "call";
+  const isShell = entry.name === "shell_exec" || entry.name === "file_run";
   const statusClass = isRunning ? "running" : entry.isError ? "error" : "success";
-  const statusIcon = isRunning ? "⏳" : entry.isError ? "✗" : "✓";
+  const statusIcon = isRunning ? "" : entry.isError ? "✗" : "✓";
+
+  // Auto-expand shell tools when streaming output arrives
+  const autoExpandedRef = useRef(false);
+  useEffect(() => {
+    if (isShell && isRunning && entry.output && !autoExpandedRef.current) {
+      autoExpandedRef.current = true;
+      setExpanded(true);
+    }
+  }, [isShell, isRunning, entry.output]);
 
   const description = useMemo(
     () => getToolDescription(entry.name, entry.input, entry.description),
@@ -344,10 +354,15 @@ const ToolCallBubbleInner: React.FC<ToolCallBubbleProps> = ({ entry }) => {
       {/* Header — always visible */}
       <div className="tool-step-header" onClick={toggle}>
         <span className="tool-step-chevron">▸</span>
-        <span className={`tool-step-icon ${statusClass}`}>{statusIcon}</span>
+        <span className={`tool-step-icon ${statusClass}`}>
+          {isRunning ? <span className="tool-spinner" /> : statusIcon}
+        </span>
         <span className="tool-step-name">{config.label}</span>
+        {isShell && isRunning && (
+          <span className="tool-mode-badge">Running</span>
+        )}
         <span className="tool-step-summary">
-          <span className="tool-step-desc">{description}</span>
+          <span className={`tool-step-desc ${isRunning ? "tool-shimmer" : ""}`}>{description}</span>
           {outputSummary && (
             <>
               <span className="tool-arrow"> → </span>
@@ -370,14 +385,27 @@ const ToolCallBubbleInner: React.FC<ToolCallBubbleProps> = ({ entry }) => {
               {renderToolInput(entry.name, parsed, openFile)}
             </div>
           )}
-          {(entry.output || !isRunning) && (
+          {(entry.output || !isRunning) ? (
             <div className="tool-io-section">
               <div className="tool-io-header">
-                <span className="tool-io-badge tool-io-badge-out">OUT</span>
+                <span className={`tool-io-badge ${entry.isError ? "tool-io-badge-error" : "tool-io-badge-out"}`}>
+                  {entry.isError ? "ERROR" : "OUT"}
+                </span>
               </div>
               {renderToolOutput(entry.name, entry.output, entry.isError, openFile)}
             </div>
-          )}
+          ) : isRunning && isShell ? (
+            <div className="tool-io-section tool-io-running">
+              {entry.output ? (
+                <pre className="tool-io-block tool-io-streaming">{trimLines(entry.output, 20)}<span className="tool-terminal-cursor-inline" /></pre>
+              ) : (
+                <div className="tool-terminal-running">
+                  <span className="tool-terminal-cursor" />
+                  <span className="tool-terminal-text">Executing command...</span>
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
       )}
     </div>

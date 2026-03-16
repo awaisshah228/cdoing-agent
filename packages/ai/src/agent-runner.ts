@@ -41,6 +41,7 @@ export interface ImageAttachment {
 export interface AgentCallbacks {
   onToken: (token: string) => void;
   onToolCall: (name: string, input: Record<string, unknown>) => void;
+  onToolProgress?: (name: string, chunk: string) => void;
   onToolResult: (name: string, result: string, isError: boolean) => void;
   onComplete: () => void;
   onError: (error: Error) => void;
@@ -440,9 +441,13 @@ export class AgentRunner {
    */
   interrupt(partialResponse?: string): void {
     this.isCancelled = true;
-    // Add the partial response to history so the LLM sees it as context
+    this.abortController?.abort();
+    this.abortController = null;
+    // Add the partial response to history so the LLM sees what it was doing before interruption
     if (partialResponse && partialResponse.trim()) {
-      this.messages.push(new AIMessage(partialResponse.trim() + "\n\n[Response interrupted by user]"));
+      this.messages.push(new AIMessage(
+        partialResponse.trim() + "\n\n[Response interrupted by user — your partial response above is preserved as context]"
+      ));
     }
   }
 
@@ -701,8 +706,12 @@ export class AgentRunner {
       }
     }
 
-    // Execute tool
-    const result = await this.toolRegistry.execute(tc.name, tc.args);
+    // Execute tool — pass streaming callback for shell_exec so output streams in real-time
+    const isShell = tc.name === "shell_exec" || tc.name === "file_run";
+    const onProgress = isShell && callbacks.onToolProgress ? (chunk: string) => {
+      callbacks.onToolProgress!(tc.name, chunk);
+    } : undefined;
+    const result = await this.toolRegistry.execute(tc.name, tc.args, onProgress);
 
     // Stream diff chunks for file edit operations
     if (isFileEdit && result.success && callbacks.onDiffChunk && preEditContent !== null) {

@@ -1,6 +1,7 @@
-import { exec } from "child_process";
+import { spawn } from "child_process";
 import * as os from "os";
-import type { BaseTool, ToolDefinition, ToolResult } from "../types";
+import type { BaseTool, ToolDefinition, ToolResult, ToolProgressCallback } from "../types";
+export type { ToolProgressCallback };
 import type { SandboxManager } from "../../sandbox";
 import type { PermissionManager } from "../../permissions";
 import { extractShellPaths } from "../../utils/shell-paths";
@@ -76,8 +77,8 @@ export class ShellExecTool implements BaseTool {
 
 IMPORTANT:
 - Non-zero exit codes are reported as error but may be informational (e.g., build errors, test failures). Read the output to understand what happened.
-- Do NOT use & to background processes. Use background=true instead — it spawns a detached process that survives after the command returns.
-- For long-running processes (servers, watchers, dev tools), ALWAYS use background=true.
+- For long-running processes (servers, watchers, dev tools), ALWAYS use background=true. Commands with & are auto-detected and run in background mode.
+- Server commands (node server.js, npm start, npm run dev, etc.) are auto-detected as background processes.
 
 Background mode: Set background=true to spawn a detached process. Returns a process_id.
 - Use action="status" (with process_id) to read output/logs.
@@ -160,7 +161,7 @@ Actions:
     return this.processManager;
   }
 
-  async execute(input: Record<string, unknown>): Promise<ToolResult> {
+  async execute(input: Record<string, unknown>, onProgress?: ToolProgressCallback): Promise<ToolResult> {
     const action = (input.action as string) || "run";
 
     // ── Action: status — check background process ───────────────────────────
@@ -258,11 +259,24 @@ Actions:
 
     let background = (input.background as boolean) || false;
 
-    // Auto-detect background intent: command ends with & (strip it and use background mode)
+    // Auto-detect background intent:
+    // 1. Command ends with & (e.g., "node server.js &")
+    // 2. Last part of compound command ends with & (e.g., "cd /path && node server.js &")
+    // 3. Command is a known long-running server/watcher pattern
     let actualCommand = command;
-    if (!background && /&\s*$/.test(actualCommand.trim())) {
-      background = true;
-      actualCommand = actualCommand.trim().replace(/&\s*$/, "").trim();
+    if (!background) {
+      const trimmed = actualCommand.trim();
+      // Strip trailing & from simple or compound commands
+      if (/&\s*$/.test(trimmed)) {
+        background = true;
+        actualCommand = trimmed.replace(/&\s*$/, "").trim();
+      }
+      // Detect server-like commands that will run forever
+      else if (/\b(node|nodemon|ts-node|python|ruby|php|java|go\s+run)\b.*\b(server|app|index|main)\b/i.test(trimmed)
+        || /\b(npm|yarn|pnpm)\s+(start|run\s+dev|run\s+start|run\s+serve)\b/i.test(trimmed)
+        || /\b(uvicorn|gunicorn|flask\s+run|rails\s+s|cargo\s+run)\b/i.test(trimmed)) {
+        background = true;
+      }
     }
 
     // Merge color env for better terminal output
@@ -300,27 +314,72 @@ Actions:
       };
     }
 
-    // ── Foreground mode: exec and wait ──────────────────────────────────────
+    // ── Foreground mode: spawn and stream output in real-time ──────────────
     return new Promise((resolve) => {
-      exec(actualCommand, { cwd: this.workingDir, timeout, maxBuffer: 10 * 1024 * 1024, env, shell: SHELL },
-        (error, stdout, stderr) => {
-          const outputParts: string[] = [];
-          if (stdout) outputParts.push(stdout.trimEnd());
-          if (stderr) outputParts.push(`STDERR:\n${stderr.trimEnd()}`);
-          const output = outputParts.join("\n\n") || "(no output)";
+      const args = IS_WINDOWS
+        ? ["-NoLogo", "-ExecutionPolicy", "Bypass", "-Command", actualCommand]
+        : ["-c", actualCommand];
 
-          if (error?.killed) {
-            return resolve({ success: false, output, error: `Timed out after ${timeout}ms` });
-          }
+      const child = spawn(SHELL, args, {
+        cwd: this.workingDir,
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
 
-          if (error) {
-            // Include exit code in output but still provide the full output
-            // so the LLM can read build errors, test failures, etc.
-            resolve({ success: false, output: output + `\n\nExit code: ${error.code}`, error: `Exit code: ${error.code}` });
+      let stdout = "";
+      let stderr = "";
+      let killed = false;
+
+      // Stream stdout in real-time
+      child.stdout?.on("data", (chunk: Buffer) => {
+        const text = chunk.toString();
+        stdout += text;
+        onProgress?.(text);
+      });
+
+      // Stream stderr in real-time
+      child.stderr?.on("data", (chunk: Buffer) => {
+        const text = chunk.toString();
+        stderr += text;
+        onProgress?.(text);
+      });
+
+      // Timeout handling
+      const timer = setTimeout(() => {
+        killed = true;
+        child.kill("SIGTERM");
+        setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 3000);
+      }, timeout);
+
+      child.on("error", (err) => {
+        clearTimeout(timer);
+        resolve({ success: false, output: stdout || "(no output)", error: err.message });
+      });
+
+      child.on("close", (code) => {
+        clearTimeout(timer);
+
+        const outputParts: string[] = [];
+        if (stdout) outputParts.push(stdout.trimEnd());
+        if (stderr) outputParts.push(`STDERR:\n${stderr.trimEnd()}`);
+        const output = outputParts.join("\n\n") || "(no output)";
+
+        if (killed) {
+          return resolve({ success: false, output, error: `Timed out after ${timeout}ms` });
+        }
+
+        if (code !== 0 && code !== null) {
+          const exitInfo = `\n\nExit code: ${code}`;
+          // Follow Continue's pattern: only mark as failure if stderr has content.
+          if (stderr && stderr.trim()) {
+            resolve({ success: false, output: output + exitInfo, error: `Exit code: ${code}` });
           } else {
-            resolve({ success: true, output });
+            resolve({ success: true, output: output + exitInfo });
           }
-        });
+        } else {
+          resolve({ success: true, output });
+        }
+      });
     });
   }
 

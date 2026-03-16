@@ -214,10 +214,13 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
             tab.isProcessing = false;
             this._onDidChangeState.fire();
             this.postTabMessage(tab.id, { type: "endResponse" });
-            // Send the new message after a brief delay
+            // Send the new message after a brief delay, with interrupt context
             if (message.newMessage) {
+              const interruptContext = message.partialResponse
+                ? `[User interrupted your previous response and sent a new message. Your partial response was preserved in context. Continue from where you left off if relevant, or address the new request.]\n\n${message.newMessage}`
+                : message.newMessage;
               setTimeout(() => {
-                this.handleUserMessage(message.newMessage, undefined, tab.id);
+                this.handleUserMessage(interruptContext, undefined, tab.id);
               }, 100);
             }
           }
@@ -1092,6 +1095,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           input: inputStr.length > 2000 ? inputStr.substring(0, 2000) : inputStr,
           description,
         });
+      },
+      onToolProgress: (name, chunk) => {
+        this.postTabMessage(tabId, { type: "toolProgress", name, chunk } as any);
       },
       onToolResult: (name, result, isError) => {
         // Send more output (up to 3KB) so the webview can render trimmed IN/OUT
