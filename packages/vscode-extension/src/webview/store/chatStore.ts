@@ -20,6 +20,7 @@ import type {
   IncomingMessage,
   VsCodeApi,
 } from "../types";
+import { getVsCodeApi } from "../hooks/useVsCode";
 
 // ── Types ──────────────────────────────────────────────
 
@@ -113,13 +114,9 @@ function nextId(): string {
   return `entry-${++idCounter}-${Date.now()}`;
 }
 
-/** Module-level VS Code API (acquired once) */
-let vscodeApi: VsCodeApi | undefined;
+/** Shared VS Code API from useVsCode module (acquired once) */
 function getVsCode(): VsCodeApi {
-  if (!vscodeApi) {
-    vscodeApi = acquireVsCodeApi();
-  }
-  return vscodeApi;
+  return getVsCodeApi();
 }
 
 // ── Per-tab data (non-reactive, ref-like) ──────────────

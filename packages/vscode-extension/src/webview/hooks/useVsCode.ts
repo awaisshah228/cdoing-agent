@@ -12,6 +12,14 @@ import type { VsCodeApi } from "../types";
 /** Module-level cache — acquireVsCodeApi() can only be called once */
 let api: VsCodeApi | undefined;
 
+/** Returns the cached VS Code API instance (acquires it on first call) */
+export function getVsCodeApi(): VsCodeApi {
+  if (!api) {
+    api = acquireVsCodeApi();
+  }
+  return api;
+}
+
 /**
  * Returns the VS Code API instance.
  * Use it to send messages to the extension host:
@@ -19,10 +27,5 @@ let api: VsCodeApi | undefined;
  *   vscode.postMessage({ type: "sendMessage", text: "hello" });
  */
 export function useVsCode(): VsCodeApi {
-  return useMemo(() => {
-    if (!api) {
-      api = acquireVsCodeApi();
-    }
-    return api;
-  }, []);
+  return useMemo(() => getVsCodeApi(), []);
 }
