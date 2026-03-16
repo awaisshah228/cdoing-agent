@@ -139,7 +139,7 @@ export function SessionView(props: {
   onOpenDialog?: (dialog: string) => void;
 }) {
   const sdk = useSDK();
-  const { theme, setMode } = useTheme();
+  const { setMode } = useTheme();
   const { toast } = useToast();
 
   // Set terminal title to indicate active session
@@ -1102,20 +1102,13 @@ export function SessionView(props: {
   };
 
   return (
-    <box flexDirection="column" width="100%" flexGrow={1} flexShrink={1} overflow="hidden">
+    <box flexDirection="column" width="100%" flexGrow={1} gap={1}>
       {/* Message list — scrollable, takes all available space */}
-      <box flexGrow={1} flexShrink={1} flexDirection="column" overflow="hidden">
-        <MessageList
-          messages={messages}
-          streamingText={streamingText}
-          isStreaming={isStreaming}
-        />
-      </box>
-
-      {/* Bottom border — shows where scrollable area ends */}
-      <box height={1} flexShrink={0}>
-        <text fg={theme.border}>{"─".repeat(200)}</text>
-      </box>
+      <MessageList
+        messages={messages}
+        streamingText={streamingText}
+        isStreaming={isStreaming}
+      />
 
       {/* Fixed bottom area — never pushed off screen */}
       <box flexDirection="column" flexShrink={0}>

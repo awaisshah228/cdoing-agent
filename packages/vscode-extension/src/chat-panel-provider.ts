@@ -205,6 +205,24 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           }
           break;
         }
+        case "interruptGeneration": {
+          // Interrupt current streaming and immediately send a new message
+          const tab = this.getTab(message.tabId);
+          if (tab?.isProcessing) {
+            // Interrupt with partial response context
+            tab.agent.interrupt(message.partialResponse || "");
+            tab.isProcessing = false;
+            this._onDidChangeState.fire();
+            this.postTabMessage(tab.id, { type: "endResponse" });
+            // Send the new message after a brief delay
+            if (message.newMessage) {
+              setTimeout(() => {
+                this.handleUserMessage(message.newMessage, undefined, tab.id);
+              }, 100);
+            }
+          }
+          break;
+        }
         case "permissionResponse": {
           const resolver = this.pendingPermissionResolvers.get(message.id);
           if (resolver) {

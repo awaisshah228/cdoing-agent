@@ -1062,6 +1062,7 @@ export function useChat(opts: UseChatOptions) {
     sendMessage,
     handleSlashCommand,
     cancelCurrent,
+    interruptAndSend,
     addSystemMessage,
   };
 }

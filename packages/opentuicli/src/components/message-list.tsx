@@ -2,7 +2,8 @@
  * MessageList — renders chat messages with tool calls, streaming, and markdown
  *
  * Uses OpenTUI's <scrollbox> for smooth scrolling with sticky-to-bottom,
- * <markdown> for assistant message rendering, and custom tool call display.
+ * <code filetype="markdown"> for assistant message rendering (like OpenCode),
+ * and custom tool call display.
  */
 
 import { TextAttributes } from "@opentui/core";
@@ -47,17 +48,16 @@ export function MessageList(props: {
   isStreaming?: boolean;
   showTimestamps?: boolean;
 }) {
-  const { theme } = useTheme();
+  const { theme, syntaxStyle } = useTheme();
   const t = theme;
 
   return (
     <scrollbox
       scrollY={true}
       stickyScroll={true}
+      stickyStart="bottom"
       flexGrow={1}
-      flexShrink={1}
       flexDirection="column"
-      overflow="hidden"
     >
       <box flexDirection="column">
         {/* Empty state */}
@@ -87,14 +87,25 @@ export function MessageList(props: {
 
           if (msg.role === "assistant") {
             return (
-              <box key={msg.id} paddingX={1} paddingY={0} flexDirection="row">
-                <text fg={t.primary} attributes={TextAttributes.BOLD}>
-                  {"◆ "}
-                </text>
-                <text fg={t.assistantText} flexGrow={1}>{msg.content}</text>
-                {props.showTimestamps && msg.timestamp && (
-                  <text fg={t.textDim}>{`  ${formatTimestamp(msg.timestamp)}`}</text>
-                )}
+              <box key={msg.id} paddingLeft={1} marginTop={1} flexShrink={0} flexDirection="column">
+                <box flexDirection="row">
+                  <text fg={t.primary} attributes={TextAttributes.BOLD}>
+                    {"◆ "}
+                  </text>
+                  {props.showTimestamps && msg.timestamp && (
+                    <text fg={t.textDim}>{`  ${formatTimestamp(msg.timestamp)}`}</text>
+                  )}
+                </box>
+                <box paddingLeft={2}>
+                  <code
+                    filetype="markdown"
+                    drawUnstyledText={false}
+                    streaming={false}
+                    syntaxStyle={syntaxStyle}
+                    content={msg.content.trim()}
+                    fg={t.assistantText}
+                  />
+                </box>
               </box>
             );
           }
@@ -124,16 +135,27 @@ export function MessageList(props: {
           return null;
         })}
 
-        {/* Streaming indicator */}
+        {/* Streaming indicator — uses <code> with streaming={true} like OpenCode */}
         {props.isStreaming && (
-          <box paddingX={1}>
-            <text fg={t.primary} attributes={TextAttributes.BOLD}>
-              {"◆ "}
-            </text>
-            <text fg={t.assistantText}>
-              {props.streamingText || ""}
-            </text>
-            <text fg={t.primary}>{"▊"}</text>
+          <box paddingLeft={1} marginTop={1} flexShrink={0} flexDirection="column">
+            <box flexDirection="row">
+              <text fg={t.primary} attributes={TextAttributes.BOLD}>
+                {"◆ "}
+              </text>
+              <text fg={t.primary}>{"▊"}</text>
+            </box>
+            {(props.streamingText || "").trim() && (
+              <box paddingLeft={2}>
+                <code
+                  filetype="markdown"
+                  drawUnstyledText={false}
+                  streaming={true}
+                  syntaxStyle={syntaxStyle}
+                  content={(props.streamingText || "").trim()}
+                  fg={t.assistantText}
+                />
+              </box>
+            )}
           </box>
         )}
       </box>

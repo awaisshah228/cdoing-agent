@@ -82,6 +82,7 @@ interface ChatActions {
   sendMessage: (text: string, context?: ContextAttachment[]) => void;
   sendCommand: (command: string) => void;
   cancelGeneration: () => void;
+  interruptAndSend: (newMessage: string) => void;
 
   // History
   openHistory: () => void;
@@ -328,6 +329,45 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
 
     cancelGeneration: () => {
       getVsCode().postMessage({ type: "cancelGeneration" });
+    },
+
+    interruptAndSend: (newMessage: string) => {
+      // Flush any buffered tokens to get partial response
+      if (tokenBuffer) get().flushTokenBuffer();
+
+      // Collect partial response from current entries
+      const entries = get().entries;
+      let partialResponse = "";
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const e = entries[i];
+        if ("role" in e && e.role === "assistant") {
+          partialResponse = e.content;
+          break;
+        }
+      }
+
+      // Add interrupted marker to the partial message in UI
+      if (partialResponse) {
+        set((s) => ({
+          entries: s.entries.map((e, i) => {
+            if (i === s.entries.length - 1 && "role" in e && e.role === "assistant") {
+              return { ...e, content: e.content + "\n\n*(interrupted)*" };
+            }
+            return e;
+          }),
+        }));
+      }
+
+      // Tell extension host to interrupt and send new message
+      getVsCode().postMessage({
+        type: "interruptGeneration",
+        tabId: get().activeTabId || undefined,
+        partialResponse,
+        newMessage,
+      });
+
+      set({ isProcessing: false });
+      streamingId = null;
     },
 
     // ── History ─────────────────────────────────────

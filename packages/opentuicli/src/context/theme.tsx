@@ -10,8 +10,8 @@
  *   3. Defaults to dark mode
  */
 
-import { RGBA, rgbToHex } from "@opentui/core";
-import { createContext, useContext, useState, useEffect, useRef } from "react";
+import { RGBA, rgbToHex, SyntaxStyle } from "@opentui/core";
+import { createContext, useContext, useState, useEffect, useRef, useMemo } from "react";
 import type { ReactNode } from "react";
 
 export interface Theme {
@@ -368,12 +368,36 @@ export function restoreTerminalBackground(): void {
   process.stdout.write("\x1b]111;\x07");
 }
 
+// ── Syntax Style Generation ───────────────────────────────
+
+function generateSyntaxStyle(theme: Theme): SyntaxStyle {
+  return SyntaxStyle.fromTheme([
+    { scope: ["default"], style: { foreground: theme.text } },
+    { scope: ["keyword", "keyword.control", "keyword.operator"], style: { foreground: theme.secondary, bold: true } },
+    { scope: ["string", "string.quoted"], style: { foreground: theme.success } },
+    { scope: ["comment", "comment.line", "comment.block"], style: { foreground: theme.textDim, italic: true } },
+    { scope: ["constant", "constant.numeric", "number"], style: { foreground: theme.warning } },
+    { scope: ["variable", "variable.parameter"], style: { foreground: theme.text } },
+    { scope: ["function", "entity.name.function", "support.function"], style: { foreground: theme.info } },
+    { scope: ["type", "entity.name.type", "support.type"], style: { foreground: theme.primary } },
+    { scope: ["operator"], style: { foreground: theme.textMuted } },
+    { scope: ["punctuation"], style: { foreground: theme.textMuted } },
+    { scope: ["markup.heading"], style: { foreground: theme.primary, bold: true } },
+    { scope: ["markup.bold"], style: { bold: true } },
+    { scope: ["markup.italic"], style: { italic: true } },
+    { scope: ["markup.list"], style: { foreground: theme.text } },
+    { scope: ["markup.link"], style: { foreground: theme.info, underline: true } },
+    { scope: ["markup.raw", "markup.inline"], style: { foreground: theme.warning } },
+  ]);
+}
+
 // ── Theme Context ─────────────────────────────────────────
 
 const ThemeContext = createContext<{
   theme: Theme;
   themeId: string;
   mode: "dark" | "light";
+  syntaxStyle: SyntaxStyle;
   customBg: string | null;
   setThemeId: (id: string) => void;
   setMode: (m: "dark" | "light") => void;
@@ -471,8 +495,10 @@ export function ThemeProvider(props: {
     };
   }, []);
 
+  const syntaxStyle = useMemo(() => generateSyntaxStyle(theme), [theme]);
+
   return (
-    <ThemeContext.Provider value={{ theme, themeId, mode: currentMode, customBg, setThemeId, setMode, setCustomBg, syncTerminalBg: syncBg, setSyncTerminalBg }}>
+    <ThemeContext.Provider value={{ theme, themeId, mode: currentMode, syntaxStyle, customBg, setThemeId, setMode, setCustomBg, syncTerminalBg: syncBg, setSyncTerminalBg }}>
       {props.children}
     </ThemeContext.Provider>
   );

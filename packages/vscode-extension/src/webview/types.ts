@@ -65,6 +65,7 @@ export type OutgoingMessage =
   | { type: "resumeConversation"; id: string }               // Resume a past conversation
   | { type: "deleteConversation"; id: string }               // Delete a past conversation
   | { type: "cancelGeneration" }                             // Cancel the current streaming response
+  | { type: "interruptGeneration"; tabId?: string; partialResponse?: string; newMessage?: string } // Interrupt streaming + send new message
   | { type: "permissionResponse"; id: string; decision: string } // Permission decision from user
   | { type: "startOAuth" }                                     // Start OAuth login flow
   | { type: "exchangeOAuth"; code: string }                    // Exchange OAuth authorization code
