@@ -74,10 +74,18 @@ export class ShellExecTool implements BaseTool {
     description:
       `Execute a shell command and return its output. Use for builds, tests, git commands, etc.
 
-Background mode: Set background=true to spawn a detached process (server, watcher). Returns a process_id. Use action="status" to read output, action="kill" to stop it, action="kill_all" to cleanup all.
+IMPORTANT:
+- Non-zero exit codes are reported as error but may be informational (e.g., build errors, test failures). Read the output to understand what happened.
+- Do NOT use & to background processes. Use background=true instead — it spawns a detached process that survives after the command returns.
+- For long-running processes (servers, watchers, dev tools), ALWAYS use background=true.
+
+Background mode: Set background=true to spawn a detached process. Returns a process_id.
+- Use action="status" (with process_id) to read output/logs.
+- Use action="kill" (with process_id) to stop it.
+- Use action="kill_all" to cleanup all background processes.
 
 Actions:
-- "run" (default): Execute command and wait for result.
+- "run" (default): Execute command and wait for result (up to timeout).
 - "status": Check a background process. Requires process_id (or omit for all).
 - "kill": Kill a background process by process_id.
 - "kill_all": Kill all running background processes.`,
@@ -248,7 +256,14 @@ Actions:
       env.PYTHONFAULTHANDLER = env.PYTHONFAULTHANDLER || "1";
     }
 
-    const background = (input.background as boolean) || false;
+    let background = (input.background as boolean) || false;
+
+    // Auto-detect background intent: command ends with & (strip it and use background mode)
+    let actualCommand = command;
+    if (!background && /&\s*$/.test(actualCommand.trim())) {
+      background = true;
+      actualCommand = actualCommand.trim().replace(/&\s*$/, "").trim();
+    }
 
     // Merge color env for better terminal output
     Object.assign(env, COLOR_ENV);
@@ -256,7 +271,7 @@ Actions:
     // ── Background mode: spawn detached, track with ProcessManager ──────────
     if (background) {
       const waitForReady = (input.wait_for_ready as number) || 1000;
-      const { id, pid } = this.processManager.spawn(command, this.workingDir, envVars);
+      const { id, pid } = this.processManager.spawn(actualCommand, this.workingDir, envVars);
 
       // Wait for process to start and produce initial output
       if (waitForReady > 0) {
@@ -287,7 +302,7 @@ Actions:
 
     // ── Foreground mode: exec and wait ──────────────────────────────────────
     return new Promise((resolve) => {
-      exec(command, { cwd: this.workingDir, timeout, maxBuffer: 10 * 1024 * 1024, env, shell: SHELL },
+      exec(actualCommand, { cwd: this.workingDir, timeout, maxBuffer: 10 * 1024 * 1024, env, shell: SHELL },
         (error, stdout, stderr) => {
           const outputParts: string[] = [];
           if (stdout) outputParts.push(stdout.trimEnd());
@@ -299,7 +314,9 @@ Actions:
           }
 
           if (error) {
-            resolve({ success: false, output, error: `Exit code: ${error.code}` });
+            // Include exit code in output but still provide the full output
+            // so the LLM can read build errors, test failures, etc.
+            resolve({ success: false, output: output + `\n\nExit code: ${error.code}`, error: `Exit code: ${error.code}` });
           } else {
             resolve({ success: true, output });
           }

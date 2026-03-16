@@ -55,7 +55,20 @@ export class SubAgentTool implements BaseTool {
   definition: ToolDefinition = {
     name: "sub_agent",
     description:
-      "Spawn a sub-agent to handle a specific task. The sub-agent has access to the same file and search tools but runs in its own context. Use this for independent tasks like 'find all usages of X', 'read and summarize file Y', or long-running commands like 'npm install'. Supports custom timeout and background mode. The sub-agent cannot spawn further sub-agents.",
+      `Spawn a sub-agent to handle a task autonomously. The sub-agent has access to the same file, search, and shell tools but runs in its own conversation context.
+
+Use sub-agents for:
+- Independent research: "find all usages of X", "read and summarize file Y"
+- Parallel work: spawn multiple sub-agents for different tasks simultaneously
+- Long-running tasks: "run npm install and report results", "run the full test suite"
+- Complex multi-step tasks: "refactor all files in src/utils to use async/await"
+- Background tasks: set background=true to continue working while the sub-agent runs
+
+Background mode: Set background=true to get an agent ID immediately. Then:
+- sub_agent_status({ agent_id }) — check progress and read output
+- sub_agent_terminate({ agent_id }) — cancel if needed
+
+The sub-agent cannot spawn further sub-agents (prevents infinite recursion).`,
     inputSchema: {
       type: "object",
       properties: {
