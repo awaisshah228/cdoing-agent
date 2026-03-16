@@ -106,20 +106,25 @@ const TOOL_CATEGORY: Record<string, string> = {
   file_read:    "Read",
   glob_search:  "Read",
   grep_search:  "Read",
+  lsp:          "Read",
   file_write:   "Edit",
   file_edit:    "Edit",
   multi_edit:   "Edit",
+  apply_patch:  "Edit",
   file_delete:  "Delete",
   web_fetch:    "WebFetch",
   web_search:   "WebSearch",
   sub_agent:    "Agent",
+  batch:        "Batch",
+  skill:        "Skill",
+  question:     "Question",
 };
 
 /** Write/exec tools that are blocked in Plan mode */
-const PLAN_BLOCKED = new Set(["shell_exec", "file_run", "file_write", "file_edit", "multi_edit", "file_delete"]);
+const PLAN_BLOCKED = new Set(["shell_exec", "file_run", "file_write", "file_edit", "multi_edit", "file_delete", "apply_patch", "batch", "question"]);
 
 /** File-edit tools that are auto-allowed in acceptEdits mode */
-const ACCEPT_EDITS_AUTO = new Set(["file_write", "file_edit", "multi_edit"]);
+const ACCEPT_EDITS_AUTO = new Set(["file_write", "file_edit", "multi_edit", "apply_patch"]);
 
 /**
  * Tools whose "don't ask again" approval is stored permanently to disk
@@ -127,6 +132,16 @@ const ACCEPT_EDITS_AUTO = new Set(["file_write", "file_edit", "multi_edit"]);
  */
 const PERMANENT_APPROVAL_TOOLS = new Set(["shell_exec", "file_run"]);
 // File-modification tools (file_write, file_edit) use session-only approval.
+
+/** Agent types with different default permission behaviors */
+export type AgentType = "build" | "plan" | "explore";
+
+/** Tools blocked in explore mode (explore = read-only, no web, no sub_agent) */
+const EXPLORE_BLOCKED = new Set([
+  ...PLAN_BLOCKED,
+  "web_fetch", "web_search", "sub_agent", "sub_agent_status", "sub_agent_terminate",
+  "skill", "question", "plan_exit",
+]);
 
 // ── Rule parsing ───────────────────────────────────────────────────────────────
 
@@ -411,6 +426,26 @@ export class PermissionManager {
     return this.mode;
   }
 
+  /** Current agent type (affects which tools are blocked) */
+  private agentType: AgentType = "build";
+
+  /**
+   * Set the agent type — adjusts permission defaults:
+   *   - build: full access (current default)
+   *   - plan: read-only (maps to PLAN mode)
+   *   - explore: read-only + no web/sub_agent
+   */
+  setAgentType(type: AgentType): void {
+    this.agentType = type;
+    if (type === "plan") {
+      this.setMode(PermissionMode.PLAN);
+    }
+  }
+
+  getAgentType(): AgentType {
+    return this.agentType;
+  }
+
   /**
    * Check whether a specific file path is denied by settings rules for a given category.
    * Used by shell_exec to check extracted paths against Read/Edit/Delete rules.
@@ -667,6 +702,7 @@ export class PermissionManager {
     if (this.hasStoredPermission(toolName, input)) return true;
 
     if (this.mode === PermissionMode.PLAN)     return !PLAN_BLOCKED.has(toolName);
+    if (this.agentType === "explore")           return !EXPLORE_BLOCKED.has(toolName);
     if (this.mode === PermissionMode.DONT_ASK) return false;
 
     if (this.mode === PermissionMode.ACCEPT_EDITS && ACCEPT_EDITS_AUTO.has(toolName)) return true;
@@ -848,6 +884,24 @@ export class PermissionManager {
     } catch {
       // If we can't write settings, fall back to session-only
     }
+  }
+
+  /**
+   * Check whether a tool is unconditionally denied by settings rules.
+   * Used to pre-filter tools before sending to the LLM — no point sending
+   * tools the user has explicitly blocked.
+   */
+  isDenied(toolName: string): boolean {
+    const category = TOOL_CATEGORY[toolName] || toolName;
+    for (const rule of this.settingsDeny) {
+      const parsed = parseRule(rule);
+      if (!parsed) continue;
+      // Blanket deny for this tool category (no specifier = all uses)
+      if ((parsed.category === category || parsed.category === toolName) && parsed.specifier === null) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** Check whether bypass mode is disabled by managed settings. */

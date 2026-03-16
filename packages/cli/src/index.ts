@@ -79,7 +79,7 @@ function createSubAgentFactory(
 ) {
   return async (prompt: string, signal?: AbortSignal): Promise<string> => {
     // Child registry has no sub_agent tool (no recursion)
-    const childRegistry = createToolRegistry(workingDir);
+    const childRegistry = await createToolRegistry(workingDir);
     const childAgent = new AgentRunner(modelConfig, childRegistry, permissionManager, hookManager, options);
 
     // If an abort signal is provided, cancel the agent when it fires
@@ -153,7 +153,7 @@ async function run(prompt: string | undefined, options: CLIOptions) {
     modelConfig, options.dir, permissionManager, hookManager, agentOptions,
   );
 
-  let toolRegistry = createToolRegistry(options.dir, { subAgentFactory, todoStore });
+  let toolRegistry = await createToolRegistry(options.dir, { subAgentFactory, todoStore });
 
   // Handle tool filtering
   if (options.allowedTools) {

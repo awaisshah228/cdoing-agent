@@ -85,6 +85,12 @@ const PRICING: Record<string, [number, number]> = {
   "gpt-4o": [2.5, 10],
   "gpt-4o-mini": [0.15, 0.6],
   "gemini-2.0-flash": [0.075, 0.3],
+  // New providers
+  "mistral-large": [2, 6],
+  "grok-3": [3, 15],
+  "llama-3.3-70b": [0.59, 0.79],
+  "sonar-pro": [3, 15],
+  "command-r-plus": [2.5, 10],
 };
 
 export class ContextManager {

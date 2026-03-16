@@ -161,7 +161,7 @@ export async function runReview(opts: ReviewOptions): Promise<void> {
   const memoryStore = new MemoryStore();
   const projectConfig = loadProjectConfig(opts.dir);
 
-  const toolRegistry = createToolRegistry(opts.dir);
+  const toolRegistry = await createToolRegistry(opts.dir);
   const agent = new AgentRunner(
     modelConfig,
     toolRegistry,

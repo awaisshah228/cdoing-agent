@@ -1,39 +1,23 @@
 /**
- * Tool Registration — creates a ToolRegistry with all core tools.
+ * Tool Registration — creates a ToolRegistry with grouped tool categories.
+ *
+ * Tools are organized into logical groups (file, search, execution, web, etc.)
+ * rather than importing 30+ individual classes. This makes registration cleaner
+ * and allows selective category loading for different contexts.
  */
 
 import {
   ToolRegistry,
-  FileReadTool,
-  FileWriteTool,
-  FileEditTool,
-  GlobSearchTool,
-  GrepSearchTool,
-  ShellExecTool,
-  FileRunTool,
-  CodeVerifyTool,
-  WebFetchTool,
-  WebSearchTool,
-  SubAgentTool,
+  registerAllTools,
+  registerToolCategories,
   SubAgentManager,
-  SubAgentStatusTool,
-  SubAgentTerminateTool,
   ProcessManager,
-  TodoTool,
   TodoStore,
   SandboxManager,
-  SystemInfoTool,
-  MultiEditTool,
-
-  ListDirTool,
-  ViewDiffTool,
-  ViewRepoMapTool,
-  CodebaseSearchTool,
-  ASTEditTool,
-  NotebookEditTool,
   PermissionManager,
+  FileTimeLock,
 } from "@cdoing/core";
-import type { SubAgentRunnerFactory } from "@cdoing/core";
+import type { SubAgentRunnerFactory, QuestionPromptFn, PlanExitCallback, ToolCategory, DiagnosticsCallback } from "@cdoing/core";
 
 export interface ToolRegistryOptions {
   subAgentFactory?: SubAgentRunnerFactory;
@@ -42,12 +26,25 @@ export interface ToolRegistryOptions {
   todoStore?: TodoStore;
   sandboxManager?: SandboxManager;
   permissionManager?: PermissionManager;
+  /** Prompt function for the question tool (provided by CLI or VSCode) */
+  questionPromptFn?: QuestionPromptFn;
+  /** Callback for the plan_exit tool */
+  planExitCallback?: PlanExitCallback;
+  /** File time lock for read-before-write safety */
+  fileTimeLock?: FileTimeLock;
+  /** Callback for running LSP diagnostics after file writes */
+  diagnosticsCallback?: DiagnosticsCallback;
+  /**
+   * Specific tool categories to register. If omitted, all categories are registered.
+   * Useful for lightweight contexts (e.g., sub-agents only need file + search + execution).
+   */
+  categories?: ToolCategory[];
 }
 
-export function createToolRegistry(
+export async function createToolRegistry(
   workingDir: string,
   optionsOrSubAgentFactory?: ToolRegistryOptions | SubAgentRunnerFactory,
-): ToolRegistry {
+): Promise<ToolRegistry> {
   // Support both old signature (subAgentFactory) and new signature (options)
   let options: ToolRegistryOptions = {};
   if (typeof optionsOrSubAgentFactory === "function") {
@@ -56,52 +53,40 @@ export function createToolRegistry(
     options = optionsOrSubAgentFactory;
   }
 
-  const sm = options.sandboxManager;
-  const pm = options.processManager || new ProcessManager();
   const registry = new ToolRegistry();
 
-  // File tools
-  registry.register(new FileReadTool(workingDir, sm));
-  registry.register(new FileWriteTool(workingDir, sm));
-  registry.register(new FileEditTool(workingDir, sm));
-  registry.register(new MultiEditTool(workingDir, sm));
-  registry.register(new ASTEditTool(workingDir, sm));
-  registry.register(new NotebookEditTool(workingDir, sm));
+  const groupOpts = {
+    workingDir,
+    sandboxManager: options.sandboxManager,
+    permissionManager: options.permissionManager,
+    processManager: options.processManager || new ProcessManager(),
+    subAgentFactory: options.subAgentFactory,
+    subAgentManager: options.subAgentManager,
+    todoStore: options.todoStore,
+    questionPromptFn: options.questionPromptFn,
+    planExitCallback: options.planExitCallback,
+    diagnosticsCallback: options.diagnosticsCallback,
+  };
 
-  // Search & discovery tools
-  registry.register(new GlobSearchTool(workingDir));
-  registry.register(new GrepSearchTool(workingDir));
-  registry.register(new ListDirTool(workingDir, sm));
-  registry.register(new ViewDiffTool(workingDir));
-  registry.register(new ViewRepoMapTool(workingDir));
-  registry.register(new CodebaseSearchTool(workingDir));
-
-  // Execution tools (ShellExecTool now includes background process management)
-  registry.register(new ShellExecTool(workingDir, sm, options.permissionManager, pm));
-  registry.register(new FileRunTool(workingDir, sm));
-  registry.register(new CodeVerifyTool(workingDir));
-
-  // Web tools
-  registry.register(new WebFetchTool(sm));
-  registry.register(new WebSearchTool());
-
-  // Sub-agent (only if factory provided — prevents infinite recursion)
-  if (options.subAgentFactory) {
-    const manager = options.subAgentManager || new SubAgentManager();
-    registry.register(new SubAgentTool(options.subAgentFactory, manager));
-    registry.register(new SubAgentStatusTool(manager));
-    registry.register(new SubAgentTerminateTool(manager));
-  }
-
-  // Todo tool (for task tracking)
-  if (options.todoStore) {
-    registry.register(new TodoTool(options.todoStore));
-  }
-
-  // System info tool — gives the LLM live access to its permission/sandbox state
-  if (options.permissionManager) {
-    registry.register(new SystemInfoTool(options.permissionManager, registry, sm));
+  if (options.categories) {
+    await registerToolCategories(registry, options.categories, groupOpts);
+  } else {
+    await registerAllTools(registry, groupOpts);
   }
 
   return registry;
+}
+
+/**
+ * Create a lightweight tool registry for sub-agents.
+ * Only includes file, search, execution, and web tools — no sub-agents (prevents recursion).
+ */
+export async function createSubAgentToolRegistry(
+  workingDir: string,
+  options?: Omit<ToolRegistryOptions, "subAgentFactory" | "subAgentManager" | "categories">,
+): Promise<ToolRegistry> {
+  return createToolRegistry(workingDir, {
+    ...options,
+    categories: ["file", "search", "execution", "web", "viewing"],
+  });
 }

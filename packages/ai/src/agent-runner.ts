@@ -66,6 +66,11 @@ export class AgentRunner {
   private activatedTools: Set<string> = new Set();
   /** Provider name for provider-specific optimizations (cache_control, etc.) */
   private provider: string;
+  /** Model name for model-specific tool selection */
+  private modelName: string;
+  /** Recent tool call signatures for doom loop detection */
+  private recentToolCalls: string[] = [];
+  private static readonly DOOM_LOOP_THRESHOLD = 3;
 
   constructor(
     modelConfig: Partial<ModelConfig>,
@@ -76,6 +81,7 @@ export class AgentRunner {
   ) {
     this.model = createModel(modelConfig);
     this.provider = (modelConfig.provider as string) || "anthropic";
+    this.modelName = modelConfig.model || "";
     this.hookManager = hookManager || null;
     this.maxRetries = options?.maxRetries ?? 3;
     this.retryDelayMs = options?.retryDelayMs ?? 1000;
@@ -157,6 +163,30 @@ export class AgentRunner {
    */
   private buildToolDefinitions(filterNames?: Set<string>) {
     let tools = this.toolRegistry.getAll();
+
+    // Pre-filter: remove tools denied by permission rules (don't send to LLM what can't be used)
+    tools = tools.filter((t) => {
+      const denied = this.permissionManager.isDenied(t.definition.name);
+      return !denied;
+    });
+
+    // Model-specific tool selection: GPT models work better with apply_patch,
+    // Claude/Gemini work better with file_edit/file_write
+    const isGptModel = this.modelName.startsWith("gpt-") || this.provider === "openai";
+    if (isGptModel) {
+      // For GPT: prefer apply_patch, remove file_edit/file_write
+      const hasApplyPatch = tools.some((t) => t.definition.name === "apply_patch");
+      if (hasApplyPatch) {
+        tools = tools.filter((t) => t.definition.name !== "file_edit" && t.definition.name !== "file_write");
+      }
+    } else {
+      // For Claude/Gemini: prefer file_edit/file_write, remove apply_patch
+      const hasFileEdit = tools.some((t) => t.definition.name === "file_edit");
+      if (hasFileEdit) {
+        tools = tools.filter((t) => t.definition.name !== "apply_patch");
+      }
+    }
+
     if (filterNames) {
       // Always include activated tools (previously fetched via get_tool)
       tools = tools.filter((t) => filterNames.has(t.definition.name) || this.activatedTools.has(t.definition.name));
@@ -386,9 +416,16 @@ export class AgentRunner {
           ...this.messages,
         ];
 
-        // Select tools relevant to this turn (saves ~2,000-3,000 tokens vs sending all 22)
-        const selectedTools = this.currentTurns === 1 ? selectToolsForMessage(userMessage) : null;
-        const toolDefs = this.buildToolDefinitions(selectedTools && selectedTools.size > 0 ? selectedTools : undefined);
+        // Smart tool selection — filter on ALL turns (not just turn 1)
+        // Turn 1: core + keyword-matched tools
+        // Turn 2+: core + keyword-matched + previously-used tools
+        // The get_tool meta-tool lets the LLM fetch anything else on demand
+        const selectedTools = selectToolsForMessage(userMessage);
+        if (selectedTools.size > 0) {
+          // Also include any tools the LLM has already used (they'll likely use them again)
+          for (const name of this.activatedTools) selectedTools.add(name);
+        }
+        const toolDefs = this.buildToolDefinitions(selectedTools.size > 0 ? selectedTools : undefined);
         const modelWithTools = this.model.bindTools(toolDefs);
 
         // Stream response with retry
@@ -413,6 +450,40 @@ export class AgentRunner {
 
         // Get full text (already streamed to user, but need for history)
         const fullText = this.extractChunkText(accumulated);
+
+        // Doom loop detection: if last N tool calls are identical, break
+        if (toolCalls.length > 0) {
+          const callKeys = toolCalls.map(tc => `${tc.name}:${JSON.stringify(tc.args)}`);
+          for (const key of callKeys) {
+            this.recentToolCalls.push(key);
+          }
+          // Keep only last 10 entries
+          if (this.recentToolCalls.length > 10) {
+            this.recentToolCalls = this.recentToolCalls.slice(-10);
+          }
+          // Check if last DOOM_LOOP_THRESHOLD entries are identical
+          const threshold = AgentRunner.DOOM_LOOP_THRESHOLD;
+          if (this.recentToolCalls.length >= threshold) {
+            const lastN = this.recentToolCalls.slice(-threshold);
+            if (lastN.every(k => k === lastN[0])) {
+              const loopedTool = toolCalls[0].name;
+              callbacks.onToken(
+                `\n[Doom loop detected: "${loopedTool}" called ${threshold} times with identical arguments. Breaking loop.]\n`
+              );
+              // Push a message telling the LLM to stop repeating
+              this.messages.push(new AIMessage(fullText));
+              for (const tc of toolCalls) {
+                this.messages.push(new ToolMessage({
+                  content: `Doom loop detected: you have called "${tc.name}" with identical arguments ${threshold} times in a row. Stop repeating and try a different approach or explain what you are trying to achieve.`,
+                  tool_call_id: tc.id,
+                }));
+              }
+              this.recentToolCalls = [];
+              fullResponse += fullText;
+              continue; // Skip execution, let LLM see the error
+            }
+          }
+        }
 
         // No tools → model is done
         if (toolCalls.length === 0) {
@@ -444,6 +515,8 @@ export class AgentRunner {
             callbacks.onToolResult(tc.name, result, false);
           } else {
             realToolCalls.push(tc);
+            // Auto-activate used tools so they persist across turns
+            this.activatedTools.add(tc.name);
           }
         }
 
@@ -471,17 +544,18 @@ export class AgentRunner {
 
   /** Tools that are always safe to run in parallel (read-only, no side effects) */
   private static readonly ALWAYS_PARALLEL = new Set([
-    "file_read", "glob_search", "grep_search", "web_fetch", "web_search", "sub_agent", "sub_agent_status", "sub_agent_terminate",
+    "file_read", "glob_search", "grep_search", "web_fetch", "web_search",
+    "sub_agent", "sub_agent_status", "sub_agent_terminate", "lsp",
   ]);
 
   /** Tools that can run in parallel IF they target different files */
   private static readonly PARALLEL_IF_DIFFERENT_FILES = new Set([
-    "file_write", "file_edit", "multi_edit", "ast_edit",
+    "file_write", "file_edit", "multi_edit", "ast_edit", "apply_patch",
   ]);
 
   /** Tools that must always run sequentially (side effects, shared state) */
   private static readonly ALWAYS_SEQUENTIAL = new Set([
-    "shell_exec", "file_run",
+    "shell_exec", "file_run", "batch", "question", "skill", "plan_exit",
   ]);
 
   /** Execute a single tool call with hooks, permissions, and error handling */
@@ -534,7 +608,7 @@ export class AgentRunner {
     }
 
     // Capture file content before edit for streaming diff
-    const isFileEdit = tc.name === "file_edit" || tc.name === "multi_edit" || tc.name === "file_write";
+    const isFileEdit = tc.name === "file_edit" || tc.name === "multi_edit" || tc.name === "file_write" || tc.name === "apply_patch";
     let preEditContent: string | null = null;
     if (isFileEdit && callbacks.onDiffChunk) {
       const targetPath = (tc.args.file_path || tc.args.path) as string | undefined;
@@ -712,22 +786,26 @@ export class AgentRunner {
 }
 
 // ── Smart Tool Selection ───────────────────────────────────────────────────
-// On the first turn, analyze the user message to select only relevant tools.
-// This saves ~2,000-3,000 tokens when the user's intent is clear.
-// On subsequent turns, all tools are sent (the agent may chain anything).
+// Analyzes user messages to select only relevant tools per turn.
+// Saves ~3,000-5,000 tokens per API call by not sending unused tool schemas.
+//
+// Strategy:
+//   Turn 1: Core tools + keyword-activated tools + get_tool for the rest
+//   Turn 2+: Core tools + previously-used tools + keyword-activated + get_tool
+// The get_tool meta-tool lets the LLM fetch any tool it needs on demand.
 
-/** Core tools always included — these cover 90%+ of coding tasks */
+/**
+ * Minimal core tools — the absolute essentials for any coding task.
+ * Reduced from 10 to 7 to save ~1,500 more tokens vs the old set.
+ */
 const ALWAYS_INCLUDE = new Set([
   "file_read",       // reading files — needed almost every task
-  "file_edit",       // single find-and-replace — most common edit action
-  "multi_edit",      // multiple edits atomically — very common for refactoring
+  "file_edit",       // find-and-replace — most common edit action
   "file_write",      // creating new files
   "shell_exec",      // running commands, builds, tests, git
   "glob_search",     // finding files by pattern
   "grep_search",     // searching code content
   "list_dir",        // exploring directory structure
-  "view_diff",       // reviewing git changes — common workflow
-  "sub_agent",       // delegating parallel tasks
 ]);
 
 /** Tool groups activated by keyword signals in the user message */
@@ -744,6 +822,11 @@ const TOOL_SIGNALS: Array<{ keywords: RegExp; tools: string[] }> = [
   { keywords: /sub.?agent|parallel|background|delegate/i, tools: ["sub_agent", "sub_agent_status", "sub_agent_terminate"] },
   { keywords: /repo|map|structure|overview|architecture/i, tools: ["view_repo_map"] },
   { keywords: /system|info|permission|sandbox/i, tools: ["system_info"] },
+  { keywords: /patch|apply.?diff|unified.?diff/i, tools: ["apply_patch"] },
+  { keywords: /skill|workflow|recipe|domain/i, tools: ["skill"] },
+  { keywords: /lsp|definition|reference|hover|symbol|go.?to.?def/i, tools: ["lsp"] },
+  { keywords: /ask|question|choose|confirm|select/i, tools: ["question"] },
+  { keywords: /batch|bulk|multiple.?tools/i, tools: ["batch"] },
 ];
 
 /**

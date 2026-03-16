@@ -15,6 +15,10 @@ export enum ModelProvider {
   OPENAI = "openai",
   GOOGLE = "google",
   OLLAMA = "ollama",
+  AZURE = "azure",
+  BEDROCK = "bedrock",
+  GITHUB_COPILOT = "github-copilot",
+  GOOGLE_VERTEX = "google-vertex",
   CUSTOM = "custom",
 }
 
@@ -41,6 +45,8 @@ const DEFAULT_MODELS: Record<string, string> = {
   [ModelProvider.OPENAI]: "gpt-4o",
   [ModelProvider.GOOGLE]: "gemini-2.0-flash",
   [ModelProvider.OLLAMA]: "llama3.1",
+  [ModelProvider.GITHUB_COPILOT]: "gpt-4o",
+  [ModelProvider.GOOGLE_VERTEX]: "gemini-2.0-flash",
 };
 
 const customProviders = new Map<string, CustomProviderConfig>();
@@ -50,8 +56,63 @@ export function registerCustomProvider(config: CustomProviderConfig): void {
   DEFAULT_MODELS[config.name.toLowerCase()] = config.defaultModel;
 }
 
+// ── Context window sizes per provider/model ──────────────────────────────────
+
+const CONTEXT_WINDOWS: Record<string, number> = {
+  // Built-in providers
+  anthropic: 200_000,
+  openai: 128_000,
+  google: 1_000_000,
+  ollama: 32_000,
+  azure: 128_000,
+  bedrock: 200_000,
+  "github-copilot": 128_000,
+  "google-vertex": 1_000_000,
+  // Registered providers
+  openrouter: 200_000,
+  mistral: 128_000,
+  xai: 131_072,
+  groq: 128_000,
+  deepinfra: 128_000,
+  together: 128_000,
+  perplexity: 128_000,
+  github: 128_000,
+  cerebras: 128_000,
+  cohere: 128_000,
+};
+
+/** Get context window size for a provider */
+export function getContextWindow(provider: string, _model?: string): number {
+  return CONTEXT_WINDOWS[provider.toLowerCase()] || 128_000;
+}
+
+// ── Built-in provider registrations ──────────────────────────────────────────
+// These are all OpenAI-compatible endpoints, registered via registerCustomProvider.
+
+function registerBuiltinProviders(): void {
+  const builtins: CustomProviderConfig[] = [
+    { name: "openrouter", baseURL: "https://openrouter.ai/api/v1", apiKeyEnvVar: "OPENROUTER_API_KEY", defaultModel: "anthropic/claude-sonnet-4" },
+    { name: "mistral", baseURL: "https://api.mistral.ai/v1", apiKeyEnvVar: "MISTRAL_API_KEY", defaultModel: "mistral-large-latest" },
+    { name: "xai", baseURL: "https://api.x.ai/v1", apiKeyEnvVar: "XAI_API_KEY", defaultModel: "grok-3" },
+    { name: "groq", baseURL: "https://api.groq.com/openai/v1", apiKeyEnvVar: "GROQ_API_KEY", defaultModel: "llama-3.3-70b-versatile" },
+    { name: "deepinfra", baseURL: "https://api.deepinfra.com/v1/openai", apiKeyEnvVar: "DEEPINFRA_API_KEY", defaultModel: "meta-llama/Llama-3.3-70B-Instruct" },
+    { name: "together", baseURL: "https://api.together.xyz/v1", apiKeyEnvVar: "TOGETHER_API_KEY", defaultModel: "meta-llama/Llama-3.3-70B-Instruct-Turbo" },
+    { name: "perplexity", baseURL: "https://api.perplexity.ai", apiKeyEnvVar: "PERPLEXITY_API_KEY", defaultModel: "sonar-pro" },
+    { name: "github", baseURL: "https://models.inference.ai.azure.com", apiKeyEnvVar: "GITHUB_TOKEN", defaultModel: "gpt-4o" },
+    { name: "cerebras", baseURL: "https://api.cerebras.ai/v1", apiKeyEnvVar: "CEREBRAS_API_KEY", defaultModel: "llama-3.3-70b" },
+    { name: "cohere", baseURL: "https://api.cohere.com/v2", apiKeyEnvVar: "COHERE_API_KEY", defaultModel: "command-r-plus" },
+  ];
+
+  for (const config of builtins) {
+    registerCustomProvider(config);
+  }
+}
+
+// Register built-in providers at module load
+registerBuiltinProviders();
+
 export function getRegisteredProviders(): string[] {
-  return [ModelProvider.ANTHROPIC, ModelProvider.OPENAI, ModelProvider.GOOGLE, ModelProvider.OLLAMA, ...Array.from(customProviders.keys())];
+  return [ModelProvider.ANTHROPIC, ModelProvider.OPENAI, ModelProvider.GOOGLE, ModelProvider.OLLAMA, ModelProvider.GITHUB_COPILOT, ModelProvider.GOOGLE_VERTEX, ...Array.from(customProviders.keys())];
 }
 
 export function getDefaultModel(provider: string): string | undefined {
@@ -64,6 +125,10 @@ export function getApiKeyEnvVar(provider: string): string {
     case ModelProvider.OPENAI: return "OPENAI_API_KEY";
     case ModelProvider.GOOGLE: return "GOOGLE_API_KEY";
     case ModelProvider.OLLAMA: return "OLLAMA_API_KEY"; // not required, but for consistency
+    case ModelProvider.AZURE: return "AZURE_OPENAI_API_KEY";
+    case ModelProvider.BEDROCK: return "AWS_ACCESS_KEY_ID";
+    case ModelProvider.GITHUB_COPILOT: return "GITHUB_COPILOT_TOKEN";
+    case ModelProvider.GOOGLE_VERTEX: return "GOOGLE_APPLICATION_CREDENTIALS";
     default: {
       const custom = customProviders.get(provider.toLowerCase());
       return custom?.apiKeyEnvVar || `${provider.toUpperCase()}_API_KEY`;
@@ -172,6 +237,112 @@ export function createModel(config: Partial<ModelConfig> = {}) {
           baseURL: config.baseURL || "http://localhost:11434/v1",
         },
       });
+
+    case ModelProvider.AZURE: {
+      const endpoint = config.baseURL || process.env.AZURE_OPENAI_ENDPOINT;
+      const deployment = process.env.AZURE_OPENAI_DEPLOYMENT || modelName;
+      if (!endpoint) throw new Error("Azure OpenAI requires AZURE_OPENAI_ENDPOINT env var or baseURL in config");
+      return new ChatOpenAI({
+        model: deployment,
+        openAIApiKey: config.apiKey || process.env.AZURE_OPENAI_API_KEY || "no-key-run-setup",
+        temperature,
+        maxTokens,
+        configuration: {
+          baseURL: `${endpoint.replace(/\/$/, "")}/openai/deployments/${deployment}`,
+          defaultQuery: { "api-version": "2024-08-01-preview" },
+        },
+      });
+    }
+
+    case ModelProvider.BEDROCK: {
+      // Amazon Bedrock via OpenAI-compatible gateway
+      // Users should set up a Bedrock gateway or use LiteLLM proxy
+      const bedrockURL = config.baseURL || process.env.BEDROCK_GATEWAY_URL;
+      if (!bedrockURL) {
+        throw new Error(
+          "Amazon Bedrock requires a gateway URL. Set BEDROCK_GATEWAY_URL env var or baseURL in config. " +
+          "Use LiteLLM proxy or AWS Bedrock Access Gateway for OpenAI-compatible access."
+        );
+      }
+
+      // Auto-prefix region for cross-region inference if model doesn't already have it
+      let bedrockModel = modelName || "anthropic.claude-sonnet-4-20250514-v1:0";
+      const awsRegion = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "us-east-1";
+      if (bedrockModel.split(".").length <= 2 && !bedrockModel.startsWith("us.") && !bedrockModel.startsWith("eu.")) {
+        // Prefix with region shorthand for cross-region inference
+        const regionPrefix = awsRegion.startsWith("eu") ? "eu" : "us";
+        bedrockModel = `${regionPrefix}.${bedrockModel}`;
+      }
+
+      return new ChatOpenAI({
+        model: bedrockModel,
+        openAIApiKey: config.apiKey || process.env.AWS_ACCESS_KEY_ID || "bedrock",
+        temperature,
+        maxTokens,
+        configuration: { baseURL: bedrockURL },
+      });
+    }
+
+    case ModelProvider.GITHUB_COPILOT: {
+      // GitHub Copilot — uses GitHub's model inference endpoint
+      // Token from GitHub Copilot CLI auth or GITHUB_COPILOT_TOKEN env var
+      const copilotToken = config.apiKey || process.env.GITHUB_COPILOT_TOKEN || process.env.GITHUB_TOKEN;
+      if (!copilotToken) {
+        throw new Error(
+          "GitHub Copilot requires authentication. Set GITHUB_COPILOT_TOKEN or GITHUB_TOKEN env var. " +
+          "You can obtain a token via: gh auth token"
+        );
+      }
+      const copilotBaseURL = config.baseURL || "https://api.githubcopilot.com";
+
+      return new ChatOpenAI({
+        model: modelName,
+        openAIApiKey: copilotToken,
+        temperature,
+        maxTokens,
+        configuration: {
+          baseURL: copilotBaseURL,
+          defaultHeaders: {
+            "Editor-Version": "cdoing/1.0.0",
+            "Copilot-Integration-Id": "cdoing-agent",
+          },
+        },
+      });
+    }
+
+    case ModelProvider.GOOGLE_VERTEX: {
+      // Google Vertex AI — uses service account or application default credentials
+      // Requires GOOGLE_APPLICATION_CREDENTIALS or gcloud auth
+      const vertexProject = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
+      const vertexLocation = process.env.GOOGLE_CLOUD_LOCATION || "us-central1";
+
+      if (!vertexProject) {
+        throw new Error(
+          "Google Vertex AI requires a project. Set GOOGLE_CLOUD_PROJECT env var. " +
+          "Also set GOOGLE_APPLICATION_CREDENTIALS for service account auth, or run: gcloud auth application-default login"
+        );
+      }
+
+      // Use Google GenAI with Vertex endpoint
+      // For full Vertex AI with ADC/service accounts, users can set up a proxy
+      // or use GOOGLE_API_KEY with the Vertex endpoint
+      const vertexApiKey = config.apiKey || process.env.GOOGLE_API_KEY;
+      if (!vertexApiKey) {
+        throw new Error(
+          "Google Vertex AI requires GOOGLE_API_KEY or --api-key flag. " +
+          "For service account auth, use a proxy like litellm."
+        );
+      }
+
+      return new ChatGoogleGenerativeAI({
+        model: modelName,
+        apiKey: vertexApiKey,
+        temperature,
+        maxOutputTokens: maxTokens,
+        baseUrl: config.baseURL ||
+          `https://${vertexLocation}-aiplatform.googleapis.com/v1/projects/${vertexProject}/locations/${vertexLocation}/publishers/google/models`,
+      });
+    }
 
     default: {
       const custom = customProviders.get(provider);

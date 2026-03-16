@@ -31,9 +31,7 @@ Thumbs.db
 *.vsix
 
 client
-continue/
 oh-my-claudecode/
 openclaw/
 mini-openclaw/
-opencode/
-ink-web/
+

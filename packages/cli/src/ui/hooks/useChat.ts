@@ -760,7 +760,7 @@ export function useChat(opts: UseChatOptions) {
           // Sync all references to the new directory
           workingDirRef.current           = newDir;
           setWorkingDir(newDir);
-          toolRegistryRef.current         = createToolRegistry(newDir);
+          toolRegistryRef.current         = await createToolRegistry(newDir);
           opts.permissionManager.setProjectDir(newDir);
           opts.hookManager.setWorkingDir(newDir);
           rebuildAndRefresh();

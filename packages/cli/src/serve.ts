@@ -160,7 +160,7 @@ export async function startServer(opts: ServeOptions): Promise<void> {
         const prompt = String(body.prompt || "");
         if (!prompt) { jsonResponse(res, 400, { error: "prompt is required" }); return; }
 
-        const toolRegistry = createToolRegistry(opts.dir);
+        const toolRegistry = await createToolRegistry(opts.dir);
         const agent = new AgentRunner(modelConfig, toolRegistry, permissionManager, hookManager, agentOptions);
 
         // Restore history
@@ -199,7 +199,7 @@ export async function startServer(opts: ServeOptions): Promise<void> {
           ...(body.provider ? { provider: String(body.provider) } : {}),
         };
 
-        const toolRegistry = createToolRegistry(opts.dir);
+        const toolRegistry = await createToolRegistry(opts.dir);
         const agent = new AgentRunner(mc, toolRegistry, permissionManager, hookManager, agentOptions);
 
         let response = "";
@@ -236,7 +236,7 @@ export async function startServer(opts: ServeOptions): Promise<void> {
           res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
         };
 
-        const toolRegistry = createToolRegistry(opts.dir);
+        const toolRegistry = await createToolRegistry(opts.dir);
         const agent = new AgentRunner(modelConfig, toolRegistry, permissionManager, hookManager, agentOptions);
 
         await agent.run(prompt, {

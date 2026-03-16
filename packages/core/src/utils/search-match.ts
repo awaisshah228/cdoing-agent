@@ -1,11 +1,16 @@
 /**
  * Search Match — multi-strategy string matching for file editing.
  *
- * Inspired by Continue's cascading match strategies:
+ * Cascading match strategies (inspired by Continue + OpenCode):
  *   1. Exact match
  *   2. Trimmed match (ignore leading/trailing whitespace)
  *   3. Case-insensitive match
- *   4. Whitespace-ignored match (strips all whitespace, maps back to original positions)
+ *   4. Block anchor match (Levenshtein-based first/last line anchoring)
+ *   5. Whitespace-ignored match (strips all whitespace, maps back to original positions)
+ *   6. Indentation-flexible match (normalize indentation levels)
+ *   7. Escape-normalized match (handle \n, \t, etc.)
+ *   8. Context-aware match (anchor first/last lines, 50% middle similarity)
+ *   9. Jaro-Winkler fuzzy match (90%+ threshold)
  *
  * This makes the edit tool far more resilient to LLM formatting differences.
  */
@@ -48,7 +53,97 @@ function caseInsensitiveMatch(fileContent: string, searchContent: string): Searc
   return null;
 }
 
-/** 4. Whitespace-ignored match — strips all whitespace, maps positions back */
+// ── Levenshtein distance (used by block anchor strategy) ──────────────────
+
+function levenshtein(a: string, b: string): number {
+  if (a === "" || b === "") return Math.max(a.length, b.length);
+  const matrix = Array.from({ length: a.length + 1 }, (_, i) =>
+    Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
+  );
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(matrix[i - 1][j] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j - 1] + cost);
+    }
+  }
+  return matrix[a.length][b.length];
+}
+
+/**
+ * 4. Block anchor match — match first/last lines as anchors, use Levenshtein
+ * similarity for the middle content. This handles cases where the LLM gets
+ * the first and last lines right but the middle content drifts slightly.
+ */
+function blockAnchorMatch(fileContent: string, searchContent: string): SearchMatchResult | null {
+  const searchLines = searchContent.split("\n");
+  if (searchLines.length < 3) return null;
+  // Remove trailing empty line
+  if (searchLines[searchLines.length - 1] === "") searchLines.pop();
+  if (searchLines.length < 3) return null;
+
+  const fileLines = fileContent.split("\n");
+  const firstLineSearch = searchLines[0].trim();
+  const lastLineSearch = searchLines[searchLines.length - 1].trim();
+
+  // Collect candidate positions where both anchors match
+  const candidates: Array<{ startLine: number; endLine: number }> = [];
+  for (let i = 0; i < fileLines.length; i++) {
+    if (fileLines[i].trim() !== firstLineSearch) continue;
+    for (let j = i + 2; j < fileLines.length; j++) {
+      if (fileLines[j].trim() === lastLineSearch) {
+        candidates.push({ startLine: i, endLine: j });
+        break;
+      }
+    }
+  }
+  if (candidates.length === 0) return null;
+
+  const SINGLE_THRESHOLD = 0.0;
+  const MULTI_THRESHOLD = 0.3;
+
+  function computeSimilarity(startLine: number, endLine: number): number {
+    const actualBlockSize = endLine - startLine + 1;
+    const linesToCheck = Math.min(searchLines.length - 2, actualBlockSize - 2);
+    if (linesToCheck <= 0) return 1.0;
+    let similarity = 0;
+    for (let j = 1; j < searchLines.length - 1 && j < actualBlockSize - 1; j++) {
+      const originalLine = fileLines[startLine + j].trim();
+      const searchLine = searchLines[j].trim();
+      const maxLen = Math.max(originalLine.length, searchLine.length);
+      if (maxLen === 0) continue;
+      similarity += (1 - levenshtein(originalLine, searchLine) / maxLen) / linesToCheck;
+    }
+    return similarity;
+  }
+
+  let bestCandidate: { startLine: number; endLine: number } | null = null;
+  if (candidates.length === 1) {
+    const sim = computeSimilarity(candidates[0].startLine, candidates[0].endLine);
+    if (sim >= SINGLE_THRESHOLD) bestCandidate = candidates[0];
+  } else {
+    let maxSim = -1;
+    for (const c of candidates) {
+      const sim = computeSimilarity(c.startLine, c.endLine);
+      if (sim > maxSim) { maxSim = sim; bestCandidate = c; }
+    }
+    if (maxSim < MULTI_THRESHOLD) bestCandidate = null;
+  }
+
+  if (!bestCandidate) return null;
+
+  // Convert line positions to character indices
+  let startIdx = 0;
+  for (let k = 0; k < bestCandidate.startLine; k++) startIdx += fileLines[k].length + 1;
+  let endIdx = startIdx;
+  for (let k = bestCandidate.startLine; k <= bestCandidate.endLine; k++) {
+    endIdx += fileLines[k].length;
+    if (k < bestCandidate.endLine) endIdx += 1;
+  }
+
+  return { startIndex: startIdx, endIndex: endIdx, strategyName: "blockAnchor" };
+}
+
+/** 5. Whitespace-ignored match — strips all whitespace, maps positions back */
 function whitespaceIgnoredMatch(fileContent: string, searchContent: string): SearchMatchResult | null {
   const strippedFile = fileContent.replace(/\s/g, "");
   const strippedSearch = searchContent.replace(/\s/g, "");
@@ -92,7 +187,123 @@ function whitespaceIgnoredMatch(fileContent: string, searchContent: string): Sea
   return { startIndex: originalStart, endIndex: originalEnd, strategyName: "whitespaceIgnored" };
 }
 
-/** 5. Jaro-Winkler fuzzy match — line-based sliding window with 90%+ threshold */
+/**
+ * 6. Indentation-flexible match — normalize indentation levels.
+ * Handles cases where the LLM produces correct code but with different indentation depth.
+ */
+function indentationFlexibleMatch(fileContent: string, searchContent: string): SearchMatchResult | null {
+  const removeIndentation = (text: string) => {
+    const lines = text.split("\n");
+    const nonEmptyLines = lines.filter((l) => l.trim().length > 0);
+    if (nonEmptyLines.length === 0) return text;
+    const minIndent = Math.min(
+      ...nonEmptyLines.map((l) => { const m = l.match(/^(\s*)/); return m ? m[1].length : 0; }),
+    );
+    return lines.map((l) => (l.trim().length === 0 ? l : l.slice(minIndent))).join("\n");
+  };
+
+  const normalizedSearch = removeIndentation(searchContent);
+  const fileLines = fileContent.split("\n");
+  const searchLines = searchContent.split("\n");
+
+  for (let i = 0; i <= fileLines.length - searchLines.length; i++) {
+    const block = fileLines.slice(i, i + searchLines.length).join("\n");
+    if (removeIndentation(block) === normalizedSearch) {
+      const before = fileLines.slice(0, i).join("\n");
+      const startIndex = before.length + (i > 0 ? 1 : 0);
+      return { startIndex, endIndex: startIndex + block.length, strategyName: "indentationFlexible" };
+    }
+  }
+  return null;
+}
+
+/**
+ * 7. Escape-normalized match — handle escaped characters (\n, \t, etc.).
+ * LLMs sometimes produce escaped sequences instead of literal characters.
+ */
+function escapeNormalizedMatch(fileContent: string, searchContent: string): SearchMatchResult | null {
+  const unescape = (str: string): string =>
+    str.replace(/\\(n|t|r|'|"|`|\\|\n|\$)/g, (match, ch) => {
+      switch (ch) {
+        case "n": return "\n";
+        case "t": return "\t";
+        case "r": return "\r";
+        case "'": return "'";
+        case '"': return '"';
+        case "`": return "`";
+        case "\\": return "\\";
+        case "\n": return "\n";
+        case "$": return "$";
+        default: return match;
+      }
+    });
+
+  const unescaped = unescape(searchContent);
+  if (unescaped === searchContent) return null; // No escapes to normalize
+
+  const idx = fileContent.indexOf(unescaped);
+  if (idx !== -1) {
+    return { startIndex: idx, endIndex: idx + unescaped.length, strategyName: "escapeNormalized" };
+  }
+
+  // Try finding escaped content in file that matches unescaped search
+  const fileLines = fileContent.split("\n");
+  const searchLines = unescaped.split("\n");
+  for (let i = 0; i <= fileLines.length - searchLines.length; i++) {
+    const block = fileLines.slice(i, i + searchLines.length).join("\n");
+    if (unescape(block) === unescaped) {
+      const before = fileLines.slice(0, i).join("\n");
+      const startIndex = before.length + (i > 0 ? 1 : 0);
+      return { startIndex, endIndex: startIndex + block.length, strategyName: "escapeNormalized" };
+    }
+  }
+  return null;
+}
+
+/**
+ * 8. Context-aware match — use first/last lines as context anchors,
+ * with 50% middle-line similarity threshold. Less strict than block anchor.
+ */
+function contextAwareMatch(fileContent: string, searchContent: string): SearchMatchResult | null {
+  const searchLines = searchContent.split("\n");
+  if (searchLines.length < 3) return null;
+  if (searchLines[searchLines.length - 1] === "") searchLines.pop();
+  if (searchLines.length < 3) return null;
+
+  const fileLines = fileContent.split("\n");
+  const firstLine = searchLines[0].trim();
+  const lastLine = searchLines[searchLines.length - 1].trim();
+
+  for (let i = 0; i < fileLines.length; i++) {
+    if (fileLines[i].trim() !== firstLine) continue;
+    for (let j = i + 2; j < fileLines.length; j++) {
+      if (fileLines[j].trim() !== lastLine) continue;
+      const blockLines = fileLines.slice(i, j + 1);
+      if (blockLines.length !== searchLines.length) break;
+
+      let matchingLines = 0;
+      let totalNonEmpty = 0;
+      for (let k = 1; k < blockLines.length - 1; k++) {
+        const bl = blockLines[k].trim();
+        const sl = searchLines[k].trim();
+        if (bl.length > 0 || sl.length > 0) {
+          totalNonEmpty++;
+          if (bl === sl) matchingLines++;
+        }
+      }
+      if (totalNonEmpty === 0 || matchingLines / totalNonEmpty >= 0.5) {
+        const before = fileLines.slice(0, i).join("\n");
+        const startIndex = before.length + (i > 0 ? 1 : 0);
+        const block = blockLines.join("\n");
+        return { startIndex, endIndex: startIndex + block.length, strategyName: "contextAware" };
+      }
+      break;
+    }
+  }
+  return null;
+}
+
+/** 9. Jaro-Winkler fuzzy match — line-based sliding window with 90%+ threshold */
 function fuzzyMatch(fileContent: string, searchContent: string): SearchMatchResult | null {
   const searchBlock = searchContent.trim();
   if (searchBlock.length < 10) return null; // Too short for meaningful fuzzy match
@@ -178,7 +389,11 @@ const strategies: MatchStrategy[] = [
   exactMatch,
   trimmedMatch,
   caseInsensitiveMatch,
+  blockAnchorMatch,
   whitespaceIgnoredMatch,
+  indentationFlexibleMatch,
+  escapeNormalizedMatch,
+  contextAwareMatch,
   fuzzyMatch,
 ];
 
@@ -254,7 +469,7 @@ export function executeFindAndReplace(
   const matches = findAllSearchMatches(content, oldString);
 
   if (matches.length === 0) {
-    throw new Error(`old_string not found in file (tried exact, trimmed, case-insensitive, and whitespace-ignored matching)`);
+    throw new Error(`old_string not found in file (tried exact, trimmed, case-insensitive, block-anchor, whitespace-ignored, indentation-flexible, escape-normalized, context-aware, and fuzzy matching)`);
   }
 
   if (!replaceAll && matches.length > 1) {

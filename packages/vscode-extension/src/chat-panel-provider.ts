@@ -8,31 +8,15 @@
 import * as vscode from "vscode";
 import {
   ToolRegistry,
-  FileReadTool,
-  FileWriteTool,
-  FileEditTool,
-  GlobSearchTool,
-  GrepSearchTool,
-  ShellExecTool,
-  FileRunTool,
-  WebFetchTool,
-  WebSearchTool,
   PermissionManager,
   PermissionMode,
   HookManager,
   MemoryStore,
   SandboxManager,
-  SystemInfoTool,
-  MultiEditTool,
-
-  ListDirTool,
-  ViewDiffTool,
-  ViewRepoMapTool,
-  CodebaseSearchTool,
-  ASTEditTool,
-  NotebookEditTool,
   loadProjectConfig,
+  registerToolCategories,
 } from "@cdoing/core";
+import type { ToolCategory } from "@cdoing/core";
 import {
   AgentRunner,
   type AgentCallbacks,
@@ -475,27 +459,17 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       });
     });
 
-    // Tool registry (with sandbox + permission manager)
+    // Tool registry — use grouped registration (file, search, execution, web, editing, viewing, session, system)
+    // Excludes "agents" category since VS Code extension doesn't support sub-agents
     this.toolRegistry = new ToolRegistry();
-    this.toolRegistry.register(new FileReadTool(workingDir, sm));
-    this.toolRegistry.register(new FileWriteTool(workingDir, sm));
-    this.toolRegistry.register(new FileEditTool(workingDir, sm));
-    this.toolRegistry.register(new MultiEditTool(workingDir, sm));
-    this.toolRegistry.register(new ASTEditTool(workingDir, sm));
-    this.toolRegistry.register(new NotebookEditTool(workingDir, sm));
-    this.toolRegistry.register(new GlobSearchTool(workingDir));
-    this.toolRegistry.register(new GrepSearchTool(workingDir));
-    this.toolRegistry.register(new ListDirTool(workingDir, sm));
-    this.toolRegistry.register(new ViewDiffTool(workingDir));
-    this.toolRegistry.register(new ViewRepoMapTool(workingDir));
-    this.toolRegistry.register(new CodebaseSearchTool(workingDir));
-    this.toolRegistry.register(new ShellExecTool(workingDir, sm, this.permissionManager));
-    this.toolRegistry.register(new FileRunTool(workingDir, sm));
-    this.toolRegistry.register(new WebFetchTool(sm));
-    this.toolRegistry.register(new WebSearchTool());
-
-    // System info tool — gives the LLM live access to its permission/sandbox state
-    this.toolRegistry.register(new SystemInfoTool(this.permissionManager, this.toolRegistry, sm));
+    const extensionCategories: ToolCategory[] = ["file", "search", "execution", "web", "editing", "viewing", "session", "system"];
+    // registerToolCategories is async but initSharedServices is sync — use void for fire-and-forget
+    // The registry will be populated before the first agent run since createAgentRunner checks it
+    void registerToolCategories(this.toolRegistry, extensionCategories, {
+      workingDir,
+      sandboxManager: sm,
+      permissionManager: this.permissionManager,
+    });
 
     // Hooks and memory
     this.hookManager = new HookManager(workingDir);

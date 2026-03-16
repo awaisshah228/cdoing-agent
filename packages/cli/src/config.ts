@@ -285,10 +285,13 @@ export function selectMenu(title: string, options: SelectOption[], defaultIndex 
 
 // ── API key resolution ──────────────────────────────────────
 
-const PROVIDER_INFO: Record<string, { name: string; url: string }> = {
-  anthropic: { name: "Anthropic (Claude)", url: "https://console.anthropic.com/settings/keys" },
+const PROVIDER_INFO: Record<string, { name: string; url: string; supportsOAuth?: boolean }> = {
+  anthropic: { name: "Anthropic (Claude)", url: "https://console.anthropic.com/settings/keys", supportsOAuth: true },
   openai: { name: "OpenAI (GPT)", url: "https://platform.openai.com/api-keys" },
   google: { name: "Google (Gemini)", url: "https://aistudio.google.com/apikey" },
+  "github-copilot": { name: "GitHub Copilot", url: "https://github.com/settings/copilot", supportsOAuth: true },
+  "google-vertex": { name: "Google Vertex AI", url: "https://console.cloud.google.com/apis/credentials" },
+  ollama: { name: "Ollama (Local)", url: "https://ollama.ai" },
 };
 
 const PROVIDER_MODELS: Record<string, SelectOption[]> = {
@@ -306,6 +309,20 @@ const PROVIDER_MODELS: Record<string, SelectOption[]> = {
     { value: "gemini-2.0-flash",  label: "Gemini 2.0 Flash",  hint: "recommended · fast" },
     { value: "gemini-1.5-pro",    label: "Gemini 1.5 Pro",    hint: "most capable" },
     { value: "gemini-1.5-flash",  label: "Gemini 1.5 Flash",  hint: "fastest" },
+  ],
+  "github-copilot": [
+    { value: "gpt-4o",       label: "GPT-4o",       hint: "recommended" },
+    { value: "gpt-4o-mini",  label: "GPT-4o mini",  hint: "fastest" },
+    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", hint: "via Copilot" },
+  ],
+  "google-vertex": [
+    { value: "gemini-2.0-flash",  label: "Gemini 2.0 Flash",  hint: "recommended" },
+    { value: "gemini-1.5-pro",    label: "Gemini 1.5 Pro",    hint: "most capable" },
+  ],
+  ollama: [
+    { value: "llama3.1",        label: "Llama 3.1",       hint: "recommended · general purpose" },
+    { value: "codellama",       label: "Code Llama",       hint: "coding-specialized" },
+    { value: "deepseek-coder",  label: "DeepSeek Coder",   hint: "coding-specialized" },
   ],
 };
 
@@ -359,9 +376,9 @@ export async function resolveApiKey(options: CLIOptions): Promise<void> {
     return;
   }
 
-  // Check OAuth tokens (Anthropic only)
-  if (provider === "anthropic") {
-    const oauthToken = await resolveOAuthToken();
+  // Check OAuth tokens (Anthropic + GitHub Copilot)
+  if (provider === "anthropic" || provider === "github-copilot") {
+    const oauthToken = await resolveOAuthToken(provider);
     if (oauthToken) {
       options.oauthToken = oauthToken;
       return;
@@ -376,9 +393,12 @@ export async function resolveApiKey(options: CLIOptions): Promise<void> {
 
   // Always show provider selection — pre-select stored or current value
   const providerOptions = [
-    { value: "anthropic", label: "Anthropic (Claude)", hint: "claude-sonnet-4-6, claude-opus-4-6" },
-    { value: "openai",    label: "OpenAI (GPT)",       hint: "gpt-4o, gpt-4o-mini" },
-    { value: "google",    label: "Google (Gemini)",    hint: "gemini-2.0-flash, gemini-1.5-pro" },
+    { value: "anthropic",      label: "Anthropic (Claude)",   hint: "claude-sonnet-4-6 · API key or OAuth" },
+    { value: "openai",         label: "OpenAI (GPT)",         hint: "gpt-4o, gpt-4o-mini" },
+    { value: "google",         label: "Google (Gemini)",       hint: "gemini-2.0-flash, gemini-1.5-pro" },
+    { value: "github-copilot", label: "GitHub Copilot",        hint: "uses your Copilot subscription" },
+    { value: "google-vertex",  label: "Google Vertex AI",      hint: "enterprise · service account auth" },
+    { value: "ollama",         label: "Ollama (Local)",         hint: "free · runs locally" },
   ];
   const currentProvider = stored2.provider || options.provider || "anthropic";
   const defaultProviderIdx = Math.max(0, providerOptions.findIndex(p => p.value === currentProvider));
@@ -394,8 +414,8 @@ export async function resolveApiKey(options: CLIOptions): Promise<void> {
     options.apiKey = stored2.apiKeys[provider2];
     return;
   }
-  if (provider2 === "anthropic") {
-    const oauthToken = await resolveOAuthToken();
+  if (provider2 === "anthropic" || provider2 === "github-copilot") {
+    const oauthToken = await resolveOAuthToken(provider2);
     if (oauthToken) { options.oauthToken = oauthToken; return; }
   }
 

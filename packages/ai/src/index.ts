@@ -7,6 +7,7 @@ export {
   getApiKeyEnvVar,
   getDefaultModel,
   getRegisteredProviders,
+  getContextWindow,
   ModelProvider,
   type ModelConfig,
   type CustomProviderConfig,

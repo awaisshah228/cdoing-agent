@@ -21,8 +21,12 @@ export {
   generateOAuthUrl,
   exchangeOAuthCode,
   getOAuthStatus,
+  getAllOAuthStatuses,
+  getOAuthProvider,
+  getOAuthProviders,
+  supportsOAuth,
 } from "@cdoing/core";
-export type { OAuthTokens } from "@cdoing/core";
+export type { OAuthTokens, OAuthProviderConfig } from "@cdoing/core";
 
 import {
   generateOAuthUrl,
@@ -30,17 +34,22 @@ import {
   clearOAuthTokens,
   loadOAuthTokens,
   isOAuthExpired,
+  getAllOAuthStatuses,
+  getOAuthProvider,
 } from "@cdoing/core";
 import type { OAuthTokens } from "@cdoing/core";
 
 // ── CLI-specific: Interactive login ──────────────────────
 
-export async function oauthLogin(): Promise<OAuthTokens> {
+export async function oauthLogin(provider: string = "anthropic"): Promise<OAuthTokens> {
   const readline = await import("readline");
-  const { url, codeVerifier } = generateOAuthUrl();
+  const providerConfig = getOAuthProvider(provider);
+  const providerName = providerConfig?.name || provider;
+
+  const { url, codeVerifier } = generateOAuthUrl(provider);
 
   console.log();
-  console.log(chalk.bold.cyan("  Claude OAuth Login"));
+  console.log(chalk.bold.cyan(`  ${providerName} OAuth Login`));
   console.log(chalk.dim("  Opening browser for authentication...\n"));
   console.log(chalk.white("  If the browser doesn't open, visit:"));
   console.log(chalk.dim(`  ${url}\n`));
@@ -56,7 +65,7 @@ export async function oauthLogin(): Promise<OAuthTokens> {
   });
 
   if (!code) throw new Error("No authorization code provided");
-  return exchangeOAuthCode(code, codeVerifier);
+  return exchangeOAuthCode(code, codeVerifier, provider);
 }
 
 // ── CLI-specific: Browser opener ─────────────────────────
@@ -109,16 +118,24 @@ export function oauthStatus(): string {
   lines.push("Authentication Status");
   lines.push("");
 
-  lines.push("OAuth (Claude):");
-  if (tokens) {
-    const expired = isOAuthExpired(tokens);
-    lines.push(`  ${expired ? "✗ expired" : "✓ active"}`);
-    if (tokens.expires_at) {
-      lines.push(`  Expires: ${new Date(tokens.expires_at).toLocaleString()}`);
+  // Show OAuth status for all providers
+  const oauthStatuses = getAllOAuthStatuses();
+  lines.push("OAuth:");
+  let hasAnyOAuth = false;
+  for (const s of oauthStatuses) {
+    const providerTokens = loadOAuthTokens(s.provider);
+    if (providerTokens) {
+      hasAnyOAuth = true;
+      const expired = isOAuthExpired(providerTokens);
+      lines.push(`  ${s.name}: ${expired ? "✗ expired" : "✓ active"}`);
+      if (providerTokens.expires_at) {
+        lines.push(`    Expires: ${new Date(providerTokens.expires_at).toLocaleString()}`);
+      }
+      lines.push(`    Refresh token: ${providerTokens.refresh_token ? "available" : "none"}`);
     }
-    lines.push(`  Refresh token: ${tokens.refresh_token ? "available" : "none"}`);
-  } else {
-    lines.push("  Not logged in — use /setup to authenticate");
+  }
+  if (!hasAnyOAuth) {
+    lines.push("  Not logged in — use --login to authenticate");
   }
 
   lines.push("");

@@ -1,5 +1,10 @@
 /**
- * OAuth 2.0 (PKCE) for Claude — Shared Core Module
+ * OAuth 2.0 (PKCE) — Multi-Provider Shared Core Module
+ *
+ * Supports OAuth for multiple providers:
+ *   - Anthropic (Claude) — PKCE flow with claude.ai
+ *   - GitHub Copilot — Device flow with github.com
+ *   - Google — OAuth2 with accounts.google.com
  *
  * All credential storage, token management, and OAuth flow logic lives here.
  * Both CLI and VS Code extension import from this module.
@@ -20,12 +25,78 @@ const CONFIG_DIR = path.join(os.homedir(), ".cdoing");
 const KEYCHAIN_SERVICE = "cdoing-agent";
 const KEYCHAIN_ACCOUNT = "oauth-tokens";
 
-// Claude OAuth endpoints (matching Claude Code CLI)
-const CLAUDE_AUTH_URL = "https://claude.ai/oauth/authorize";
-const CLAUDE_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
-const CLAUDE_REDIRECT_URI = "https://console.anthropic.com/oauth/code/callback";
-const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-const SCOPES = "org:create_api_key user:profile user:inference";
+// ── Provider OAuth Configs ────────────────────────────────
+
+/** OAuth provider configuration */
+export interface OAuthProviderConfig {
+  id: string;
+  name: string;
+  authUrl: string;
+  tokenUrl: string;
+  redirectUri: string;
+  clientId: string;
+  scopes: string;
+  /** Whether to use PKCE (S256). Default: true */
+  usePkce?: boolean;
+  /** Additional auth URL parameters */
+  extraParams?: Record<string, string>;
+}
+
+/** Built-in OAuth provider configs */
+const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
+  anthropic: {
+    id: "anthropic",
+    name: "Anthropic (Claude)",
+    authUrl: "https://claude.ai/oauth/authorize",
+    tokenUrl: "https://console.anthropic.com/v1/oauth/token",
+    redirectUri: "https://console.anthropic.com/oauth/code/callback",
+    clientId: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+    scopes: "org:create_api_key user:profile user:inference",
+    usePkce: true,
+    extraParams: { code: "true" },
+  },
+  "github-copilot": {
+    id: "github-copilot",
+    name: "GitHub Copilot",
+    authUrl: "https://github.com/login/device/code",
+    tokenUrl: "https://github.com/login/oauth/access_token",
+    redirectUri: "",
+    clientId: "Iv1.b507a08c87ecfe98", // GitHub Copilot CLI client
+    scopes: "read:user",
+    usePkce: false,
+  },
+  google: {
+    id: "google",
+    name: "Google",
+    authUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+    tokenUrl: "https://oauth2.googleapis.com/token",
+    redirectUri: "urn:ietf:wg:oauth:2.0:oob",
+    clientId: "",  // Users must provide their own Google OAuth client ID
+    scopes: "https://www.googleapis.com/auth/cloud-platform",
+    usePkce: true,
+  },
+};
+
+/**
+ * Get OAuth config for a provider. Returns null if provider doesn't support OAuth.
+ */
+export function getOAuthProvider(provider: string): OAuthProviderConfig | null {
+  return OAUTH_PROVIDERS[provider.toLowerCase()] || null;
+}
+
+/**
+ * Get all providers that support OAuth.
+ */
+export function getOAuthProviders(): OAuthProviderConfig[] {
+  return Object.values(OAUTH_PROVIDERS);
+}
+
+/**
+ * Check if a provider supports OAuth.
+ */
+export function supportsOAuth(provider: string): boolean {
+  return provider.toLowerCase() in OAUTH_PROVIDERS;
+}
 
 // ── Types ────────────────────────────────────────────────
 
@@ -34,6 +105,13 @@ export interface OAuthTokens {
   refresh_token?: string;
   expires_at?: number;
   token_type: string;
+  /** Which provider these tokens belong to */
+  provider?: string;
+}
+
+/** Multi-provider token store — maps provider → tokens */
+interface TokenStore {
+  [provider: string]: OAuthTokens & { saved_at: number };
 }
 
 // ── PKCE helpers ─────────────────────────────────────────
@@ -195,25 +273,55 @@ function deleteSecretFile(): void {
   } catch {}
 }
 
-// ── Token storage ────────────────────────────────────────
+// ── Multi-provider token store ────────────────────────────
 
-export function saveOAuthTokens(tokens: OAuthTokens): void {
-  storeSecret(JSON.stringify({ ...tokens, saved_at: Date.now() }));
-}
-
-export function loadOAuthTokens(): OAuthTokens | null {
+function loadTokenStore(): TokenStore {
   const raw = loadSecret();
-  if (!raw) return null;
+  if (!raw) return {};
   try {
-    const parsed = JSON.parse(raw) as OAuthTokens;
-    return parsed.access_token ? parsed : null;
+    const parsed = JSON.parse(raw);
+    // Migration: if old single-token format, wrap as "anthropic"
+    if (parsed.access_token && !parsed.anthropic) {
+      return { anthropic: { ...parsed, provider: "anthropic", saved_at: parsed.saved_at || Date.now() } };
+    }
+    return parsed as TokenStore;
   } catch {
-    return null;
+    return {};
   }
 }
 
-export function clearOAuthTokens(): void {
-  deleteSecret();
+function saveTokenStore(store: TokenStore): void {
+  storeSecret(JSON.stringify(store));
+}
+
+// ── Token storage (provider-aware) ────────────────────────
+
+export function saveOAuthTokens(tokens: OAuthTokens, provider: string = "anthropic"): void {
+  const store = loadTokenStore();
+  store[provider] = { ...tokens, provider, saved_at: Date.now() };
+  saveTokenStore(store);
+}
+
+export function loadOAuthTokens(provider: string = "anthropic"): OAuthTokens | null {
+  const store = loadTokenStore();
+  const entry = store[provider];
+  if (!entry?.access_token) return null;
+  return entry;
+}
+
+export function clearOAuthTokens(provider?: string): void {
+  if (!provider) {
+    // Clear all
+    deleteSecret();
+    return;
+  }
+  const store = loadTokenStore();
+  delete store[provider];
+  if (Object.keys(store).length === 0) {
+    deleteSecret();
+  } else {
+    saveTokenStore(store);
+  }
 }
 
 export function isOAuthExpired(tokens: OAuthTokens): boolean {
@@ -221,17 +329,23 @@ export function isOAuthExpired(tokens: OAuthTokens): boolean {
   return Date.now() >= tokens.expires_at;
 }
 
-// ── Token refresh ────────────────────────────────────────
+// ── Token refresh (provider-aware) ────────────────────────
 
-export async function refreshAccessToken(refreshToken: string): Promise<OAuthTokens | null> {
+export async function refreshAccessToken(
+  refreshToken: string,
+  provider: string = "anthropic",
+): Promise<OAuthTokens | null> {
+  const config = OAUTH_PROVIDERS[provider];
+  if (!config) return null;
+
   try {
-    const response = await fetch(CLAUDE_TOKEN_URL, {
+    const response = await fetch(config.tokenUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         grant_type: "refresh_token",
         refresh_token: refreshToken,
-        client_id: CLAUDE_CLIENT_ID,
+        client_id: config.clientId,
       }).toString(),
     });
 
@@ -243,9 +357,10 @@ export async function refreshAccessToken(refreshToken: string): Promise<OAuthTok
       refresh_token: (data.refresh_token as string) || refreshToken,
       expires_at: data.expires_in ? Date.now() + (data.expires_in as number) * 1000 : undefined,
       token_type: (data.token_type as string) || "Bearer",
+      provider,
     };
 
-    saveOAuthTokens(tokens);
+    saveOAuthTokens(tokens, provider);
     return tokens;
   } catch {
     return null;
@@ -254,53 +369,75 @@ export async function refreshAccessToken(refreshToken: string): Promise<OAuthTok
 
 // ── Resolve token (with auto-refresh) ────────────────────
 
-export async function resolveOAuthToken(): Promise<string | null> {
-  const tokens = loadOAuthTokens();
+export async function resolveOAuthToken(provider: string = "anthropic"): Promise<string | null> {
+  const tokens = loadOAuthTokens(provider);
   if (!tokens) return null;
 
   if (isOAuthExpired(tokens) && tokens.refresh_token) {
-    const refreshed = await refreshAccessToken(tokens.refresh_token);
+    const refreshed = await refreshAccessToken(tokens.refresh_token, provider);
     return refreshed ? refreshed.access_token : null;
   }
 
   return tokens.access_token;
 }
 
-// ── OAuth URL generation ─────────────────────────────────
+// ── OAuth URL generation (provider-aware) ─────────────────
 
-export function generateOAuthUrl(): { url: string; codeVerifier: string } {
+export function generateOAuthUrl(provider: string = "anthropic"): { url: string; codeVerifier: string } {
+  const config = OAUTH_PROVIDERS[provider];
+  if (!config) throw new Error(`Provider "${provider}" does not support OAuth`);
+
   const codeVerifier = generateCodeVerifier();
   const codeChallenge = generateCodeChallenge(codeVerifier);
 
   const params = new URLSearchParams({
-    code: "true",
-    client_id: CLAUDE_CLIENT_ID,
+    client_id: config.clientId,
     response_type: "code",
-    redirect_uri: CLAUDE_REDIRECT_URI,
-    scope: SCOPES,
-    code_challenge: codeChallenge,
-    code_challenge_method: "S256",
+    redirect_uri: config.redirectUri,
+    scope: config.scopes,
+    ...(config.usePkce !== false ? {
+      code_challenge: codeChallenge,
+      code_challenge_method: "S256",
+    } : {}),
     state: codeVerifier,
+    ...(config.extraParams || {}),
   });
 
-  return { url: `${CLAUDE_AUTH_URL}?${params.toString()}`, codeVerifier };
+  return { url: `${config.authUrl}?${params.toString()}`, codeVerifier };
 }
 
-// ── Code exchange ────────────────────────────────────────
+// ── Code exchange (provider-aware) ────────────────────────
 
-export async function exchangeOAuthCode(code: string, codeVerifier: string): Promise<OAuthTokens> {
+export async function exchangeOAuthCode(
+  code: string,
+  codeVerifier: string,
+  provider: string = "anthropic",
+): Promise<OAuthTokens> {
+  const config = OAUTH_PROVIDERS[provider];
+  if (!config) throw new Error(`Provider "${provider}" does not support OAuth`);
+
   const splits = code.split("#");
-  const response = await fetch(CLAUDE_TOKEN_URL, {
+  const body: Record<string, string> = {
+    code: splits[0],
+    grant_type: "authorization_code",
+    client_id: config.clientId,
+    redirect_uri: config.redirectUri,
+  };
+
+  // PKCE providers include code_verifier
+  if (config.usePkce !== false) {
+    body.code_verifier = codeVerifier;
+  }
+
+  // Anthropic uses state differently
+  if (provider === "anthropic") {
+    body.state = splits[1] || codeVerifier;
+  }
+
+  const response = await fetch(config.tokenUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      code: splits[0],
-      state: splits[1] || codeVerifier,
-      grant_type: "authorization_code",
-      client_id: CLAUDE_CLIENT_ID,
-      redirect_uri: CLAUDE_REDIRECT_URI,
-      code_verifier: codeVerifier,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
@@ -314,17 +451,37 @@ export async function exchangeOAuthCode(code: string, codeVerifier: string): Pro
     refresh_token: data.refresh_token as string | undefined,
     expires_at: data.expires_in ? Date.now() + (data.expires_in as number) * 1000 : undefined,
     token_type: (data.token_type as string) || "Bearer",
+    provider,
   };
 
-  saveOAuthTokens(tokens);
+  saveOAuthTokens(tokens, provider);
   return tokens;
 }
 
-// ── Status helper ────────────────────────────────────────
+// ── Status helper (provider-aware) ────────────────────────
 
-export function getOAuthStatus(): { status: "none" | "active" | "expired"; expiresAt?: number } {
-  const tokens = loadOAuthTokens();
-  if (!tokens) return { status: "none" };
-  if (isOAuthExpired(tokens)) return { status: "expired", expiresAt: tokens.expires_at };
-  return { status: "active", expiresAt: tokens.expires_at };
+export function getOAuthStatus(provider: string = "anthropic"): {
+  status: "none" | "active" | "expired";
+  expiresAt?: number;
+  provider: string;
+} {
+  const tokens = loadOAuthTokens(provider);
+  if (!tokens) return { status: "none", provider };
+  if (isOAuthExpired(tokens)) return { status: "expired", expiresAt: tokens.expires_at, provider };
+  return { status: "active", expiresAt: tokens.expires_at, provider };
+}
+
+/**
+ * Get OAuth status for all configured providers.
+ */
+export function getAllOAuthStatuses(): Array<{
+  provider: string;
+  name: string;
+  status: "none" | "active" | "expired";
+  expiresAt?: number;
+}> {
+  return Object.values(OAUTH_PROVIDERS).map((config) => {
+    const status = getOAuthStatus(config.id);
+    return { ...status, name: config.name };
+  });
 }
