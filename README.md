@@ -6,6 +6,7 @@ Open-source, multi-provider AI coding assistant — **CLI + VS Code Extension**.
 
 [![npm @cdoing/core](https://img.shields.io/npm/v/@cdoing/core?label=%40cdoing%2Fcore)](https://www.npmjs.com/package/@cdoing/core)
 [![npm @cdoing/cli](https://img.shields.io/npm/v/@cdoing/cli?label=%40cdoing%2Fcli)](https://www.npmjs.com/package/@cdoing/cli)
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/awaisshah228.cdoing-vscode?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=awaisshah228.cdoing-vscode)
 [![CI](https://github.com/awaisshah228/cdoing-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/awaisshah228/cdoing-agent/actions/workflows/ci.yml)
 
 ![Cdoing Agent — VS Code Extension](assets/image.png)
