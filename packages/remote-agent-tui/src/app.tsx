@@ -14,20 +14,38 @@ import { createRoot, useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { createCliRenderer, TextAttributes, RGBA } from "@opentui/core";
 import { useState, useCallback } from "react";
 
-import type { Engine } from "@cdoing/remote-coding-agent/core/engine";
+import type { Engine } from "@cdoing/remote-coding-agent";
 
-import { ThemeProvider, useTheme } from "./context/theme";
-import { EngineProvider, useEngineState } from "./context/engine";
+import {
+  ThemeProvider,
+  useTheme,
+  detectTerminalTheme,
+  restoreTerminalBackground,
+  getThemeColors,
+  setTerminalBackground,
+} from "./context/theme";
+import { EngineProvider } from "./context/engine";
+import { useEngineState } from "./hooks/use-engine-state";
+import { useSettingsStore } from "./store/settings";
+import type { Route } from "./store/settings";
 import { StatusBar } from "./components/status-bar";
-import type { Route } from "./components/status-bar";
 import { Sidebar } from "./components/sidebar";
 import { DialogCommand } from "./components/dialog-command";
 import { DialogHelp } from "./components/dialog-help";
 import { Dashboard } from "./routes/dashboard";
+import { Setup } from "./routes/setup";
+import { Skills } from "./routes/skills";
+import { Config } from "./routes/config";
 
 // ── Types ────────────────────────────────────────────────
 
 type Dialog = "command" | "help" | null;
+
+export interface StartTUIOptions {
+  engine: Engine;
+  route?: Route;
+  workingDir?: string;
+}
 
 // ── Uptime Formatter ─────────────────────────────────────
 
@@ -39,57 +57,26 @@ function formatUptime(seconds: number): string {
   return `${h}h${m}m`;
 }
 
-// ── Placeholder Routes ───────────────────────────────────
-
-function SetupRoute() {
-  const t = useTheme();
-  return (
-    <box flexDirection="column" flexGrow={1} paddingX={2} paddingY={1}>
-      <text fg={t.primary} attributes={TextAttributes.BOLD}>{"Setup"}</text>
-      <text fg={t.textMuted}>{"Channel and agent configuration."}</text>
-      <text fg={t.textDim}>{"(Coming soon — use the gateway API at /api/config)"}</text>
-    </box>
-  );
-}
-
-function SkillsRoute() {
-  const t = useTheme();
-  return (
-    <box flexDirection="column" flexGrow={1} paddingX={2} paddingY={1}>
-      <text fg={t.primary} attributes={TextAttributes.BOLD}>{"Skills"}</text>
-      <text fg={t.textMuted}>{"Registered skills and capabilities."}</text>
-      <text fg={t.textDim}>{"(Coming soon — skills are loaded from workspace)"}</text>
-    </box>
-  );
-}
-
-function ConfigRoute() {
-  const t = useTheme();
-  return (
-    <box flexDirection="column" flexGrow={1} paddingX={2} paddingY={1}>
-      <text fg={t.primary} attributes={TextAttributes.BOLD}>{"Config"}</text>
-      <text fg={t.textMuted}>{"Current engine configuration."}</text>
-      <text fg={t.textDim}>{"(Coming soon — use the gateway API at /api/config)"}</text>
-    </box>
-  );
-}
-
 // ── App Shell ────────────────────────────────────────────
 
 function AppShell(props: { engine: Engine }) {
   const dims = useTerminalDimensions();
-  const t = useTheme();
+  const { theme: t, customBg } = useTheme();
   const state = useEngineState(2000);
 
-  const [route, setRoute] = useState<Route>("dashboard");
+  // Persisted navigation state
+  const route = useSettingsStore((s) => s.route);
+  const sidebarVisible = useSettingsStore((s) => s.sidebarVisible);
+  const setRoute = useSettingsStore((s) => s.setRoute);
+  const toggleSidebar = useSettingsStore((s) => s.toggleSidebar);
+
   const [dialog, setDialog] = useState<Dialog>(null);
-  const [showSidebar, setShowSidebar] = useState(true);
 
   const closeDialog = useCallback(() => setDialog(null), []);
 
   // Auto-hide sidebar when terminal is too narrow
   const wide = dims.width > 120;
-  const sidebarVisible = showSidebar && wide;
+  const showSidebar = sidebarVisible && wide;
 
   // ── Global Keyboard ──────────────────────────────────
 
@@ -119,7 +106,7 @@ function AppShell(props: { engine: Engine }) {
 
     // Ctrl+B — toggle sidebar
     if (key.ctrl && key.name === "b") {
-      setShowSidebar((s) => !s);
+      toggleSidebar();
     }
 
     // F1 — help
@@ -168,7 +155,7 @@ function AppShell(props: { engine: Engine }) {
         setRoute("setup");
         break;
       case "display:sidebar":
-        setShowSidebar((s) => !s);
+        toggleSidebar();
         break;
       case "system:help":
         setDialog("help");
@@ -186,7 +173,12 @@ function AppShell(props: { engine: Engine }) {
   const allConnected = state.channels.length > 0 && state.channels.every((c) => c.connected);
 
   return (
-    <box width={dims.width} height={dims.height} flexDirection="column" backgroundColor={t.bg}>
+    <box
+      width={dims.width}
+      height={dims.height}
+      flexDirection="column"
+      backgroundColor={customBg ? RGBA.fromHex(customBg) : t.bg}
+    >
       {/* Header bar */}
       <box height={1} flexDirection="row" paddingX={1} flexShrink={0} backgroundColor={t.bgSubtle}>
         <text fg={t.primary} attributes={TextAttributes.BOLD}>{"Remote Coding Agent"}</text>
@@ -206,20 +198,20 @@ function AppShell(props: { engine: Engine }) {
         {/* Content */}
         <box flexGrow={1} flexDirection="column">
           {route === "dashboard" && <Dashboard />}
-          {route === "setup" && <SetupRoute />}
-          {route === "skills" && <SkillsRoute />}
-          {route === "config" && <ConfigRoute />}
+          {route === "setup" && <Setup onComplete={() => setRoute("dashboard")} />}
+          {route === "skills" && <Skills />}
+          {route === "config" && <Config />}
         </box>
 
         {/* Vertical border between content and sidebar */}
-        {sidebarVisible && (
+        {showSidebar && (
           <box width={1} flexShrink={0}>
             <text fg={t.border}>{"\u2502\n".repeat(Math.max(dims.height - 4, 1))}</text>
           </box>
         )}
 
         {/* Sidebar (right panel) */}
-        {sidebarVisible && <Sidebar state={state} />}
+        {showSidebar && <Sidebar state={state} />}
       </box>
 
       {/* Separator */}
@@ -252,8 +244,29 @@ function AppShell(props: { engine: Engine }) {
 
 // ── Entry Point ──────────────────────────────────────────
 
-export async function startTUI(engine: Engine): Promise<void> {
-  // Clear terminal
+export async function startTUI(options: StartTUIOptions): Promise<void> {
+  const { engine, route: initialRoute, workingDir } = options;
+
+  // Set initial route if provided
+  if (initialRoute) {
+    useSettingsStore.getState().setRoute(initialRoute);
+  }
+
+  // Detect terminal background for auto theme
+  let detectedMode: "dark" | "light" | undefined;
+  detectedMode = await detectTerminalTheme();
+
+  // Read persisted settings
+  const settings = useSettingsStore.getState();
+  const initialThemeId = settings.themeId || "vercel";
+  const initialMode = settings.mode || detectedMode || "dark";
+
+  // Set terminal background before clearing
+  const initialColors = getThemeColors(initialThemeId, initialMode);
+  if (settings.syncTerminalBg) {
+    setTerminalBackground(initialColors.bg);
+  }
+
   console.clear();
 
   const renderer = await createCliRenderer({
@@ -263,11 +276,16 @@ export async function startTUI(engine: Engine): Promise<void> {
   const root = createRoot(renderer);
 
   root.render(
-    <ThemeProvider>
-      <EngineProvider engine={engine}>
+    <ThemeProvider
+      mode={initialMode}
+      themeId={initialThemeId}
+      syncTerminalBg={settings.syncTerminalBg}
+      detectedMode={detectedMode}
+    >
+      <EngineProvider value={engine}>
         <AppShell engine={engine} />
       </EngineProvider>
-    </ThemeProvider>
+    </ThemeProvider>,
   );
 
   // Graceful cleanup
@@ -277,6 +295,7 @@ export async function startTUI(engine: Engine): Promise<void> {
     isCleaningUp = true;
     try { root.unmount(); } catch {}
     try { renderer.destroy(); } catch {}
+    restoreTerminalBackground();
     process.exit(0);
   };
 

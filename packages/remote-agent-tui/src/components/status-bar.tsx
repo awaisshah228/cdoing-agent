@@ -4,8 +4,7 @@
 
 import { TextAttributes } from "@opentui/core";
 import { useTheme } from "../context/theme";
-
-export type Route = "dashboard" | "setup" | "skills" | "config";
+import type { Route } from "../store/settings";
 
 export interface StatusBarProps {
   route: Route;
