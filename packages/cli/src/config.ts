@@ -8,9 +8,9 @@ import * as path from "path";
 import * as os from "os";
 import * as readline from "readline";
 import chalk from "chalk";
-import { PermissionManager, PermissionMode, SandboxManager } from "@cdoing/core";
+import { PermissionManager, PermissionMode, SandboxManager, supportsOAuth } from "@cdoing/core";
 import { getApiKeyEnvVar, type ModelConfig } from "@cdoing/ai";
-import { resolveOAuthToken } from "./oauth";
+import { resolveOAuthToken, oauthLogin } from "./oauth";
 
 const CONFIG_DIR = path.join(os.homedir(), ".cdoing");
 const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
@@ -376,8 +376,8 @@ export async function resolveApiKey(options: CLIOptions): Promise<void> {
     return;
   }
 
-  // Check OAuth tokens (Anthropic + GitHub Copilot)
-  if (provider === "anthropic" || provider === "github-copilot") {
+  // Check OAuth tokens for any provider that supports OAuth
+  if (supportsOAuth(provider)) {
     const oauthToken = await resolveOAuthToken(provider);
     if (oauthToken) {
       options.oauthToken = oauthToken;
@@ -414,7 +414,7 @@ export async function resolveApiKey(options: CLIOptions): Promise<void> {
     options.apiKey = stored2.apiKeys[provider2];
     return;
   }
-  if (provider2 === "anthropic" || provider2 === "github-copilot") {
+  if (supportsOAuth(provider2)) {
     const oauthToken = await resolveOAuthToken(provider2);
     if (oauthToken) { options.oauthToken = oauthToken; return; }
   }
@@ -428,33 +428,26 @@ export async function resolveApiKey(options: CLIOptions): Promise<void> {
 
   const info = PROVIDER_INFO[provider2];
 
-  // Anthropic: offer API key or OAuth
-  if (provider2 === "anthropic") {
+  // Offer OAuth for any provider that supports it
+  if (supportsOAuth(provider2)) {
     const authMethod = await selectMenu("Choose authentication method", [
       { value: "apikey", label: "API key",        hint: "from console.anthropic.com" },
       { value: "oauth",  label: "OAuth token",    hint: "Claude Pro/Max · run: claude config get oauth_token" },
     ]);
 
     if (authMethod === "oauth") {
-      console.log();
-      console.log(chalk.dim("  To get your OAuth token:"));
-      console.log(chalk.dim("    1. Install Claude Code: npm install -g @anthropic-ai/claude-code"));
-      console.log(chalk.dim("    2. Login: claude login"));
-      console.log(chalk.dim("    3. Get token: claude config get oauth_token"));
-      console.log();
-      const token = await ask(chalk.green("  Paste your OAuth token (sk-ant-oat01-...): "));
-      if (token && token.startsWith("sk-ant-")) {
+      try {
+        const tokens = await oauthLogin(provider2);
         const config = loadConfig();
-        config.apiKeys = config.apiKeys || {};
-        config.apiKeys[provider2] = token;
         config.provider = provider2;
         if (options.model) config.model = options.model;
         saveConfig(config);
-        options.apiKey = token;
-        console.log(chalk.green("\n  Token saved!\n"));
+        options.oauthToken = tokens.access_token;
+        console.log(chalk.green("\n  OAuth login successful!\n"));
         return;
+      } catch (err) {
+        console.log(chalk.yellow(`\n  OAuth login failed: ${(err as Error).message}. Falling back to API key.\n`));
       }
-      console.log(chalk.yellow("\n  That doesn't look like a Claude token. Falling back to API key.\n"));
     }
   }
 

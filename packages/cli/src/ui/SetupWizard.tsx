@@ -12,6 +12,7 @@ import React, { useState, useCallback, useEffect, useRef } from "react";
 import { Box, Text, useInput } from "ink";
 import { loadConfig, saveConfig } from "../config";
 import { generateOAuthUrl, exchangeOAuthCode } from "../oauth";
+import { getOAuthProvider, supportsOAuth } from "@cdoing/core";
 import { getTheme } from "./theme";
 
 // ── Static data ───────────────────────────────────────────────────────────────
@@ -53,10 +54,16 @@ const ALL_MODELS: Record<string, { value: string; label: string; hint: string }[
   ],
 };
 
-// OAuth only supports Haiku currently
-const OAUTH_MODELS = [
-  { value: "claude-haiku-4-5", label: "Claude Haiku 4.5", hint: "only model supported with OAuth" },
-];
+/** Get available OAuth models for a provider (from core config) */
+function getOAuthModels(provider: string) {
+  const config = getOAuthProvider(provider);
+  if (!config?.models || config.models.length === 0) {
+    return config?.defaultModel
+      ? [{ value: config.defaultModel, label: config.defaultModel, hint: "OAuth" }]
+      : [];
+  }
+  return config.models.map(m => ({ value: m.id, label: m.name, hint: m.hint || "OAuth" }));
+}
 
 const KEY_URLS: Record<string, string> = {
   anthropic: "https://console.anthropic.com/settings/keys",
@@ -151,7 +158,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
   // Generate OAuth URL and open browser when entering oauth-paste step
   useEffect(() => {
     if (step !== "oauth-paste") return;
-    const { url, codeVerifier } = generateOAuthUrl();
+    const { url, codeVerifier } = generateOAuthUrl(chosenProvider);
     setOauthUrl(url);
     setOauthVerifier(codeVerifier);
     setOauthCodeInput("");
@@ -162,7 +169,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
 
   // Returns the model list for the current provider + auth selection
   const getModels = useCallback((provider: string, authMethod: "apikey" | "oauth") => {
-    if (provider === "anthropic" && authMethod === "oauth") return OAUTH_MODELS;
+    if (authMethod === "oauth" && supportsOAuth(provider)) return getOAuthModels(provider);
     return ALL_MODELS[provider] || [];
   }, []);
 
@@ -177,10 +184,10 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
         const p = PROVIDERS[providerIdx].value;
         setChosenProvider(p);
         setAuthIdx(0);
-        if (p === "anthropic") {
+        if (supportsOAuth(p)) {
           setStep("auth-method");
         } else {
-          // Non-Anthropic: skip auth-method, go straight to model
+          // No OAuth support: skip auth-method, go straight to model
           const models = ALL_MODELS[p] || [];
           setModelIdx(Math.max(0, models.findIndex(m => m.value === currentModel)));
           setStep("model");
@@ -189,14 +196,14 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
       }
     }
 
-    // ── 2. Auth method (Anthropic only) ───────────────────────────────────
+    // ── 2. Auth method (any OAuth-capable provider) ─────────────────────
     if (step === "auth-method") {
       if (key.upArrow)   { setAuthIdx(i => Math.max(0, i - 1)); return; }
       if (key.downArrow) { setAuthIdx(i => Math.min(AUTH_METHODS.length - 1, i + 1)); return; }
       if (key.return) {
         const auth = AUTH_METHODS[authIdx].value as "apikey" | "oauth";
         setChosenAuthMethod(auth);
-        const models = getModels("anthropic", auth);
+        const models = getModels(chosenProvider, auth);
         // Pre-select current model if available, else 0
         setModelIdx(Math.max(0, models.findIndex(m => m.value === currentModel)));
         setStep("model");
@@ -247,7 +254,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
         if (!code || exchangingRef.current) return;
         exchangingRef.current = true;
         setStep("oauth-exchanging");
-        exchangeOAuthCode(code, oauthVerifier)
+        exchangeOAuthCode(code, oauthVerifier, chosenProvider)
           .then((tokens) => {
             _saveOAuth(chosenProvider, chosenModel);
             setTimeout(() => {

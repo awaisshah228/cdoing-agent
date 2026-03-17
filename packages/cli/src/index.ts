@@ -29,7 +29,7 @@ program
   .option("--api-key <key>", "API key (overrides env var)")
   .option("--mode <mode>", "Permission mode: ask, auto-edit, auto", "ask")
   .option("-d, --dir <directory>", "Working directory", process.cwd())
-  .option("--login", "Login with Claude via OAuth (opens browser)")
+  .option("--login [provider]", "Login via OAuth (anthropic, openai-codex, google, github-copilot)")
   .option("--logout", "Clear stored OAuth tokens")
   // New flags
   .option("--print", "Print output only (non-interactive)")
@@ -107,11 +107,12 @@ async function run(prompt: string | undefined, options: CLIOptions) {
     return;
   }
 
-  // Handle --login: start OAuth flow
+  // Handle --login [provider]: start OAuth flow
   if (options.login) {
     try {
-      await oauthLogin();
-      console.log(chalk.green("\n  Login successful! You can now run cdoing.\n"));
+      const loginProvider = typeof options.login === "string" ? options.login : "anthropic";
+      await oauthLogin(loginProvider);
+      console.log(chalk.green(`\n  Login successful (${loginProvider})! You can now run cdoing.\n`));
     } catch (err) {
       console.log(chalk.red(`\n  Login failed: ${(err as Error).message}\n`));
       process.exit(1);

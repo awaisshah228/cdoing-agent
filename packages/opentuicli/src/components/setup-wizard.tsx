@@ -56,9 +56,30 @@ const MODELS: Record<string, { id: string; name: string; hint?: string }[]> = {
   ],
 };
 
-const OAUTH_MODELS = [
-  { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", hint: "only model supported with OAuth" },
-];
+/** Get OAuth models for a provider from core config */
+function getOAuthModels(providerId: string) {
+  try {
+    const { getOAuthProvider } = require("@cdoing/core");
+    const config = getOAuthProvider(providerId);
+    if (!config?.models || config.models.length === 0) {
+      return config?.defaultModel
+        ? [{ id: config.defaultModel, name: config.defaultModel, hint: "OAuth" }]
+        : [];
+    }
+    return config.models.map((m: any) => ({ id: m.id, name: m.name, hint: m.hint || "OAuth" }));
+  } catch {
+    return [];
+  }
+}
+
+function providerSupportsOAuth(providerId: string): boolean {
+  try {
+    const { supportsOAuth } = require("@cdoing/core");
+    return supportsOAuth(providerId);
+  } catch {
+    return providerId === "anthropic";
+  }
+}
 
 const ENV_VARS: Record<string, string> = {
   anthropic: "ANTHROPIC_API_KEY",
@@ -107,7 +128,7 @@ export function SetupWizard(props: SetupWizardProps) {
   const exchangingRef = useRef(false);
 
   const provider = PROVIDERS[selectedProvider];
-  const models = authMethod === "oauth" ? OAUTH_MODELS : (MODELS[chosenProviderId] || []);
+  const models = authMethod === "oauth" ? getOAuthModels(chosenProviderId) : (MODELS[chosenProviderId] || []);
 
   // Generate OAuth URL when entering oauth-paste step
   useEffect(() => {
@@ -135,7 +156,7 @@ export function SetupWizard(props: SetupWizardProps) {
         setStep("model");
         setError("");
       } else if (step === "model") {
-        setStep(chosenProviderId === "anthropic" ? "auth-method" : "provider");
+        setStep(providerSupportsOAuth(chosenProviderId) ? "auth-method" : "provider");
       } else if (step === "auth-method") {
         setStep("provider");
       } else {
@@ -154,7 +175,7 @@ export function SetupWizard(props: SetupWizardProps) {
         const p = PROVIDERS[selectedProvider];
         setChosenProviderId(p.id);
         setSelectedModel(0);
-        if (p.id === "anthropic") {
+        if (providerSupportsOAuth(p.id)) {
           setSelectedAuth(0);
           setStep("auth-method");
         } else {
@@ -165,7 +186,7 @@ export function SetupWizard(props: SetupWizardProps) {
       return;
     }
 
-    // ── Step 2: Auth method (Anthropic only) ──
+    // ── Step 2: Auth method (any OAuth-capable provider) ──
     if (step === "auth-method") {
       if (key.name === "up" || key.name === "k") {
         setSelectedAuth((s) => Math.max(0, s - 1));
@@ -372,11 +393,11 @@ export function SetupWizard(props: SetupWizardProps) {
         <box flexDirection="column">
           <text fg={t.text} attributes={TextAttributes.BOLD}>
             {authMethod === "oauth"
-              ? `Step ${stepLabel("model")}: Select Model (OAuth supports Haiku only)`
+              ? `Step ${stepLabel("model")}: Select Model (OAuth — ${provider.name})`
               : `Step ${stepLabel("model")}: Select Model (${provider.name})`}
           </text>
           <text>{""}</text>
-          {models.map((m, i) => (
+          {models.map((m: { id: string; name: string; hint?: string }, i: number) => (
             <text
               key={m.id}
               fg={selectedModel === i ? t.primary : t.textMuted}
