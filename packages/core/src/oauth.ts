@@ -69,9 +69,20 @@ const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
     authUrl: "https://github.com/login/device/code",
     tokenUrl: "https://github.com/login/oauth/access_token",
     redirectUri: "",
-    clientId: "Iv1.b507a08c87ecfe98", // GitHub Copilot CLI client
+    clientId: "Iv1.b507a08c87ecfe98",
     scopes: "read:user",
     usePkce: false,
+    defaultModel: "claude-sonnet-4",
+    models: [
+      { id: "claude-sonnet-4", name: "Claude Sonnet 4", hint: "Anthropic · recommended" },
+      { id: "claude-sonnet-4.5", name: "Claude Sonnet 4.5", hint: "Anthropic · latest" },
+      { id: "claude-haiku-4.5", name: "Claude Haiku 4.5", hint: "Anthropic · fast" },
+      { id: "gpt-4o", name: "GPT-4o", hint: "OpenAI · vision" },
+      { id: "gpt-4.1", name: "GPT-4.1", hint: "OpenAI · latest" },
+      { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", hint: "Google · capable" },
+      { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", hint: "Google · fast" },
+      { id: "o3-mini", name: "o3 Mini", hint: "OpenAI · reasoning" },
+    ],
   },
   google: {
     id: "google",
@@ -79,9 +90,17 @@ const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
     authUrl: "https://accounts.google.com/o/oauth2/v2/auth",
     tokenUrl: "https://oauth2.googleapis.com/token",
     redirectUri: "urn:ietf:wg:oauth:2.0:oob",
-    clientId: "",  // Users must provide their own Google OAuth client ID
+    clientId: "",
     scopes: "https://www.googleapis.com/auth/cloud-platform",
     usePkce: true,
+    defaultModel: "gemini-2.5-flash",
+    models: [
+      { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", hint: "recommended · fast" },
+      { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", hint: "most capable" },
+      { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash", hint: "stable" },
+      { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", hint: "1M context" },
+      { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash", hint: "fast" },
+    ],
   },
 };
 

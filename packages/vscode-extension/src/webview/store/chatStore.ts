@@ -101,6 +101,7 @@ interface ChatActions {
   closeSettings: () => void;
   saveSettings: (config: Partial<ExtensionConfig>) => void;
   openVscodeSettings: () => void;
+  switchModel: (model: string) => void;
 
   // Permissions
   respondToPermission: (decision: string) => void;
@@ -418,6 +419,11 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
 
     openVscodeSettings: () => {
       getVsCode().postMessage({ type: "openVscodeSettings" });
+    },
+
+    switchModel: (model: string) => {
+      getVsCode().postMessage({ type: "updateConfig", config: { model } } as any);
+      set({ modelLabel: model });
     },
 
     // ── Permissions ─────────────────────────────────

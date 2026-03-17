@@ -280,7 +280,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   // Derived
   const currentOAuthProvider = oauthProviders.find((p) => p.id === provider);
   const providerSupportsOAuth = !!currentOAuthProvider;
-  const isOAuthActive = providerSupportsOAuth && authMethod === "oauth" && oauthStatus === "active";
   // For custom providers, use provider-specific model list if available, else the generic custom list
   const modelOptions = provider === "custom" && customProviderName && CUSTOM_PROVIDER_MODELS[customProviderName]
     ? CUSTOM_PROVIDER_MODELS[customProviderName]
@@ -410,10 +409,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                       </button>
                     )}
                   </div>
-                  {/* OAuth model selector */}
+                  {/* OAuth model selector — inside the OAuth tab */}
                   {currentOAuthProvider?.models && currentOAuthProvider.models.length > 0 && (
                     <div className="oauth-model-select">
-                      <label className="settings-label" style={{ fontSize: "11px", marginTop: 8 }}>OAuth Model</label>
+                      <label className="settings-label" style={{ fontSize: "11px", marginTop: 10 }}>Model</label>
                       {currentOAuthProvider.models.length === 1 ? (
                         <div className="settings-model-fixed">
                           {currentOAuthProvider.models[0].name}
@@ -422,18 +421,17 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                           )}
                         </div>
                       ) : (
-                        <div className="oauth-model-grid">
-                          {currentOAuthProvider.models.map((m) => (
-                            <button
-                              key={m.id}
-                              className={`settings-model-option ${model === m.id ? "active" : ""}`}
-                              onClick={() => setModel(m.id)}
-                            >
-                              <span className="settings-model-option-name">{m.name}</span>
-                              {m.hint && <span className="settings-model-option-hint">{m.hint}</span>}
-                            </button>
-                          ))}
-                        </div>
+                        <SearchableSelect
+                          value={model || currentOAuthProvider.defaultModel || ""}
+                          options={currentOAuthProvider.models.map((m) => ({
+                            value: m.id,
+                            label: m.name,
+                            hint: m.hint,
+                          }))}
+                          onChange={setModel}
+                          placeholder="Search models..."
+                          allowCustom={false}
+                        />
                       )}
                     </div>
                   )}
@@ -459,41 +457,27 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
             </div>
           </div>
 
-          {/* ═══ Model ═══ */}
-          <div className="settings-group">
-            <label className="settings-label">Model</label>
-            {isOAuthActive ? (
-              <>
-                <div className="settings-model-fixed">
-                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6, verticalAlign: -2, opacity: 0.5 }}>
-                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                  </svg>
-                  {currentOAuthProvider?.defaultModel || model || "—"}
-                </div>
-                <span className="settings-hint">
-                  Model is determined by OAuth. Switch to API Key to choose freely.
-                </span>
-              </>
-            ) : (
-              <>
-                <SearchableSelect
-                  value={model}
-                  options={modelOptions}
-                  onChange={setModel}
-                  placeholder={`Search models... (default: ${DEFAULT_MODELS[provider] || "auto"})`}
-                  allowCustom
-                  customLabel="custom model"
-                />
-                <span className="settings-hint">
-                  {model
-                    ? modelOptions.find((m) => m.value === model)
-                      ? `Using ${model}`
-                      : `Custom model: ${model}`
-                    : `Default: ${DEFAULT_MODELS[provider] || "provider default"}`}
-                </span>
-              </>
-            )}
-          </div>
+          {/* ═══ Model (only shown for API Key auth — OAuth has its own model selector above) ═══ */}
+          {!(authMethod === "oauth" && providerSupportsOAuth) && (
+            <div className="settings-group">
+              <label className="settings-label">Model</label>
+              <SearchableSelect
+                value={model}
+                options={modelOptions}
+                onChange={setModel}
+                placeholder={`Search models... (default: ${DEFAULT_MODELS[provider] || "auto"})`}
+                allowCustom
+                customLabel="custom model"
+              />
+              <span className="settings-hint">
+                {model
+                  ? modelOptions.find((m) => m.value === model)
+                    ? `Using ${model}`
+                    : `Custom model: ${model}`
+                  : `Default: ${DEFAULT_MODELS[provider] || "provider default"}`}
+              </span>
+            </div>
+          )}
 
           {/* ═══ Permission Mode ═══ */}
           <div className="settings-group">

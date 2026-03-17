@@ -14,7 +14,7 @@
  *   Overlays: ConversationHistory, SettingsPanel
  */
 
-import React, { useEffect } from "react";
+import React, { useEffect, useMemo } from "react";
 import { Header } from "./Header";
 import { TabBar } from "./TabBar";
 import { MessageList } from "./MessageList";
@@ -22,6 +22,25 @@ import { InputArea } from "./InputArea";
 import { ConversationHistory } from "./ConversationHistory";
 import { SettingsPanel } from "./SettingsPanel";
 import { useChatStore } from "../store/chatStore";
+
+/** Quick-switch model options per provider (subset for the header picker) */
+const HEADER_MODEL_OPTIONS: Record<string, Array<{ value: string; label: string; hint?: string }>> = {
+  anthropic: [
+    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", hint: "recommended" },
+    { value: "claude-opus-4-6", label: "Claude Opus 4.6", hint: "most capable" },
+    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5", hint: "fastest" },
+  ],
+  openai: [
+    { value: "gpt-4o", label: "GPT-4o", hint: "recommended" },
+    { value: "gpt-4o-mini", label: "GPT-4o Mini", hint: "fast" },
+    { value: "o3-mini", label: "o3 Mini", hint: "reasoning" },
+  ],
+  google: [
+    { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash", hint: "fast" },
+    { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro", hint: "capable" },
+    { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash", hint: "stable" },
+  ],
+};
 
 export const ChatPanel: React.FC = () => {
   const init = useChatStore((s) => s.init);
@@ -58,12 +77,21 @@ export const ChatPanel: React.FC = () => {
   const cancelGeneration = useChatStore((s) => s.cancelGeneration);
   const interruptAndSend = useChatStore((s) => s.interruptAndSend);
   const respondToPermission = useChatStore((s) => s.respondToPermission);
+  const switchModel = useChatStore((s) => s.switchModel);
+  const providerLabel = useChatStore((s) => s.providerLabel);
+
+  const headerModelOptions = useMemo(
+    () => HEADER_MODEL_OPTIONS[providerLabel] || [],
+    [providerLabel]
+  );
 
   return (
     <div className="chat-container">
       <Header
         modelLabel={modelLabel}
+        modelOptions={headerModelOptions}
         onSelectModel={openSettings}
+        onSwitchModel={switchModel}
         onNewChat={createNewTab}
         onOpenSettings={openSettings}
         onOpenHistory={openHistory}
