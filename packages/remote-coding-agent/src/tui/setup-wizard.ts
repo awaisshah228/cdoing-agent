@@ -24,6 +24,8 @@ import * as fs from "fs";
 import * as path from "path";
 import { generateSecretKey } from "../auth/secret";
 import { CredentialManager } from "../auth/credentials";
+import { getProviders } from "@cdoing/ai";
+import { supportsOAuth } from "@cdoing/core";
 
 // ── ANSI Colors (no chalk dependency) ───────────────────────────────────
 
@@ -35,39 +37,30 @@ const DIM = "\x1b[2m";
 const BOLD = "\x1b[1m";
 const RESET = "\x1b[0m";
 
-// ── Provider & Model Definitions ────────────────────────────────────────
+// ── Provider & Model Definitions (from @cdoing/ai catalog) ──────────────
 
-/** Available AI providers with their model options. */
-const PROVIDERS = [
-  {
-    id: "anthropic",
-    name: "Anthropic (Claude)",
-    envKey: "ANTHROPIC_API_KEY",
-    models: ["claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5-20251001"],
-    defaultModel: "claude-sonnet-4-6",
-  },
-  {
-    id: "openai",
-    name: "OpenAI (GPT)",
-    envKey: "OPENAI_API_KEY",
-    models: ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1-preview"],
-    defaultModel: "gpt-4o",
-  },
-  {
-    id: "google",
-    name: "Google (Gemini)",
-    envKey: "GOOGLE_API_KEY",
-    models: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"],
-    defaultModel: "gemini-2.5-flash",
-  },
-  {
-    id: "ollama",
-    name: "Ollama (Local)",
-    envKey: "",
-    models: ["llama3.3", "codellama", "deepseek-coder", "mistral"],
-    defaultModel: "llama3.3",
-  },
-];
+/** Build provider list from the centralized provider catalog. */
+function buildProviderList() {
+  const catalog = getProviders();
+  return catalog.map((p) => {
+    const modelLabels = p.models.map((m) => {
+      const hint = m.hint ? ` — ${m.hint}` : "";
+      return `${m.id.padEnd(23)}${hint}`;
+    });
+    const modelIds = p.models.map((m) => m.id);
+    return {
+      id: p.id,
+      name: p.label,
+      envKey: p.envVar || "",
+      supportsOAuth: p.supportsOAuth || supportsOAuth(p.id),
+      models: modelLabels,
+      modelIds,
+      defaultModel: modelIds[0] || "",
+      // Pick a more capable model for coding (second model, or first if only one)
+      defaultCodingModel: modelIds.length > 1 ? modelIds[1] : modelIds[0] || "",
+    };
+  });
+}
 
 /** Permission mode options. */
 const PERMISSION_MODES = [
@@ -215,6 +208,9 @@ export async function runSetupWizard(): Promise<SetupResult> {
   console.log(`${DIM}You can change these settings later in the config file or dashboard.${RESET}`);
   console.log();
 
+  // Load providers from the centralized catalog (not hardcoded)
+  const PROVIDERS = buildProviderList();
+
   // ── Step 1: AI Provider ──
   console.log(`${YELLOW}${BOLD}Step 1: AI Provider${RESET}`);
   const providerIdx = await selectMenu(
@@ -224,14 +220,17 @@ export async function runSetupWizard(): Promise<SetupResult> {
   const provider = PROVIDERS[providerIdx];
   console.log(`  ${DIM}Selected: ${provider.name}${RESET}\n`);
 
-  // ── Step 2: Model ──
-  console.log(`${YELLOW}${BOLD}Step 2: Model${RESET}`);
+  // ── Step 2: Assistant Model ──
+  console.log(`${YELLOW}${BOLD}Step 2: Personal Assistant Model${RESET}`);
+  console.log(`  ${DIM}This model handles chat, config, scheduling, and routing.${RESET}`);
+  console.log(`  ${DIM}Use a fast/cheap model here (e.g., Haiku, GPT-4o-mini).${RESET}\n`);
+  const defaultModelIdx = provider.modelIds.indexOf(provider.defaultModel);
   const modelIdx = await selectMenu(
-    "Select model:",
+    "Select assistant model:",
     provider.models,
-    0,
+    defaultModelIdx >= 0 ? defaultModelIdx : 0,
   );
-  const model = provider.models[modelIdx];
+  const model = provider.modelIds[modelIdx];
   console.log(`  ${DIM}Selected: ${model}${RESET}\n`);
 
   // ── Step 3: Authentication ──
@@ -241,8 +240,8 @@ export async function runSetupWizard(): Promise<SetupResult> {
 
   console.log(`${YELLOW}${BOLD}Step 3: Authentication${RESET}`);
 
-  if (provider.id === "anthropic") {
-    // Anthropic supports OAuth + API key
+  if (provider.supportsOAuth) {
+    // Provider supports OAuth + API key
     const authMethodIdx = await selectMenu("How do you want to authenticate?", [
       "Claude OAuth (opens browser — recommended)",
       "API Key (paste manually)",
@@ -308,12 +307,12 @@ export async function runSetupWizard(): Promise<SetupResult> {
   let codingModel: string | undefined;
   let codingApiKey: string | undefined;
 
-  console.log(`${YELLOW}${BOLD}Step 3b: Coding Model (optional)${RESET}`);
-  console.log(`  ${DIM}You can use a different (more capable) model for coding tasks.${RESET}`);
-  console.log(`  ${DIM}The assistant model handles chat, cron, skills. The coding model handles file edits, builds, etc.${RESET}`);
+  console.log(`${YELLOW}${BOLD}Step 3b: Coding Agent Model${RESET}`);
+  console.log(`  ${DIM}The coding agent handles file edits, builds, debugging, etc.${RESET}`);
+  console.log(`  ${DIM}Use a powerful model here (e.g., Sonnet, Opus, GPT-4o).${RESET}`);
   console.log();
 
-  const wantCodingModel = await confirm("Use a separate model for coding tasks?", false);
+  const wantCodingModel = await confirm("Use a separate (more powerful) model for coding tasks?", true);
 
   if (wantCodingModel) {
     hasCodingModel = true;
@@ -326,28 +325,36 @@ export async function runSetupWizard(): Promise<SetupResult> {
     const codingProviderDef = PROVIDERS[codingProviderIdx];
     codingProvider = codingProviderDef.id;
 
+    const defaultCodingIdx = codingProviderDef.modelIds.indexOf(codingProviderDef.defaultCodingModel);
     const codingModelIdx = await selectMenu(
       "Select coding model:",
       codingProviderDef.models,
-      0,
+      defaultCodingIdx >= 0 ? defaultCodingIdx : 0,
     );
-    codingModel = codingProviderDef.models[codingModelIdx];
+    codingModel = codingProviderDef.modelIds[codingModelIdx];
     console.log(`  ${DIM}Coding: ${codingProviderDef.name} / ${codingModel}${RESET}`);
 
-    // API key for coding model (if different provider)
+    // Auth for coding model
     if (codingProvider !== provider.id) {
-      const codingEnvKey = codingProviderDef.envKey;
-      const codingEnvVal = codingEnvKey ? process.env[codingEnvKey] : undefined;
+      // Different provider — need separate auth
+      if (codingProviderDef.supportsOAuth && provider.supportsOAuth) {
+        console.log(`  ${DIM}Coding agent will use the same OAuth token as assistant.${RESET}`);
+      } else {
+        const codingEnvKey = codingProviderDef.envKey;
+        const codingEnvVal = codingEnvKey ? process.env[codingEnvKey] : undefined;
 
-      if (codingEnvVal) {
-        console.log(`  ${GREEN}✓${RESET} Found ${codingEnvKey} in environment for coding model`);
-      } else if (codingEnvKey) {
-        codingApiKey = await ask(`Enter ${codingProviderDef.name} API key for coding model`);
-        if (codingApiKey) {
-          creds.saveApiKey(codingProvider, codingApiKey, "coding");
-          console.log(`  ${GREEN}✓${RESET} Coding API key saved to credential store`);
+        if (codingEnvVal) {
+          console.log(`  ${GREEN}✓${RESET} Found ${codingEnvKey} in environment for coding model`);
+        } else if (codingEnvKey) {
+          codingApiKey = await ask(`Enter ${codingProviderDef.name} API key for coding model`);
+          if (codingApiKey) {
+            creds.saveApiKey(codingProvider, codingApiKey, "coding");
+            console.log(`  ${GREEN}✓${RESET} Coding API key saved to credential store`);
+          }
         }
       }
+    } else {
+      console.log(`  ${DIM}Coding agent will use the same auth as assistant.${RESET}`);
     }
   }
   console.log();

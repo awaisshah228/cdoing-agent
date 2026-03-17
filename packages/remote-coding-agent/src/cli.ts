@@ -244,38 +244,149 @@ program
 
 program
   .command("status")
-  .description("Check connection status")
+  .description("Check agent, channel, and credential status")
   .option("-c, --config <path>", "Path to config file")
   .action(async (opts) => {
     try {
       const config = loadConfig({ configFile: opts.config });
 
-      console.log("Configuration:");
-      console.log(`  Provider: ${config.agent.provider}`);
-      console.log(`  Model: ${config.agent.model}`);
-      console.log(`  Working dir: ${config.workingDir}`);
-      console.log(`  Gateway port: ${config.gateway.port}`);
+      console.log("\n\x1b[1mAgents:\x1b[0m");
+      console.log(`  \x1b[36m├ Personal Assistant\x1b[0m`);
+      console.log(`  │  Provider: ${config.agent.provider}`);
+      console.log(`  │  Model:    ${config.agent.model}`);
+      console.log(`  \x1b[35m└ Coding Agent\x1b[0m`);
+      console.log(`  ${config.agent.codingModel ? "" : "\x1b[2m"}   Provider: ${config.agent.codingProvider || config.agent.provider}`);
+      console.log(`     Model:    ${config.agent.codingModel || config.agent.model}${config.agent.codingModel ? "" : " (same as assistant)"}\x1b[0m`);
       console.log();
 
-      console.log("Channels:");
-      for (const [id, ch] of Object.entries(config.channels)) {
-        const status = ch.enabled ? "enabled" : "disabled";
+      console.log("\x1b[1mEnvironment:\x1b[0m");
+      console.log(`  Working dir:      ${config.workingDir}`);
+      console.log(`  Permission mode:  ${config.agent.permissionMode}`);
+      console.log(`  Gateway port:     ${config.gateway.port}`);
+      console.log(`  Auth token:       ${config.gateway.authToken ? config.gateway.authToken.substring(0, 8) + "..." : "none"}`);
+      console.log();
+
+      console.log("\x1b[1mChannels:\x1b[0m");
+      const channelEntries = Object.entries(config.channels);
+      if (channelEntries.length === 0) {
+        console.log("  (no channels configured)");
+      }
+      for (const [id, ch] of channelEntries) {
+        const status = ch.enabled ? "\x1b[32m✓ enabled\x1b[0m" : "\x1b[31m✗ disabled\x1b[0m";
         console.log(`  ${id}: ${status}`);
 
-        // Test Telegram connection
         if (id === "telegram" && ch.enabled && ch.botToken) {
           try {
             const res = await fetch(`https://api.telegram.org/bot${ch.botToken}/getMe`);
             const data = await res.json() as { ok: boolean; result?: { username: string } };
             if (data.ok && data.result) {
-              console.log(`    Connected: @${data.result.username}`);
+              console.log(`    \x1b[32mConnected: @${data.result.username}\x1b[0m`);
             } else {
-              console.log("    Connection failed — check token");
+              console.log("    \x1b[31mConnection failed — check token\x1b[0m");
             }
           } catch {
-            console.log("    Connection failed — network error");
+            console.log("    \x1b[31mConnection failed — network error\x1b[0m");
           }
         }
+      }
+      console.log();
+
+      // Credentials
+      console.log("\x1b[1mCredentials:\x1b[0m");
+      const { CredentialManager } = await import("./auth/credentials");
+      const creds = new CredentialManager();
+      const credStatus = creds.getStatus();
+      const oauthStatus = await creds.getOAuthStatus();
+
+      console.log(`  OAuth:  ${oauthStatus.status === "active" ? "\x1b[32m✓ active\x1b[0m" : oauthStatus.status === "expired" ? "\x1b[31m✗ expired\x1b[0m" : "\x1b[2mnot configured\x1b[0m"}`);
+      if (credStatus.apiKeys.length > 0) {
+        for (const k of credStatus.apiKeys) {
+          console.log(`  ${k.provider} (${k.role}): \x1b[32m✓\x1b[0m ${k.masked}`);
+        }
+      }
+      for (const [name, val] of [["ANTHROPIC_API_KEY", process.env.ANTHROPIC_API_KEY], ["OPENAI_API_KEY", process.env.OPENAI_API_KEY]] as const) {
+        if (val) console.log(`  ${name}: \x1b[32m✓\x1b[0m (env)`);
+      }
+      console.log();
+
+      // Skills
+      console.log("\x1b[1mSkills:\x1b[0m");
+      const { SkillRegistry } = await import("./skills/registry");
+      const skillReg = new SkillRegistry(config.workingDir);
+      // Skills are loaded automatically in constructor
+      const skills = skillReg.getAll();
+      if (skills.length === 0) {
+        console.log("  (no skills loaded)");
+      } else {
+        for (const s of skills) {
+          const label = s.enabled ? "\x1b[32m✓\x1b[0m" : "\x1b[31m✗\x1b[0m";
+          console.log(`  ${label} ${s.skill.name} — ${s.skill.description?.substring(0, 50) || ""}`);
+        }
+      }
+      console.log();
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err));
+      console.error(`Error: ${e.message}`);
+      process.exit(1);
+    }
+  });
+
+// ── Skills Command ────────────────────────────────────────────────────────
+
+program
+  .command("skills")
+  .description("List and manage available skills")
+  .option("-c, --config <path>", "Path to config file")
+  .option("--enable <name>", "Enable a skill")
+  .option("--disable <name>", "Disable a skill")
+  .action(async (opts) => {
+    try {
+      const config = loadConfig({ configFile: opts.config });
+      const { SkillRegistry } = await import("./skills/registry");
+      const skillReg = new SkillRegistry(config.workingDir);
+      // Skills are loaded automatically in constructor
+
+      if (opts.enable) {
+        const skill = skillReg.get(opts.enable);
+        if (skill) {
+          skill.enabled = true;
+          console.log(`\x1b[32m✓\x1b[0m Enabled skill: ${opts.enable}`);
+        } else {
+          console.log(`\x1b[31m✗\x1b[0m Skill not found: ${opts.enable}`);
+        }
+        return;
+      }
+
+      if (opts.disable) {
+        const skill = skillReg.get(opts.disable);
+        if (skill) {
+          skill.enabled = false;
+          console.log(`\x1b[33m✗\x1b[0m Disabled skill: ${opts.disable}`);
+        } else {
+          console.log(`\x1b[31m✗\x1b[0m Skill not found: ${opts.disable}`);
+        }
+        return;
+      }
+
+      // List all skills
+      const skills = skillReg.getAll();
+      console.log(`\n\x1b[1mAvailable Skills (${skills.length}):\x1b[0m\n`);
+
+      if (skills.length === 0) {
+        console.log("  No skills found.");
+        console.log("  \x1b[2mBuilt-in skills are loaded automatically.\x1b[0m");
+        console.log("  \x1b[2mCustom skills: add .md files to .cdoing/skills/ or ~/.cdoing/skills/\x1b[0m");
+        return;
+      }
+
+      for (const s of skills) {
+        const status = s.enabled ? "\x1b[32m✓\x1b[0m" : "\x1b[31m✗\x1b[0m";
+        const source = s.skill.id.startsWith("builtin:") ? "\x1b[2m(built-in)\x1b[0m" : "\x1b[2m(custom)\x1b[0m";
+        console.log(`  ${status} \x1b[1m${s.skill.name}\x1b[0m ${source}`);
+        if (s.skill.description) {
+          console.log(`    ${s.skill.description}`);
+        }
+        console.log();
       }
     } catch (err) {
       const e = err instanceof Error ? err : new Error(String(err));
