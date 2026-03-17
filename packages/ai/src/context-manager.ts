@@ -6,7 +6,7 @@
  */
 
 import type { BaseMessage } from "@langchain/core/messages";
-import { HumanMessage, AIMessage, SystemMessage } from "@langchain/core/messages";
+import { HumanMessage, AIMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
 
 /**
  * Token counting — uses js-tiktoken for accurate counting across providers.
@@ -201,56 +201,268 @@ export class ContextManager {
     return this.turns.length > 0 ? this.turns[this.turns.length - 1] : null;
   }
 
+  // ── Multi-Phase Compaction (inspired by OpenCode) ──────────────────────
+  //
+  // Phase 1: Prune old tool outputs (biggest token saver — tool results are huge)
+  // Phase 2: Strip media from old messages (images/base64 replaced with placeholders)
+  // Phase 3: Full compaction — summarize old messages with a structured template
+  //
+  // Each phase is triggered progressively as context usage increases.
+
+  /** Tokens of tool output to always protect from pruning (most recent tools) */
+  private static readonly PRUNE_PROTECT_TOKENS = 40000;
+  /** Minimum token savings before pruning is worthwhile */
+  private static readonly PRUNE_MINIMUM_SAVINGS = 15000;
+  /** Tool names whose output should never be pruned */
+  private static readonly PRUNE_PROTECTED_TOOLS = new Set(["skill", "get_tool", "question"]);
+
   /**
-   * Compress messages if we're approaching the context limit.
-   * Strategy: summarize older messages, keep recent ones intact.
+   * Compress messages if approaching the context limit.
+   *
+   * Three-phase strategy (each phase only runs if still over budget):
+   *   1. Prune old tool outputs → saves 20-50k tokens typically
+   *   2. Strip media (images/base64) → saves variable, can be huge
+   *   3. Summarize old messages → structured compaction of entire history
    */
   compressIfNeeded(messages: BaseMessage[], systemPrompt: string): BaseMessage[] {
     const systemTokens = estimateTokens(systemPrompt);
     const messageTokens = this.estimateMessages(messages);
     const totalTokens = systemTokens + messageTokens;
 
-    // If under 75% of limit, no compression needed
-    if (totalTokens < this.maxContextTokens * 0.75) {
+    // If under 70% of limit, no compression needed
+    if (totalTokens < this.maxContextTokens * 0.70) {
       return messages;
     }
 
-    // Keep the last N messages intact (recent context is most valuable)
+    // Phase 1: Prune old tool outputs (most effective, least destructive)
+    if (totalTokens >= this.maxContextTokens * 0.70) {
+      messages = this.pruneToolOutputs(messages);
+      const afterPrune = systemTokens + this.estimateMessages(messages);
+      if (afterPrune < this.maxContextTokens * 0.65) {
+        return messages;
+      }
+    }
+
+    // Phase 2: Strip media from old messages
+    if (systemTokens + this.estimateMessages(messages) >= this.maxContextTokens * 0.70) {
+      messages = this.stripMedia(messages);
+      const afterStrip = systemTokens + this.estimateMessages(messages);
+      if (afterStrip < this.maxContextTokens * 0.65) {
+        return messages;
+      }
+    }
+
+    // Phase 3: Full compaction — summarize older messages
+    if (systemTokens + this.estimateMessages(messages) >= this.maxContextTokens * 0.70) {
+      messages = this.compactMessages(messages);
+    }
+
+    return messages;
+  }
+
+  /**
+   * Phase 1: Prune old tool outputs.
+   *
+   * Walks backwards through messages, replacing old ToolMessage content
+   * with a short "[output pruned — N tokens saved]" placeholder.
+   * Protects the most recent PRUNE_PROTECT_TOKENS worth of tool results.
+   */
+  private pruneToolOutputs(messages: BaseMessage[]): BaseMessage[] {
+    // Count tokens from the end to find the protection boundary
+    let recentTokens = 0;
+    let protectionIndex = messages.length;
+
+    for (let i = messages.length - 1; i >= 0; i--) {
+      recentTokens += estimateTokens(messageContent(messages[i])) + 4;
+      if (recentTokens >= ContextManager.PRUNE_PROTECT_TOKENS) {
+        protectionIndex = i;
+        break;
+      }
+    }
+
+    let totalSaved = 0;
+    const result = messages.map((msg, i) => {
+      // Don't prune messages in the protected zone
+      if (i >= protectionIndex) return msg;
+
+      // Only prune ToolMessages
+      if (msg._getType() !== "tool") return msg;
+
+      const content = messageContent(msg);
+      const contentTokens = estimateTokens(content);
+
+      // Skip small tool outputs (not worth pruning)
+      if (contentTokens < 200) return msg;
+
+      // Skip protected tools
+      const toolCallId = (msg as any).tool_call_id;
+      if (toolCallId) {
+        // Check if the preceding AI message has a matching tool_call with a protected name
+        const aiMsg = i > 0 ? messages[i - 1] : null;
+        if (aiMsg && aiMsg._getType() === "ai") {
+          const toolCalls = (aiMsg as any).tool_calls as Array<{ name: string; id: string }> | undefined;
+          const matchingCall = toolCalls?.find((tc) => tc.id === toolCallId);
+          if (matchingCall && ContextManager.PRUNE_PROTECTED_TOOLS.has(matchingCall.name)) {
+            return msg;
+          }
+        }
+      }
+
+      // Prune: replace content with placeholder
+      totalSaved += contentTokens;
+      const toolMsg = new ToolMessage({
+        content: `[output pruned — ${contentTokens} tokens saved. Re-run the tool if you need this output again.]`,
+        tool_call_id: (msg as any).tool_call_id || "unknown",
+      });
+      return toolMsg;
+    });
+
+    // Only apply pruning if savings meet minimum threshold
+    if (totalSaved < ContextManager.PRUNE_MINIMUM_SAVINGS) {
+      return messages;
+    }
+
+    return result;
+  }
+
+  /**
+   * Phase 2: Strip media (images, base64 data) from older messages.
+   *
+   * Replaces image_url content blocks with text placeholders.
+   * Only strips from messages outside the last 4 messages.
+   */
+  private stripMedia(messages: BaseMessage[]): BaseMessage[] {
+    const protectLast = Math.min(4, messages.length);
+    const boundary = messages.length - protectLast;
+
+    return messages.map((msg, i) => {
+      if (i >= boundary) return msg;
+      if (!Array.isArray(msg.content)) return msg;
+
+      const content = msg.content as Array<Record<string, unknown>>;
+      let hasMedia = false;
+
+      const stripped = content.map((block) => {
+        if (block.type === "image_url" || block.type === "image") {
+          hasMedia = true;
+          return { type: "text", text: "[image attachment removed to save context]" };
+        }
+        // Strip base64 data URLs in text blocks
+        if (block.type === "text" && typeof block.text === "string") {
+          const text = block.text as string;
+          if (text.includes("data:image/") || text.includes(";base64,")) {
+            hasMedia = true;
+            return { type: "text", text: text.replace(/data:[^;]+;base64,[A-Za-z0-9+/=]+/g, "[base64 data removed]") };
+          }
+        }
+        return block;
+      });
+
+      if (!hasMedia) return msg;
+
+      // Reconstruct message with stripped content
+      const role = msg._getType();
+      if (role === "human") return new HumanMessage({ content: stripped });
+      if (role === "ai") return new AIMessage({ content: stripped });
+      return msg;
+    });
+  }
+
+  /**
+   * Phase 3: Full compaction — summarize older messages with a structured template.
+   *
+   * Keeps the last N messages intact and compresses everything before them
+   * into a structured summary covering: goal, discoveries, accomplished work, and files.
+   */
+  private compactMessages(messages: BaseMessage[]): BaseMessage[] {
     const keepRecent = Math.min(10, messages.length);
     const recentMessages = messages.slice(-keepRecent);
     const olderMessages = messages.slice(0, -keepRecent);
 
     if (olderMessages.length === 0) return messages;
 
-    // Summarize older messages into a single system message
-    const summary = this.summarizeMessages(olderMessages);
+    const summary = this.buildStructuredSummary(olderMessages);
     const summaryMessage = new HumanMessage(
-      `[Previous conversation summary: ${summary}]`
+      `[Compacted conversation history]\n\n${summary}`
     );
 
     return [summaryMessage, ...recentMessages];
   }
 
-  /** Create a brief summary of messages */
-  private summarizeMessages(messages: BaseMessage[]): string {
-    const parts: string[] = [];
+  /**
+   * Build a structured summary of messages (OpenCode-style template).
+   * Extracts goals, discoveries, accomplished work, and relevant files.
+   */
+  private buildStructuredSummary(messages: BaseMessage[]): string {
+    const userRequests: string[] = [];
+    const assistantActions: string[] = [];
+    const filesModified = new Set<string>();
+    const filesRead = new Set<string>();
+    const errors: string[] = [];
 
     for (const msg of messages) {
       const content = messageContent(msg);
       if (!content) continue;
-
       const role = msg._getType();
-      const preview = content.substring(0, 150).replace(/\n/g, " ");
 
       if (role === "human") {
-        parts.push(`User asked: ${preview}`);
+        const preview = content.substring(0, 300).replace(/\n/g, " ").trim();
+        if (preview) userRequests.push(preview);
       } else if (role === "ai") {
-        parts.push(`Assistant: ${preview}`);
+        // Extract file paths from tool calls
+        const toolCalls = (msg as any).tool_calls as Array<{ name: string; args: Record<string, unknown> }> | undefined;
+        if (toolCalls) {
+          for (const tc of toolCalls) {
+            const filePath = (tc.args?.file_path || tc.args?.path) as string | undefined;
+            if (filePath) {
+              if (tc.name === "file_edit" || tc.name === "file_write" || tc.name === "multi_edit" || tc.name === "apply_patch") {
+                filesModified.add(filePath);
+              } else if (tc.name === "file_read") {
+                filesRead.add(filePath);
+              }
+            }
+          }
+        }
+        const preview = content.substring(0, 200).replace(/\n/g, " ").trim();
+        if (preview) assistantActions.push(preview);
+      } else if (role === "tool") {
+        // Track errors from tool results
+        if (content.startsWith("ERROR:")) {
+          errors.push(content.substring(0, 150).replace(/\n/g, " "));
+        }
       }
-      // Skip tool messages in summary
     }
 
-    return parts.join(". ") || "Earlier conversation about coding tasks.";
+    const parts: string[] = [];
+
+    parts.push("## Goal");
+    if (userRequests.length > 0) {
+      parts.push(userRequests.slice(0, 5).map((r) => `- ${r}`).join("\n"));
+    } else {
+      parts.push("- General coding assistance");
+    }
+
+    if (assistantActions.length > 0) {
+      parts.push("\n## Accomplished");
+      parts.push(assistantActions.slice(0, 8).map((a) => `- ${a}`).join("\n"));
+    }
+
+    if (filesModified.size > 0 || filesRead.size > 0) {
+      parts.push("\n## Relevant files");
+      if (filesModified.size > 0) {
+        parts.push("Modified: " + [...filesModified].slice(0, 15).join(", "));
+      }
+      if (filesRead.size > 0) {
+        parts.push("Read: " + [...filesRead].slice(0, 15).join(", "));
+      }
+    }
+
+    if (errors.length > 0) {
+      parts.push("\n## Errors encountered");
+      parts.push(errors.slice(0, 3).map((e) => `- ${e}`).join("\n"));
+    }
+
+    return parts.join("\n");
   }
 
   /** Format usage for display */

@@ -33,6 +33,7 @@ import type { ModelConfig } from "@cdoing/ai";
 import { ThemeProvider, useTheme, detectTerminalTheme, restoreTerminalBackground, getThemeColors, setTerminalBackground } from "./context/theme";
 import { SDKProvider } from "./context/sdk";
 import { ToastProvider } from "./components/toast";
+import { useSettingsStore } from "./store/settings";
 import { Home } from "./routes/home";
 import { SessionView } from "./routes/session";
 import { StatusBar } from "./components/status-bar";
@@ -82,13 +83,18 @@ function AppShell(props: {
   const [route, setRoute] = useState<Route>(props.options.prompt ? "session" : "home");
   const [dialog, setDialog] = useState<Dialog>("none");
   const [status, setStatus] = useState("Ready");
-  const [provider, setProvider] = useState(props.options.provider);
-  const [model, setModel] = useState(props.options.model || getDefaultModel(props.options.provider) || "default");
   const [workingDir, setWorkingDir] = useState(props.options.workingDir);
   const [tokens, setTokens] = useState<{ input: number; output: number } | undefined>();
   const [contextPercent, setContextPercent] = useState(0);
   const [activeTool, setActiveTool] = useState<string | undefined>();
-  const [sidebarMode, setSidebarMode] = useState<"auto" | "show" | "hide">("auto");
+
+  // Persisted settings from Zustand store
+  const provider = useSettingsStore((s) => s.provider);
+  const model = useSettingsStore((s) => s.model);
+  const sidebarMode = useSettingsStore((s) => s.sidebarMode);
+  const setProvider = useSettingsStore((s) => s.setProvider);
+  const setModel = useSettingsStore((s) => s.setModel);
+  const setSidebarMode = useSettingsStore((s) => s.setSidebarMode);
 
   // Auto-hide sidebar when terminal is too narrow (like opencode: > 120 cols)
   const wide = dims.width > 120;
@@ -231,7 +237,7 @@ function AppShell(props: {
     }
     // Ctrl+B — toggle sidebar
     if (key.ctrl && key.name === "b") {
-      setSidebarMode((m) => m === "hide" ? "show" : m === "show" ? "hide" : showSidebar ? "hide" : "show");
+      setSidebarMode(sidebarMode === "hide" ? "show" : sidebarMode === "show" ? "hide" : showSidebar ? "hide" : "show");
     }
     // Ctrl+T — theme picker
     if (key.ctrl && key.name === "t") {
@@ -429,7 +435,7 @@ function AppShell(props: {
                 break;
               // Display
               case "display:sidebar":
-                setSidebarMode((m) => m === "hide" ? "show" : m === "show" ? "hide" : showSidebar ? "hide" : "show");
+                setSidebarMode(sidebarMode === "hide" ? "show" : sidebarMode === "show" ? "hide" : showSidebar ? "hide" : "show");
                 break;
               case "display:timestamps":
               case "display:thinking":
@@ -640,10 +646,27 @@ export async function startTUI(options: TUIOptions): Promise<void> {
     }
   }
 
-  // Build model config
+  // Hydrate settings store with resolved CLI values (overrides persisted defaults when flags are explicit)
+  const settingsStore = useSettingsStore.getState();
+  if (resolvedProvider && resolvedProvider !== "anthropic") {
+    settingsStore.setProvider(resolvedProvider);
+  } else if (!settingsStore.provider || settingsStore.provider === "anthropic") {
+    settingsStore.setProvider(resolvedProvider);
+  }
+  if (resolvedModel) {
+    settingsStore.setModel(resolvedModel);
+  } else if (!settingsStore.model) {
+    settingsStore.setModel(getDefaultModel(settingsStore.provider) || "default");
+  }
+
+  // Use persisted values as the effective config (store is now hydrated)
+  const effectiveProvider = useSettingsStore.getState().provider;
+  const effectiveModel = useSettingsStore.getState().model;
+
+  // Build model config (use effective values from persisted store)
   const modelConfig: Partial<ModelConfig> = {
-    provider: resolvedProvider,
-    model: resolvedModel || undefined,
+    provider: effectiveProvider,
+    model: effectiveModel || undefined,
     apiKey: resolvedApiKey || undefined,
     oauthToken: resolvedOAuthToken || undefined,
     baseURL: resolvedBaseUrl || undefined,
@@ -664,7 +687,17 @@ export async function startTUI(options: TUIOptions): Promise<void> {
   const resolvedMode: "dark" | "light" = options.theme === "light" ? "light"
     : options.theme === "auto" ? (detectedMode || "dark")
     : "dark";
-  const initialColors = getThemeColors("default", resolvedMode);
+  // Hydrate theme settings from store
+  const persistedThemeId = useSettingsStore.getState().themeId;
+  const persistedMode = useSettingsStore.getState().mode;
+  if (options.theme !== "light" && options.theme !== "dark") {
+    // "auto" mode — use persisted mode if available
+    if (persistedMode) settingsStore.setMode(persistedMode);
+  } else {
+    settingsStore.setMode(options.theme === "light" ? "light" : "dark");
+  }
+
+  const initialColors = getThemeColors(persistedThemeId || "default", resolvedMode);
   setTerminalBackground(initialColors.bg);
 
   // Reset terminal size to a good default (80x24 minimum)
@@ -694,10 +727,10 @@ export async function startTUI(options: TUIOptions): Promise<void> {
 
   root.render(
     <AppRoot>
-      <ThemeProvider mode={options.theme} detectedMode={detectedMode} syncTerminalBg>
+      <ThemeProvider mode={options.theme} themeId={persistedThemeId} detectedMode={detectedMode} syncTerminalBg>
         <ToastProvider>
           <AppShell
-            options={{ ...options, provider: resolvedProvider, model: resolvedModel || undefined }}
+            options={{ ...options, provider: effectiveProvider, model: effectiveModel || undefined }}
             agent={agent}
             registry={registry}
             permissionManager={pm}

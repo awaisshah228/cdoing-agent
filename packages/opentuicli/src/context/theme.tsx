@@ -13,6 +13,7 @@
 import { RGBA, rgbToHex, SyntaxStyle } from "@opentui/core";
 import { createContext, useContext, useState, useEffect, useRef, useMemo } from "react";
 import type { ReactNode } from "react";
+import { useSettingsStore } from "../store/settings";
 
 export interface Theme {
   text: RGBA;
@@ -577,6 +578,7 @@ export function ThemeProvider(props: {
     const colors = getThemeColors(id, modeRef.current);
     setTheme(colors);
     applyTerminalBg(colors);
+    useSettingsStore.getState().setThemeId(id);
   };
 
   const setMode = (m: "dark" | "light") => {
@@ -585,6 +587,7 @@ export function ThemeProvider(props: {
     const colors = getThemeColors(themeIdRef.current, m);
     setTheme(colors);
     applyTerminalBg(colors);
+    useSettingsStore.getState().setMode(m);
   };
 
   const setCustomBg = (hex: string | null) => {
@@ -607,6 +610,7 @@ export function ThemeProvider(props: {
     } else {
       restoreTerminalBackground();
     }
+    useSettingsStore.getState().setSyncTerminalBg(sync);
   };
 
   // Sync terminal bg on mount — force it immediately
