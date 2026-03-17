@@ -24,6 +24,8 @@ import {
   PermissionManager,
   PermissionMode,
   registerAllTools,
+  resolveOAuthToken,
+  supportsOAuth,
 } from "@cdoing/core";
 import { AgentRunner, getDefaultModel, getApiKeyEnvVar } from "@cdoing/ai";
 import type { ModelConfig } from "@cdoing/ai";
@@ -88,6 +90,10 @@ function AppShell(props: {
   const [activeTool, setActiveTool] = useState<string | undefined>();
   const [showSidebar, setShowSidebar] = useState(true);
 
+  const closeDialog = useCallback(() => {
+    setDialog("none");
+  }, []);
+
   // Mutable refs for agent rebuild
   const agentRef = useRef(props.agent);
   const registryRef = useRef(props.registry);
@@ -119,11 +125,34 @@ function AppShell(props: {
   });
 
   // ── Agent Rebuild ──────────────────────────────────
-  const rebuildAgent = useCallback((newProvider: string, newModel: string, apiKey?: string) => {
-    // Resolve API key
+  const rebuildAgent = useCallback((newProvider: string, newModel: string, apiKey?: string, oauthToken?: string) => {
+    // Resolve API key or OAuth token
     // If apiKey is explicitly "" (empty string), it means logout — skip all fallbacks
     let resolvedKey = apiKey;
-    if (apiKey === undefined) {
+    let resolvedOAuthToken = oauthToken;
+
+    if (!resolvedKey && !resolvedOAuthToken && apiKey !== "") {
+      // Try OAuth first for providers that support it
+      if (supportsOAuth(newProvider)) {
+        resolveOAuthToken(newProvider).then((token) => {
+          if (token) {
+            const modelConfig: Partial<ModelConfig> = {
+              provider: newProvider,
+              model: newModel,
+              oauthToken: token,
+              baseURL: props.options.baseUrl || undefined,
+              temperature: 0,
+              maxTokens: 8096,
+            };
+            const newAgent = new AgentRunner(modelConfig, registryRef.current, pmRef.current);
+            agentRef.current = newAgent;
+            setProvider(newProvider);
+            setModel(newModel);
+          }
+        }).catch(() => {});
+        // If OAuth token is being resolved async, still try API key fallback synchronously
+      }
+
       const envVar = getApiKeyEnvVar(newProvider);
       if (process.env[envVar]) {
         resolvedKey = process.env[envVar];
@@ -142,6 +171,7 @@ function AppShell(props: {
       provider: newProvider,
       model: newModel,
       apiKey: resolvedKey || undefined,
+      oauthToken: resolvedOAuthToken || undefined,
       baseURL: props.options.baseUrl || undefined,
       temperature: 0,
       maxTokens: 8096,
@@ -161,8 +191,20 @@ function AppShell(props: {
   // ── Global Keyboard ──────────────────────────────────
 
   useKeyboard((key: any) => {
-    // Don't intercept keys when a dialog is open (except escape)
-    if (dialog !== "none" && key.name !== "escape") return;
+    // Don't intercept keys when a dialog is open (let the dialog handle them)
+    // Exception: Ctrl+C and Escape should always work
+    if (dialog !== "none") {
+      if (key.ctrl && key.name === "c") {
+        const cleanup = (globalThis as any).__cdoingCleanup;
+        if (cleanup) cleanup();
+        process.exit(0);
+      }
+      if (key.name === "escape") {
+        setDialog("none");
+        setRoute("home");
+      }
+      return;
+    }
 
     // Ctrl+C — graceful quit
     if (key.ctrl && key.name === "c") {
@@ -267,7 +309,7 @@ function AppShell(props: {
             ) : dialog === "setup" ? (
               <SetupWizard
                 onComplete={(config) => {
-                  rebuildAgent(config.provider, config.model, config.apiKey);
+                  rebuildAgent(config.provider, config.model, config.apiKey, config.oauthToken);
                   setDialog("none");
                 }}
                 onClose={() => setDialog("none")}
@@ -431,6 +473,7 @@ function AppShell(props: {
       {dialog === "status" && (
         <DialogStatus onClose={() => setDialog("none")} />
       )}
+
     </box>
   );
 }
@@ -456,8 +499,9 @@ export async function startTUI(options: TUIOptions): Promise<void> {
     permissionManager: pm,
   });
 
-  // Resolve API key: flag → env var → stored config (~/.cdoing/config.json)
+  // Resolve API key: flag → env var → stored config → OAuth token
   let resolvedApiKey = options.apiKey;
+  let resolvedOAuthToken: string | undefined;
   let resolvedProvider = options.provider;
   let resolvedModel = options.model;
   let resolvedBaseUrl = options.baseUrl;
@@ -492,6 +536,14 @@ export async function startTUI(options: TUIOptions): Promise<void> {
     else if (storedConfig.apiKeys?.[resolvedProvider]) {
       resolvedApiKey = storedConfig.apiKeys[resolvedProvider];
     }
+
+    // If no API key found, try OAuth token
+    if (!resolvedApiKey && supportsOAuth(resolvedProvider)) {
+      try {
+        const token = await resolveOAuthToken(resolvedProvider);
+        if (token) resolvedOAuthToken = token;
+      } catch {}
+    }
   }
 
   // Build model config
@@ -499,6 +551,7 @@ export async function startTUI(options: TUIOptions): Promise<void> {
     provider: resolvedProvider,
     model: resolvedModel || undefined,
     apiKey: resolvedApiKey || undefined,
+    oauthToken: resolvedOAuthToken || undefined,
     baseURL: resolvedBaseUrl || undefined,
     temperature: 0,
     maxTokens: 8096,

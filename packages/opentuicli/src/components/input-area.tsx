@@ -193,8 +193,8 @@ export function InputArea(props: InputAreaProps) {
       return;
     }
 
-    // Escape
-    if (key.name === "escape") {
+    // Escape — only consume if dropdown is open
+    if (key.name === "escape" && dropdownOpen) {
       setDropdownOpen(false);
       return;
     }

@@ -137,9 +137,19 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       setApiKey(config.apiKey || "");
       setHasConfigFileApiKey(!!(config as any).hasConfigFileApiKey);
       setOauthProviders((config as any).oauthProviders || []);
-      if (oauthStatus === "active") setAuthMethod("oauth");
-      else if (config.authMethod === "oauth") setAuthMethod("oauth");
-      else setAuthMethod("apiKey");
+      if (oauthStatus === "active" || config.authMethod === "oauth") {
+        setAuthMethod("oauth");
+        // Set model to OAuth provider's default if current model isn't an OAuth model
+        const oauthProv = ((config as any).oauthProviders || []).find((p: OAuthProviderInfo) => p.id === (config.provider || "anthropic"));
+        if (oauthProv?.defaultModel) {
+          const oauthModelIds = (oauthProv.models || []).map((m: OAuthModelInfo) => m.id);
+          if (!config.model || !oauthModelIds.includes(config.model)) {
+            setModel(oauthProv.defaultModel);
+          }
+        }
+      } else {
+        setAuthMethod("apiKey");
+      }
       setTemperature(config.temperature ?? 0);
       setMaxTokens(config.maxTokens ?? 8096);
       setPermissionMode(config.permissionMode || "ask");
@@ -154,9 +164,16 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
   const prevOauthRef = useRef(oauthStatus);
   useEffect(() => {
-    if (oauthStatus === "active" && prevOauthRef.current !== "active") setAuthMethod("oauth");
+    if (oauthStatus === "active" && prevOauthRef.current !== "active") {
+      setAuthMethod("oauth");
+      // Auto-set model to OAuth default
+      const oauthProv = oauthProviders.find((p) => p.id === provider);
+      if (oauthProv?.defaultModel) {
+        setModel(oauthProv.defaultModel);
+      }
+    }
     prevOauthRef.current = oauthStatus;
-  }, [oauthStatus]);
+  }, [oauthStatus, oauthProviders, provider]);
 
   const handleStartOAuth = useCallback(() => {
     vscode.postMessage({ type: "startOAuth" } as any);
@@ -182,6 +199,25 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     });
     onClose();
   };
+
+  // Unsaved changes detection
+  const hasUnsavedChanges = config ? (
+    provider !== (config.provider || "anthropic") ||
+    model !== (config.model || "") ||
+    customProviderName !== (config.customProviderName || "") ||
+    customBaseURL !== (config.customBaseURL || "") ||
+    apiKey !== (config.apiKey || "") ||
+    authMethod !== (config.authMethod || "apiKey") ||
+    temperature !== (config.temperature ?? 0) ||
+    maxTokens !== (config.maxTokens ?? 8096) ||
+    permissionMode !== (config.permissionMode || "ask") ||
+    sandboxEnabled !== (config.sandboxEnabled ?? false) ||
+    sandboxMode !== (config.sandboxMode || "regular") ||
+    indexerEmbeddingModel !== (config.indexerEmbeddingModel || "") ||
+    indexerEmbeddingProvider !== (config.indexerEmbeddingProvider || "none") ||
+    indexerEmbeddingBaseUrl !== (config.indexerEmbeddingBaseUrl || "") ||
+    indexerAutoIndex !== (config.indexerAutoIndex ?? true)
+  ) : false;
 
   // Derived
   const currentOAuthProvider = oauthProviders.find((p) => p.id === provider);
@@ -280,7 +316,13 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 </button>
                 <button
                   className={`settings-auth-tab ${authMethod === "oauth" ? "active" : ""}`}
-                  onClick={() => setAuthMethod("oauth")}
+                  onClick={() => {
+                    setAuthMethod("oauth");
+                    // Auto-set model to OAuth provider's default
+                    if (currentOAuthProvider?.defaultModel) {
+                      setModel(currentOAuthProvider.defaultModel);
+                    }
+                  }}
                 >
                   <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4, verticalAlign: -2 }}>
                     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
@@ -472,6 +514,15 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Unsaved changes banner */}
+        {hasUnsavedChanges && (
+          <div className="settings-unsaved-banner">
+            <span className="settings-unsaved-dot" />
+            <span>You have unsaved changes.</span>
+            <button className="settings-unsaved-save-btn" onClick={handleSave}>Save to apply</button>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="settings-footer">

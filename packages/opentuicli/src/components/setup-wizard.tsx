@@ -70,6 +70,14 @@ for (const p of _catalog as Array<{ id: string; envVar?: string; keyUrl?: string
 
 type Step = "provider" | "auth-method" | "model" | "apikey" | "oauth-paste" | "oauth-exchanging";
 
+function readClipboard(): string {
+  try {
+    if (process.platform === "darwin") return execSync("pbpaste", { encoding: "utf-8" });
+    try { return execSync("xclip -selection clipboard -o", { encoding: "utf-8" }); }
+    catch { return execSync("xsel --clipboard --output", { encoding: "utf-8" }); }
+  } catch { return ""; }
+}
+
 function openBrowser(url: string): void {
   try {
     const cmd = process.platform === "darwin" ? `open "${url}"`
@@ -83,6 +91,8 @@ export function SetupWizard(props: SetupWizardProps) {
   const { theme } = useTheme();
   const t = theme;
 
+  const closedRef = useRef(false);
+  const [closed, setClosed] = useState(false);
   const [step, setStep] = useState<Step>("provider");
   const [selectedProvider, setSelectedProvider] = useState(0);
   const [selectedAuth, setSelectedAuth] = useState(0);
@@ -125,22 +135,22 @@ export function SetupWizard(props: SetupWizardProps) {
   }, [step, chosenProviderId]);
 
   useKeyboard((key: any) => {
-    // Escape — go back or close
+    // If already closed, ignore keys
+    if (closedRef.current) return;
+
+    // Escape — close wizard (parent handles navigation to home)
     if (key.name === "escape") {
-      if (step === "oauth-paste" || step === "oauth-exchanging") {
-        setStep("model");
-        setOauthError("");
-      } else if (step === "apikey") {
-        setStep("model");
-        setError("");
-      } else if (step === "model") {
-        if (isCustomModel) { setIsCustomModel(false); return; }
-        setStep(providerSupportsOAuth(chosenProviderId) ? "auth-method" : "provider");
-      } else if (step === "auth-method") {
-        setStep("provider");
-      } else {
-        props.onClose();
-      }
+      closedRef.current = true;
+      setClosed(true);
+      props.onClose();
+      return;
+    }
+
+    // Ctrl+C — close wizard
+    if (key.ctrl && key.name === "c") {
+      closedRef.current = true;
+      setClosed(true);
+      props.onClose();
       return;
     }
 
@@ -198,11 +208,14 @@ export function SetupWizard(props: SetupWizardProps) {
             setApiKeyInput("");
             setError("");
           }
+        } else if ((key.ctrl || key.meta) && key.name === "v") {
+          const clip = readClipboard().trim();
+          if (clip) setCustomModelInput((s) => s + clip);
         } else if (key.name === "backspace") {
           setCustomModelInput((s) => s.slice(0, -1));
         } else if (key.ctrl && key.name === "u") {
           setCustomModelInput("");
-        } else if (key.sequence && key.sequence.length === 1 && !key.ctrl && !key.meta) {
+        } else if (key.sequence && !key.ctrl && !key.meta) {
           setCustomModelInput((s) => s + key.sequence);
         }
         return;
@@ -245,6 +258,9 @@ export function SetupWizard(props: SetupWizardProps) {
           return;
         }
         saveAndComplete(chosenProviderId, chosenModelId, apiKeyInput.trim());
+      } else if ((key.ctrl || key.meta) && key.name === "v") {
+        const clip = readClipboard().trim();
+        if (clip) { setApiKeyInput((s) => s + clip); setError(""); }
       } else if (key.ctrl && key.name === "s") {
         setShowKey((s) => !s);
       } else if (key.name === "backspace") {
@@ -253,7 +269,7 @@ export function SetupWizard(props: SetupWizardProps) {
       } else if (key.ctrl && key.name === "u") {
         setApiKeyInput("");
         setError("");
-      } else if (key.sequence && key.sequence.length === 1 && !key.ctrl && !key.meta) {
+      } else if (key.sequence && !key.ctrl && !key.meta) {
         setApiKeyInput((s) => s + key.sequence);
         setError("");
       }
@@ -290,7 +306,10 @@ export function SetupWizard(props: SetupWizardProps) {
         }
         return;
       }
-      if (key.ctrl && key.name === "s") {
+      if ((key.ctrl || key.meta) && key.name === "v") {
+        const clip = readClipboard().trim();
+        if (clip) { setOauthCodeInput((s) => s + clip); setOauthError(""); }
+      } else if (key.ctrl && key.name === "s") {
         setShowCode((s) => !s);
       } else if (key.name === "backspace") {
         setOauthCodeInput((s) => s.slice(0, -1));
@@ -298,7 +317,7 @@ export function SetupWizard(props: SetupWizardProps) {
       } else if (key.ctrl && key.name === "u") {
         setOauthCodeInput("");
         setOauthError("");
-      } else if (key.sequence && key.sequence.length === 1 && !key.ctrl && !key.meta) {
+      } else if (key.sequence && !key.ctrl && !key.meta) {
         setOauthCodeInput((s) => s + key.sequence);
         setOauthError("");
       }
@@ -344,6 +363,10 @@ export function SetupWizard(props: SetupWizardProps) {
       default: return "";
     }
   };
+
+  // Workaround: OpenTUI doesn't re-render parent on setDialog("none"),
+  // so we hide the wizard internally when closed
+  if (closed) return <box><text>{""}</text></box>;
 
   return (
     <box
@@ -471,7 +494,7 @@ export function SetupWizard(props: SetupWizardProps) {
             <text fg={t.error}>{`\n  ${error}`}</text>
           )}
           <text>{""}</text>
-          <text fg={t.textMuted}>{"  Enter Save  Ctrl+S Toggle visibility  Ctrl+U Clear  Esc Back"}</text>
+          <text fg={t.textMuted}>{"  Enter Save  Ctrl+V Paste  Ctrl+S Toggle visibility  Ctrl+U Clear  Esc Back"}</text>
         </box>
       )}
 
@@ -499,7 +522,7 @@ export function SetupWizard(props: SetupWizardProps) {
             {`  Code: ${showCode ? oauthCodeInput : oauthCodeInput.replace(/./g, "*")}|`}
           </text>
           <text>{""}</text>
-          <text fg={t.textMuted}>{"  Paste code then Enter  Ctrl+S Toggle visible  Esc Cancel"}</text>
+          <text fg={t.textMuted}>{"  Ctrl+V Paste  Enter Submit  Ctrl+S Toggle visible  Esc Cancel"}</text>
         </box>
       )}
 
