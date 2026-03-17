@@ -33,7 +33,7 @@ export function StatusBar(props: StatusBarProps) {
   const contextBar = pct > 0 ? ` ctx:${pct}%` : "";
 
   return (
-    <box height={1} flexDirection="row" justifyContent="space-between">
+    <box height={1} flexDirection="row" justifyContent="space-between" backgroundColor={t.bgSubtle}>
       <box flexDirection="row">
         <text fg={t.primary} attributes={TextAttributes.BOLD}>
           {` ${props.provider}`}

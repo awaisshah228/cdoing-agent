@@ -2,9 +2,9 @@
  * DialogTheme — theme picker dialog (Ctrl+T)
  *
  * Three sections navigable with Tab:
- *   1. Appearance — Dark / Light mode toggle (OpenTUI <select>)
- *   2. Custom Background — hex input + preset picker (<select>)
- *   3. Color Themes — search + browse built-in themes (<select>)
+ *   1. Appearance — Dark / Light mode toggle
+ *   2. Color Themes — search + browse built-in themes
+ *   3. Custom Background — optional hex override (cleared when a theme is selected)
  */
 
 import { TextAttributes } from "@opentui/core";
@@ -13,8 +13,8 @@ import { useState, useMemo } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { useTheme, THEMES, getThemeIds } from "../context/theme";
 
-type Section = "mode" | "custombg" | "themes";
-const SECTIONS: Section[] = ["mode", "custombg", "themes"];
+type Section = "mode" | "themes" | "custombg";
+const SECTIONS: Section[] = ["mode", "themes", "custombg"];
 
 /** Preset background colors with names for autocomplete */
 const BG_PRESETS: Array<{ hex: string; name: string }> = [
@@ -111,7 +111,6 @@ export function DialogTheme(props: {
 
   const isValidHex = (s: string): boolean => /^#[0-9a-fA-F]{6}$/.test(s);
 
-  // Only handle Tab, Escape, and text input for custombg/themes search
   useKeyboard((key: any) => {
     if (key.name === "escape") {
       setThemeId(initialThemeId);
@@ -175,7 +174,7 @@ export function DialogTheme(props: {
     <box
       borderStyle="double"
       borderColor={t.primary}
-      backgroundColor={customBg || t.bg}
+      backgroundColor={t.bg}
       paddingX={1}
       paddingY={1}
       flexDirection="column"
@@ -192,7 +191,7 @@ export function DialogTheme(props: {
       </text>
       <text>{""}</text>
 
-      {/* ── Appearance ── */}
+      {/* ── 1. Appearance ── */}
       <text
         fg={section === "mode" ? t.primary : t.textDim}
         attributes={section === "mode" ? TextAttributes.BOLD : undefined}
@@ -206,7 +205,9 @@ export function DialogTheme(props: {
         height={2}
         showDescription={false}
         backgroundColor={customBg || undefined}
+        focusedBackgroundColor={customBg || undefined}
         textColor={t.textMuted}
+        focusedTextColor={t.text}
         selectedBackgroundColor={t.primary}
         selectedTextColor={t.bg}
         onSelect={(_index: number, option: SelectOption | null) => {
@@ -218,55 +219,7 @@ export function DialogTheme(props: {
       />
       <text>{""}</text>
 
-      {/* ── Custom Background ── */}
-      <text
-        fg={section === "custombg" ? t.primary : t.textDim}
-        attributes={section === "custombg" ? TextAttributes.BOLD : undefined}
-      >
-        {"  Custom Background"}
-      </text>
-      <box flexDirection="row">
-        <text fg={t.textMuted}>{"    Hex: "}</text>
-        {section === "custombg" ? (
-          <>
-            <text fg={isValidHex(bgInput) ? t.success : t.text}>{bgInput || ""}</text>
-            <text fg={t.primary} attributes={TextAttributes.BOLD}>{"_"}</text>
-          </>
-        ) : (
-          <text fg={customBg ? t.success : t.textDim}>{customBg || "(theme default)"}</text>
-        )}
-      </box>
-      {section === "custombg" && (
-        <>
-          <text fg={t.textDim}>{"    Type #hex, Ctrl+U clear, ↑↓ presets, Enter apply"}</text>
-          <select
-            options={filteredBgOptions}
-            focused={section === "custombg"}
-            height={Math.min(6, filteredBgOptions.length)}
-            showDescription={false}
-            backgroundColor={customBg || undefined}
-            textColor={t.textMuted}
-            selectedBackgroundColor={t.primary}
-            selectedTextColor={t.bg}
-            showScrollIndicator={filteredBgOptions.length > 6}
-            onChange={(_index: number, option: SelectOption | null) => {
-              if (option?.value) {
-                setCustomBg(option.value);
-              }
-            }}
-            onSelect={(_index: number, option: SelectOption | null) => {
-              if (option?.value) {
-                setBgInput(option.value);
-                setCustomBg(option.value);
-                nextSection();
-              }
-            }}
-          />
-        </>
-      )}
-      <text>{""}</text>
-
-      {/* ── Color Themes ── */}
+      {/* ── 2. Color Themes ── */}
       <text
         fg={section === "themes" ? t.primary : t.textDim}
         attributes={section === "themes" ? TextAttributes.BOLD : undefined}
@@ -286,18 +239,77 @@ export function DialogTheme(props: {
         height={selectHeight}
         showDescription={true}
         backgroundColor={customBg || undefined}
+        focusedBackgroundColor={customBg || undefined}
         textColor={t.text}
+        focusedTextColor={t.text}
         selectedBackgroundColor={t.primary}
         selectedTextColor={t.bg}
         descriptionColor={t.textDim}
+        selectedDescriptionColor={t.bg}
         showScrollIndicator={filteredThemeOptions.length > selectHeight}
         onChange={(_index: number, option: SelectOption | null) => {
-          if (option?.value) setThemeId(option.value);
+          if (option?.value) {
+            setThemeId(option.value);
+            // Clear custom bg so the theme's own bg applies
+            setCustomBg(null);
+            setBgInput("");
+          }
         }}
         onSelect={(_index: number, _option: SelectOption | null) => {
           props.onClose();
         }}
       />
+      <text>{""}</text>
+
+      {/* ── 3. Custom Background (override) ── */}
+      <text
+        fg={section === "custombg" ? t.primary : t.textDim}
+        attributes={section === "custombg" ? TextAttributes.BOLD : undefined}
+      >
+        {"  Custom Background Override"}
+      </text>
+      <box flexDirection="row">
+        <text fg={t.textMuted}>{"    Hex: "}</text>
+        {section === "custombg" ? (
+          <>
+            <text fg={isValidHex(bgInput) ? t.success : t.text}>{bgInput || ""}</text>
+            <text fg={t.primary} attributes={TextAttributes.BOLD}>{"_"}</text>
+          </>
+        ) : (
+          <text fg={customBg ? t.success : t.textDim}>{customBg || "(using theme default)"}</text>
+        )}
+      </box>
+      {section === "custombg" && (
+        <>
+          <text fg={t.textDim}>{"    Type #hex, Ctrl+U clear, ↑↓ presets, Enter apply"}</text>
+          <select
+            options={filteredBgOptions}
+            focused={section === "custombg"}
+            height={Math.min(6, filteredBgOptions.length)}
+            showDescription={false}
+            backgroundColor={customBg || undefined}
+            focusedBackgroundColor={customBg || undefined}
+            textColor={t.textMuted}
+            focusedTextColor={t.text}
+            selectedBackgroundColor={t.primary}
+            selectedTextColor={t.bg}
+            showScrollIndicator={filteredBgOptions.length > 6}
+            onChange={(_index: number, option: SelectOption | null) => {
+              if (option?.value) {
+                setBgInput(option.value);
+                setCustomBg(option.value);
+              }
+            }}
+            onSelect={(_index: number, option: SelectOption | null) => {
+              if (option?.value) {
+                setBgInput(option.value);
+                setCustomBg(option.value);
+              }
+              props.onClose();
+            }}
+          />
+        </>
+      )}
 
       <text>{""}</text>
       <text fg={t.textDim}>{"  Tab Section  ↑↓ Navigate  Enter Select  Esc Cancel"}</text>

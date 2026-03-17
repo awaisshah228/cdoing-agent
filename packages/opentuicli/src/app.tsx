@@ -262,7 +262,7 @@ function AppShell(props: {
   return (
     <box width={dims.width} height={dims.height} flexDirection="column" backgroundColor={customBg ? RGBA.fromHex(customBg) : t.bg}>
       {/* Header bar */}
-      <box height={1} flexDirection="row" paddingX={1} flexShrink={0}>
+      <box height={1} flexDirection="row" paddingX={1} flexShrink={0} backgroundColor={t.bgSubtle}>
         <text fg={t.primary} attributes={TextAttributes.BOLD}>{"cdoing"}</text>
         <text fg={t.border}>{" │ "}</text>
         <text fg={t.textMuted}>{model}</text>
@@ -483,6 +483,95 @@ function AppShell(props: {
   );
 }
 
+// ── Error Boundary ───────────────────────────────────────
+
+// Global error signal — set by uncaughtException/unhandledRejection handlers,
+// read by the AppRoot wrapper to swap in the error screen.
+let __fatalError: Error | null = null;
+let __fatalErrorSetter: ((err: Error | null) => void) | null = null;
+
+function AppRoot(props: {
+  children: any;
+}) {
+  const [error, setError] = useState<Error | null>(__fatalError);
+  __fatalErrorSetter = setError;
+
+  if (error) {
+    return <ErrorScreen error={error} onReset={() => setError(null)} />;
+  }
+  return props.children;
+}
+
+function ErrorScreen(props: {
+  error: Error;
+  onReset: () => void;
+}) {
+  const dims = useTerminalDimensions();
+  const maxW = Math.max(dims.width, 40);
+
+  const colors = {
+    bg: "#0a0a0a",
+    text: "#eeeeee",
+    muted: "#808080",
+    primary: "#fab283",
+    error: "#ff6b6b",
+  };
+
+  const issueURL = `https://github.com/AhmadMuj/cdoing-agent/issues/new?title=${encodeURIComponent(`tui: fatal: ${props.error.message}`)}&body=${encodeURIComponent("```\n" + (props.error.stack || props.error.message).substring(0, 4000) + "\n```")}`;
+
+  useKeyboard((key: any) => {
+    if (key.ctrl && key.name === "c") {
+      const cleanup = (globalThis as any).__cdoingCleanup;
+      if (cleanup) cleanup();
+      else process.exit(1);
+    }
+    if (key.name === "r") {
+      props.onReset();
+    }
+    if (key.name === "q" || key.name === "escape") {
+      const cleanup = (globalThis as any).__cdoingCleanup;
+      if (cleanup) cleanup();
+      else process.exit(0);
+    }
+  });
+
+  const stackLines = (props.error.stack || "").split("\n").slice(0, Math.max(5, dims.height - 12));
+
+  return (
+    <box
+      width={dims.width}
+      height={dims.height}
+      flexDirection="column"
+      backgroundColor={colors.bg}
+      paddingX={2}
+      paddingY={1}
+    >
+      <text fg={colors.error} attributes={TextAttributes.BOLD}>
+        {"  A fatal error occurred!"}
+      </text>
+      <text>{""}</text>
+      <text fg={colors.text} attributes={TextAttributes.BOLD}>
+        {`  ${props.error.message}`}
+      </text>
+      <text>{""}</text>
+      <text fg={colors.muted}>{"  Stack trace:"}</text>
+      {stackLines.map((line, i) => (
+        <text key={i} fg={colors.muted}>
+          {`  ${line}`}
+        </text>
+      ))}
+      <text>{""}</text>
+      <text fg={colors.primary}>{"  Report this issue:"}</text>
+      <text fg={colors.muted}>{`  ${issueURL.length > maxW - 4 ? issueURL.substring(0, maxW - 7) + "..." : issueURL}`}</text>
+      <text>{""}</text>
+      <box height={1} flexShrink={0}>
+        <text fg={colors.muted}>{"─".repeat(maxW)}</text>
+      </box>
+      <text fg={colors.text}>{"  r Reset TUI  •  q/Esc Exit  •  Ctrl+C Force quit"}</text>
+    </box>
+  );
+}
+
 // ── Entry Point ──────────────────────────────────────────
 
 export async function startTUI(options: TUIOptions): Promise<void> {
@@ -593,17 +682,29 @@ export async function startTUI(options: TUIOptions): Promise<void> {
     exitOnCtrlC: false,
   });
   const root = createRoot(renderer);
+  // Install global error handlers to catch uncaught exceptions and show the error screen
+  const handleFatalError = (err: unknown) => {
+    const error = err instanceof Error ? err : new Error(String(err));
+    process.stderr.write(`\n[cdoing] Fatal error: ${error.message}\n${error.stack || ""}\n`);
+    __fatalError = error;
+    if (__fatalErrorSetter) __fatalErrorSetter(error);
+  };
+  process.on("uncaughtException", handleFatalError);
+  process.on("unhandledRejection", handleFatalError);
+
   root.render(
-    <ThemeProvider mode={options.theme} detectedMode={detectedMode} syncTerminalBg>
-      <ToastProvider>
-        <AppShell
-          options={{ ...options, provider: resolvedProvider, model: resolvedModel || undefined }}
-          agent={agent}
-          registry={registry}
-          permissionManager={pm}
-        />
-      </ToastProvider>
-    </ThemeProvider>
+    <AppRoot>
+      <ThemeProvider mode={options.theme} detectedMode={detectedMode} syncTerminalBg>
+        <ToastProvider>
+          <AppShell
+            options={{ ...options, provider: resolvedProvider, model: resolvedModel || undefined }}
+            agent={agent}
+            registry={registry}
+            permissionManager={pm}
+          />
+        </ToastProvider>
+      </ThemeProvider>
+    </AppRoot>
   );
 
   // Graceful cleanup: unmount React, destroy renderer, restore terminal

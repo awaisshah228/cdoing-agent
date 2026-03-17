@@ -1,6 +1,6 @@
 {
   "name": "@cdoing/opentuicli",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "OpenTUI-based terminal interface for cdoing agent (inspired by opencode's TUI)",
   "type": "module",
   "main": "dist/index.js",
@@ -16,8 +16,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@cdoing/ai": "0.1.5",
-    "@cdoing/core": "0.1.8",
+    "@cdoing/ai": "*",
+    "@cdoing/core": "*",
     "@opentui/core": "0.1.87",
     "@opentui/react": "0.1.87",
     "chalk": "^4.1.2",

@@ -115,7 +115,9 @@ export function DialogModel(props: {
             height={Math.min(selectOptions.length, 10)}
             showDescription={true}
             backgroundColor={customBg || undefined}
+            focusedBackgroundColor={customBg || undefined}
             textColor={t.text}
+            focusedTextColor={t.text}
             selectedBackgroundColor={t.primary}
             selectedTextColor={t.bg}
             descriptionColor={t.textDim}

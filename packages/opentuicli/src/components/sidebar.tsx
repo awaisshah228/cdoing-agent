@@ -109,7 +109,7 @@ export function Sidebar(props: SidebarProps) {
   shortcut("F1", "Help");
 
   return (
-    <box width={W + 2} flexDirection="column">
+    <box width={W + 2} flexDirection="column" backgroundColor={t.bgSubtle}>
       <box flexDirection="column" flexGrow={1}>
         {lines.map((line, i) => (
           <box key={i} height={1}>

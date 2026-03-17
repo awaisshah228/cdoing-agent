@@ -274,6 +274,110 @@ export const THEMES: Record<string, ThemeDef> = {
       warning: "#b88d00", info: "#0090a0", border: "#d0d0d0",
     }),
   },
+  kanagawa: {
+    name: "Kanagawa",
+    dark: buildTheme({
+      bg: "#1F1F28", bgSubtle: "#2A2A37", text: "#DCD7BA", textMuted: "#727169", textDim: "#54546D",
+      primary: "#7E9CD8", secondary: "#957FB8", success: "#98BB6C", error: "#E82424",
+      warning: "#D7A657", info: "#76946A", border: "#54546D",
+    }),
+    light: buildTheme({
+      bg: "#F2E9DE", bgSubtle: "#EAE4D7", text: "#54433A", textMuted: "#9E9389", textDim: "#B8AFA6",
+      primary: "#2D4F67", secondary: "#957FB8", success: "#98BB6C", error: "#E82424",
+      warning: "#D7A657", info: "#76946A", border: "#D4CBBF",
+    }),
+  },
+  nightowl: {
+    name: "Night Owl",
+    dark: buildTheme({
+      bg: "#011627", bgSubtle: "#0b2942", text: "#d6deeb", textMuted: "#637777", textDim: "#44596b",
+      primary: "#82aaff", secondary: "#c792ea", success: "#addb67", error: "#ef5350",
+      warning: "#ffcb8b", info: "#7fdbca", border: "#1d3b53",
+    }),
+    light: buildTheme({
+      bg: "#fbfbfb", bgSubtle: "#f0f0f0", text: "#403f53", textMuted: "#989fb1", textDim: "#c0c0c0",
+      primary: "#4876d6", secondary: "#994cc3", success: "#4d804e", error: "#de3d3b",
+      warning: "#e0af68", info: "#0c969b", border: "#d9d9d9",
+    }),
+  },
+  onedark: {
+    name: "One Dark",
+    dark: buildTheme({
+      bg: "#282c34", bgSubtle: "#2c313c", text: "#abb2bf", textMuted: "#636d83", textDim: "#4b5263",
+      primary: "#61afef", secondary: "#c678dd", success: "#98c379", error: "#e06c75",
+      warning: "#e5c07b", info: "#56b6c2", border: "#3e4451",
+    }),
+    light: buildTheme({
+      bg: "#fafafa", bgSubtle: "#f0f0f0", text: "#383a42", textMuted: "#a0a1a7", textDim: "#c0c0c0",
+      primary: "#4078f2", secondary: "#a626a4", success: "#50a14f", error: "#e45649",
+      warning: "#c18401", info: "#0184bc", border: "#d3d3d3",
+    }),
+  },
+  matrix: {
+    name: "Matrix",
+    dark: buildTheme({
+      bg: "#0a0e0a", bgSubtle: "#0e130d", text: "#62ff94", textMuted: "#8ca391", textDim: "#3d4a44",
+      primary: "#2eff6a", secondary: "#00efff", success: "#62ff94", error: "#ff4b4b",
+      warning: "#e6ff57", info: "#30b3ff", border: "#1e2a1b",
+    }),
+    light: buildTheme({
+      bg: "#eef3ea", bgSubtle: "#e4ebe1", text: "#203022", textMuted: "#748476", textDim: "#a0b0a5",
+      primary: "#1cc24b", secondary: "#24f6d9", success: "#1cc24b", error: "#ff4b4b",
+      warning: "#e6ff57", info: "#30b3ff", border: "#748476",
+    }),
+  },
+  flexoki: {
+    name: "Flexoki",
+    dark: buildTheme({
+      bg: "#100f0f", bgSubtle: "#1c1b1a", text: "#cecdc3", textMuted: "#878580", textDim: "#575653",
+      primary: "#4385be", secondary: "#8b7ec8", success: "#879a39", error: "#d14d41",
+      warning: "#da702c", info: "#3aa99f", border: "#343331",
+    }),
+    light: buildTheme({
+      bg: "#fffcf0", bgSubtle: "#f2f0e5", text: "#100f0f", textMuted: "#878580", textDim: "#b7b5ac",
+      primary: "#205ea6", secondary: "#5e409d", success: "#66800b", error: "#af3029",
+      warning: "#bc5215", info: "#24837b", border: "#e6e4d9",
+    }),
+  },
+  cursor: {
+    name: "Cursor",
+    dark: buildTheme({
+      bg: "#1e1e1e", bgSubtle: "#252526", text: "#d4d4d4", textMuted: "#808080", textDim: "#5a5a5a",
+      primary: "#007acc", secondary: "#c586c0", success: "#6a9955", error: "#f44747",
+      warning: "#cca700", info: "#4ec9b0", border: "#333333",
+    }),
+    light: buildTheme({
+      bg: "#ffffff", bgSubtle: "#f3f3f3", text: "#1e1e1e", textMuted: "#808080", textDim: "#b0b0b0",
+      primary: "#007acc", secondary: "#af00db", success: "#388a34", error: "#cd3131",
+      warning: "#bf8803", info: "#16825d", border: "#e5e5e5",
+    }),
+  },
+  vercel: {
+    name: "Vercel",
+    dark: buildTheme({
+      bg: "#000000", bgSubtle: "#111111", text: "#ededed", textMuted: "#888888", textDim: "#444444",
+      primary: "#ffffff", secondary: "#888888", success: "#0070f3", error: "#ee0000",
+      warning: "#f5a623", info: "#0070f3", border: "#333333",
+    }),
+    light: buildTheme({
+      bg: "#ffffff", bgSubtle: "#fafafa", text: "#000000", textMuted: "#666666", textDim: "#999999",
+      primary: "#000000", secondary: "#666666", success: "#0070f3", error: "#ee0000",
+      warning: "#f5a623", info: "#0070f3", border: "#eaeaea",
+    }),
+  },
+  "osaka-jade": {
+    name: "Osaka Jade",
+    dark: buildTheme({
+      bg: "#111c18", bgSubtle: "#1a2520", text: "#C1C497", textMuted: "#53685B", textDim: "#3d4a44",
+      primary: "#2DD5B7", secondary: "#D2689C", success: "#549e6a", error: "#FF5345",
+      warning: "#E5C736", info: "#2DD5B7", border: "#3d4a44",
+    }),
+    light: buildTheme({
+      bg: "#F6F5DD", bgSubtle: "#E8E7CC", text: "#111c18", textMuted: "#53685B", textDim: "#A8A78C",
+      primary: "#1faa90", secondary: "#a8527a", success: "#3d7a52", error: "#c7392d",
+      warning: "#b5a020", info: "#1faa90", border: "#A8A78C",
+    }),
+  },
 };
 
 /** Get sorted list of theme IDs */
@@ -439,7 +543,7 @@ export function ThemeProvider(props: {
       : props.mode === "auto" ? (props.detectedMode || "dark")
         : "dark";
 
-  const initialThemeId = props.themeId || "default";
+  const initialThemeId = props.themeId || "vercel";
 
   const [themeId, setThemeIdState] = useState(initialThemeId);
   const [currentMode, setCurrentMode] = useState<"dark" | "light">(initialMode);

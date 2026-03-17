@@ -21,7 +21,7 @@ export function SessionFooter(props: SessionFooterProps) {
   const shortcuts = "^N:New  ^P:Model  ^T:Theme  ^S:Sessions  ^B:Sidebar";
 
   return (
-    <box height={1} flexDirection="row">
+    <box height={1} flexDirection="row" backgroundColor={t.bgSubtle}>
       <text fg={t.textDim}>{` ${shortDir}`}</text>
       <box flexGrow={1} />
       <text fg={t.textMuted}>{`${shortcuts} `}</text>

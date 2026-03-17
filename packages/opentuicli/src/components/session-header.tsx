@@ -28,7 +28,7 @@ export function SessionHeader(props: SessionHeaderProps) {
   const left = ` ◆ ${props.title || "Session"} │ ${props.provider}/${props.model} │ ${inTok}→${outTok} tokens`;
 
   return (
-    <box height={1} flexDirection="row">
+    <box height={1} flexDirection="row" backgroundColor={t.bgSubtle}>
       <text fg={t.primary} attributes={TextAttributes.BOLD}>{left}</text>
       <text fg={t.border}>{" │ "}</text>
       <text fg={pctColor}>{`${pct}%`}</text>
