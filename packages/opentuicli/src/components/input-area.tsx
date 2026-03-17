@@ -12,18 +12,20 @@
  *   - Escape to close dropdown
  */
 
-import { TextAttributes } from "@opentui/core";
+import { TextAttributes, RGBA } from "@opentui/core";
 import { useState, useRef, useMemo } from "react";
 import { useKeyboard } from "@opentui/react";
 import { execSync } from "child_process";
 import { useTheme } from "../context/theme";
-import { getCompletions, getGhostText, type Suggestion } from "../lib/autocomplete";
+import { getCompletions, getGhostText } from "../lib/autocomplete";
 import type { ImageAttachment } from "@cdoing/ai";
 
 export interface InputAreaProps {
   onSubmit: (text: string, images?: ImageAttachment[]) => void;
   placeholder?: string;
   disabled?: boolean;
+  /** When true, all keyboard input is suppressed (e.g. dialog is open) */
+  suppressInput?: boolean;
   workingDir: string;
 }
 
@@ -55,7 +57,7 @@ function readClipboardImage(): ImageAttachment | null {
 const MAX_VISIBLE = 6;
 
 export function InputArea(props: InputAreaProps) {
-  const { theme } = useTheme();
+  const { theme, customBg } = useTheme();
   const t = theme;
   const [value, setValue] = useState("");
   const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([]);
@@ -86,6 +88,9 @@ export function InputArea(props: InputAreaProps) {
   const showDropdown = dropdownOpen && suggestions.length > 0;
 
   useKeyboard((key: any) => {
+    // Suppress all input when a dialog overlay is open
+    if (props.suppressInput) return;
+
     // Allow typing even when disabled (streaming) — submit handler decides what to do
 
     // ── Dropdown navigation ──
@@ -240,11 +245,13 @@ export function InputArea(props: InputAreaProps) {
   const hasAbove = windowStart > 0;
   const hasBelow = windowStart + MAX_VISIBLE < suggestions.length;
 
+  const bgColor = customBg ? RGBA.fromHex(customBg) : t.bg;
+
   return (
-    <box flexDirection="column" flexShrink={0}>
+    <box flexDirection="column" flexShrink={0} backgroundColor={bgColor}>
       {/* Autocomplete dropdown (above input) */}
       {showDropdown && (
-        <box flexDirection="column" paddingX={1}>
+        <box flexDirection="column" paddingX={1} backgroundColor={bgColor}>
           {hasAbove && (
             <box><text fg={t.textDim}>{`  ▲ ${windowStart} more`}</text></box>
           )}
@@ -287,6 +294,7 @@ export function InputArea(props: InputAreaProps) {
         height={3}
         borderStyle="single"
         borderColor={t.borderFocused}
+        backgroundColor={bgColor}
         flexDirection="row"
         alignItems="center"
         paddingX={1}

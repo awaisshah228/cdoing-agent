@@ -138,6 +138,7 @@ export function SessionView(props: {
   onContextPercent: (pct: number) => void;
   onOpenDialog?: (dialog: string) => void;
   initialMessage?: { text: string; images?: ImageAttachment[] } | null;
+  dialogOpen?: boolean;
 }) {
   const sdk = useSDK();
   const { setMode } = useTheme();
@@ -1205,6 +1206,7 @@ export function SessionView(props: {
         <InputArea
           onSubmit={sendMessage}
           disabled={false}
+          suppressInput={props.dialogOpen}
           placeholder={isStreaming ? "Type to interrupt or queue..." : undefined}
           workingDir={sdk.workingDir}
         />

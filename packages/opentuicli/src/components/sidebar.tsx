@@ -112,13 +112,14 @@ export function Sidebar(props: SidebarProps) {
     <box width={W + 2} flexDirection="column">
       <box flexDirection="column" flexGrow={1}>
         {lines.map((line, i) => (
-          <text
-            key={i}
-            fg={line.fg}
-            attributes={line.bold ? TextAttributes.BOLD : undefined}
-          >
-            {line.text}
-          </text>
+          <box key={i} height={1}>
+            <text
+              fg={line.fg}
+              attributes={line.bold ? TextAttributes.BOLD : undefined}
+            >
+              {line.text}
+            </text>
+          </box>
         ))}
         {/* Fill remaining space with border */}
         <box flexGrow={1}>

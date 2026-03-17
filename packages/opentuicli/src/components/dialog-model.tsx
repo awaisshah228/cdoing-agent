@@ -1,10 +1,14 @@
 /**
  * DialogModel — model picker dialog (Ctrl+P)
+ *
+ * Uses OpenTUI <select> for the model list with proper
+ * highlight styling and keyboard navigation.
  */
 
 import { TextAttributes } from "@opentui/core";
-import { useState } from "react";
-import { useKeyboard } from "@opentui/react";
+import type { SelectOption } from "@opentui/core";
+import { useState, useMemo } from "react";
+import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { useTheme } from "../context/theme";
 import { getProviders } from "@cdoing/ai";
 
@@ -26,44 +30,50 @@ export function DialogModel(props: {
   onSelect: (model: string) => void;
   onClose: () => void;
 }) {
-  const { theme } = useTheme();
+  const { theme, customBg } = useTheme();
   const t = theme;
+  const dims = useTerminalDimensions();
   const models = MODELS[props.provider] || [];
-  const totalItems = models.length + 1; // +1 for custom option
-  const [selected, setSelected] = useState(
-    Math.max(0, models.findIndex((m) => m.id === props.currentModel))
-  );
   const [isCustom, setIsCustom] = useState(false);
   const [customInput, setCustomInput] = useState("");
+
+  // Build SelectOption list: models + "Custom model..." at the end
+  const selectOptions: SelectOption[] = useMemo(() => {
+    const opts: SelectOption[] = models.map((m) => ({
+      name: m.name,
+      description: [
+        m.hint || "",
+        m.id === props.currentModel ? "● current" : "",
+      ].filter(Boolean).join("  "),
+      value: m.id,
+    }));
+    opts.push({
+      name: "Custom model...",
+      description: "type any model name",
+      value: "__custom__",
+    });
+    return opts;
+  }, [models, props.currentModel]);
+
+  const initialIndex = Math.max(0, models.findIndex((m) => m.id === props.currentModel));
 
   useKeyboard((key: any) => {
     if (key.name === "escape" || (key.ctrl && key.name === "c")) {
       if (isCustom) { setIsCustom(false); return; }
       props.onClose();
-    } else if (isCustom) {
-      // Custom model text input mode
-      if (key.name === "return") {
-        const m = customInput.trim();
-        if (m) props.onSelect(m);
-      } else if (key.name === "backspace") {
-        setCustomInput((s) => s.slice(0, -1));
-      } else if (key.ctrl && key.name === "u") {
-        setCustomInput("");
-      } else if (key.sequence && key.sequence.length === 1 && !key.ctrl && !key.meta) {
-        setCustomInput((s) => s + key.sequence);
-      }
-    } else if (key.name === "up" || key.name === "k") {
-      setSelected((s) => Math.max(0, s - 1));
-    } else if (key.name === "down" || key.name === "j") {
-      setSelected((s) => Math.min(totalItems - 1, s + 1));
-    } else if (key.name === "return") {
-      if (selected === models.length) {
-        setIsCustom(true);
-        setCustomInput("");
-      } else {
-        const m = models[selected];
-        if (m) props.onSelect(m.id);
-      }
+      return;
+    }
+    if (!isCustom) return; // Let <select> handle navigation
+    // Custom model text input mode
+    if (key.name === "return") {
+      const m = customInput.trim();
+      if (m) props.onSelect(m);
+    } else if (key.name === "backspace") {
+      setCustomInput((s) => s.slice(0, -1));
+    } else if (key.ctrl && key.name === "u") {
+      setCustomInput("");
+    } else if (key.sequence && key.sequence.length === 1 && !key.ctrl && !key.meta) {
+      setCustomInput((s) => s + key.sequence);
     }
   });
 
@@ -71,51 +81,58 @@ export function DialogModel(props: {
     <box
       borderStyle="double"
       borderColor={t.primary}
+      backgroundColor={customBg || t.bg}
       paddingX={1}
       paddingY={1}
       flexDirection="column"
       position="absolute"
-      top="30%"
-      left="20%"
-      width="60%"
+      top={Math.max(2, Math.floor((dims.height || 24) * 0.25))}
+      left={Math.max(1, Math.floor(((dims.width || 80) - Math.min(60, (dims.width || 80) - 4)) / 2))}
+      width={Math.min(60, (dims.width || 80) - 4)}
     >
       <text fg={t.primary} attributes={TextAttributes.BOLD}>
         {"  Select Model"}
       </text>
       <text fg={t.textDim}>{`  Provider: ${props.provider}`}</text>
-      <text fg={t.textDim}>{""}</text>
+      <text>{""}</text>
       {isCustom ? (
         <>
           <text fg={t.text}>{"  Enter custom model ID:"}</text>
-          <text fg={t.primary}>{`  > ${customInput}|`}</text>
-          <text fg={t.textDim}>{"\n  Enter Confirm  Esc Back"}</text>
+          <box flexDirection="row">
+            <text fg={t.primary}>{"  > "}</text>
+            <text fg={t.text}>{customInput}</text>
+            <text fg={t.primary} attributes={TextAttributes.BOLD}>{"_"}</text>
+          </box>
+          <text>{""}</text>
+          <text fg={t.textDim}>{"  Enter Confirm  Ctrl+U Clear  Esc Back"}</text>
         </>
       ) : (
         <>
-          {models.map((model, i) => (
-            <box key={model.id}>
-              <text
-                fg={i === selected ? t.primary : t.text}
-                attributes={i === selected ? TextAttributes.BOLD : undefined}
-              >
-                {`  ${i === selected ? "❯" : " "} ${model.name}`}
-              </text>
-              <text fg={t.textDim}>{model.hint ? `  ${model.hint}` : ""}</text>
-              <text fg={model.id === props.currentModel ? t.success : t.textDim}>
-                {model.id === props.currentModel ? " ●" : ""}
-              </text>
-            </box>
-          ))}
-          <box>
-            <text
-              fg={selected === models.length ? t.primary : t.text}
-              attributes={selected === models.length ? TextAttributes.BOLD : undefined}
-            >
-              {`  ${selected === models.length ? "❯" : " "} Custom model...`}
-            </text>
-            <text fg={t.textDim}>{"  type any model name"}</text>
-          </box>
-          <text fg={t.textDim}>{"\n  ↑↓ Navigate  Enter Select  Esc Close"}</text>
+          <select
+            options={selectOptions}
+            focused={!isCustom}
+            selectedIndex={initialIndex}
+            height={Math.min(selectOptions.length, 10)}
+            showDescription={true}
+            backgroundColor={customBg || undefined}
+            textColor={t.text}
+            selectedBackgroundColor={t.primary}
+            selectedTextColor={t.bg}
+            descriptionColor={t.textDim}
+            selectedDescriptionColor={t.bg}
+            showScrollIndicator={selectOptions.length > 10}
+            onSelect={(_index: number, option: SelectOption | null) => {
+              if (!option) return;
+              if (option.value === "__custom__") {
+                setIsCustom(true);
+                setCustomInput("");
+              } else {
+                props.onSelect(option.value);
+              }
+            }}
+          />
+          <text>{""}</text>
+          <text fg={t.textDim}>{"  ↑↓ Navigate  Enter Select  Esc Close"}</text>
         </>
       )}
     </box>

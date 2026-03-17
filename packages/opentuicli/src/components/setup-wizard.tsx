@@ -88,7 +88,7 @@ function openBrowser(url: string): void {
 }
 
 export function SetupWizard(props: SetupWizardProps) {
-  const { theme } = useTheme();
+  const { theme, customBg } = useTheme();
   const t = theme;
 
   const closedRef = useRef(false);
@@ -372,6 +372,7 @@ export function SetupWizard(props: SetupWizardProps) {
     <box
       borderStyle="single"
       borderColor={t.primary}
+      backgroundColor={customBg || t.bg}
       paddingX={2}
       paddingY={1}
       flexDirection="column"

@@ -1,20 +1,21 @@
 /**
  * DialogStatus — system status dialog showing provider, tools, config info.
- * Scrollable overlay with sections for Provider, System, and Tools.
+ * Uses native <scrollbox> for smooth scrolling through sections.
  */
 
 import { TextAttributes } from "@opentui/core";
-import { useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { useTheme } from "../context/theme";
 import { useSDK } from "../context/sdk";
 
 export function DialogStatus(props: { onClose: () => void }) {
-  const { theme } = useTheme();
+  const { theme, customBg } = useTheme();
   const t = theme;
   const sdk = useSDK();
   const dims = useTerminalDimensions();
-  const [scrollOffset, setScrollOffset] = useState(0);
+
+  const dialogWidth = Math.min(60, (dims.width || 80) - 4);
+  const dialogHeight = Math.max(10, (dims.height || 24) - 6);
 
   // Gather status info
   const allTools = sdk.registry.getAll ? sdk.registry.getAll() : [];
@@ -24,99 +25,60 @@ export function DialogStatus(props: { onClose: () => void }) {
       )
     : [];
 
-  const sections: Array<{ title: string; rows: Array<[string, string]> }> = [
-    {
-      title: "Provider",
-      rows: [
-        ["Provider", sdk.provider],
-        ["Model", sdk.model],
-        ["Directory", sdk.workingDir],
-      ],
-    },
-    {
-      title: "System",
-      rows: [
-        ["Node", process.version],
-        ["Platform", `${process.platform} ${process.arch}`],
-        [
-          "Terminal",
-          process.env.TERM_PROGRAM || process.env.TERM || "unknown",
-        ],
-        ["Shell", process.env.SHELL || "unknown"],
-      ],
-    },
-    {
-      title: `Tools (${toolNames.length})`,
-      rows: toolNames.slice(0, 20).map((name: string) => ["\u2022", name]),
-    },
-  ];
-
-  // Build flat lines for scrolling
-  const lines: Array<{
-    type: "header" | "row";
-    text: string;
-    value?: string;
-  }> = [];
-  for (const section of sections) {
-    lines.push({ type: "header", text: section.title });
-    for (const [label, value] of section.rows) {
-      lines.push({ type: "row", text: label, value });
-    }
-    lines.push({ type: "row", text: "", value: "" }); // spacer
-  }
-
-  const maxVisible = Math.max(5, (dims.height || 24) - 10);
-
   useKeyboard((key: any) => {
     if (key.name === "escape" || key.name === "q") props.onClose();
-    if (key.name === "up" || key.name === "k")
-      setScrollOffset((s) => Math.max(0, s - 1));
-    if (key.name === "down" || key.name === "j")
-      setScrollOffset((s) => Math.min(lines.length - maxVisible, s + 1));
   });
-
-  const visible = lines.slice(scrollOffset, scrollOffset + maxVisible);
 
   return (
     <box
       borderStyle="double"
       borderColor={t.primary}
+      backgroundColor={customBg || t.bg}
       paddingX={1}
       paddingY={1}
       flexDirection="column"
       position="absolute"
-      top="10%"
-      left="15%"
-      width="70%"
+      top={Math.max(1, Math.floor((dims.height || 24) * 0.1))}
+      left={Math.max(1, Math.floor(((dims.width || 80) - dialogWidth) / 2))}
+      width={dialogWidth}
+      height={dialogHeight}
     >
-      <text fg={t.primary} attributes={TextAttributes.BOLD}>
-        {"  System Status"}
-      </text>
-      <text>{""}</text>
-      {visible.map((line, i) => {
-        if (line.type === "header") {
-          return (
-            <text
-              key={`h-${i}`}
-              fg={t.secondary}
-              attributes={TextAttributes.BOLD}
-            >
-              {`  ${line.text}`}
-            </text>
-          );
-        }
-        if (!line.text && !line.value) return <text key={`s-${i}`}>{""}</text>;
-        return (
-          <box key={`r-${i}`} flexDirection="row">
-            <text fg={t.textMuted}>{`    ${line.text}`}</text>
-            {line.value && <text fg={t.text}>{` ${line.value}`}</text>}
-          </box>
-        );
-      })}
-      <text>{""}</text>
-      <text fg={t.textDim}>
-        {"  \u2191\u2193 Scroll  Esc Close"}
-      </text>
+      {/* Title bar */}
+      <box flexDirection="row" flexShrink={0}>
+        <text fg={t.primary} attributes={TextAttributes.BOLD} flexGrow={1}>
+          {"  System Status"}
+        </text>
+        <text fg={t.textDim}>{"esc"}</text>
+      </box>
+      <text flexShrink={0}>{""}</text>
+
+      <scrollbox flexGrow={1}>
+        <box flexShrink={0}>
+          {/* Provider */}
+          <text fg={t.secondary} attributes={TextAttributes.BOLD}>{"  Provider"}</text>
+          <box flexDirection="row"><text fg={t.textMuted}>{"    Provider  "}</text><text fg={t.text}>{sdk.provider}</text></box>
+          <box flexDirection="row"><text fg={t.textMuted}>{"    Model     "}</text><text fg={t.text}>{sdk.model}</text></box>
+          <box flexDirection="row"><text fg={t.textMuted}>{"    Directory "}</text><text fg={t.text}>{sdk.workingDir}</text></box>
+          <text>{""}</text>
+
+          {/* System */}
+          <text fg={t.secondary} attributes={TextAttributes.BOLD}>{"  System"}</text>
+          <box flexDirection="row"><text fg={t.textMuted}>{"    Node      "}</text><text fg={t.text}>{process.version}</text></box>
+          <box flexDirection="row"><text fg={t.textMuted}>{"    Platform  "}</text><text fg={t.text}>{`${process.platform} ${process.arch}`}</text></box>
+          <box flexDirection="row"><text fg={t.textMuted}>{"    Terminal  "}</text><text fg={t.text}>{process.env.TERM_PROGRAM || process.env.TERM || "unknown"}</text></box>
+          <box flexDirection="row"><text fg={t.textMuted}>{"    Shell     "}</text><text fg={t.text}>{process.env.SHELL || "unknown"}</text></box>
+          <text>{""}</text>
+
+          {/* Tools */}
+          <text fg={t.secondary} attributes={TextAttributes.BOLD}>{`  Tools (${toolNames.length})`}</text>
+          {toolNames.map((name: string) => (
+            <box key={name} flexDirection="row">
+              <text fg={t.textMuted}>{"    • "}</text>
+              <text fg={t.text}>{name}</text>
+            </box>
+          ))}
+        </box>
+      </scrollbox>
     </box>
   );
 }

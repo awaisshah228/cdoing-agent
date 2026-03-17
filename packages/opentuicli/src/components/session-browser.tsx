@@ -6,10 +6,11 @@
  *   - Enter to resume a conversation
  *   - d to delete, f to fork, v to view
  *   - Escape to close
+ *   - Native <scrollbox> for smooth scrolling
  */
 
 import { TextAttributes } from "@opentui/core";
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { useTheme } from "../context/theme";
 import {
@@ -26,7 +27,7 @@ export interface SessionBrowserProps {
 }
 
 export function SessionBrowser(props: SessionBrowserProps) {
-  const { theme } = useTheme();
+  const { theme, customBg } = useTheme();
   const t = theme;
   const dims = useTerminalDimensions();
 
@@ -37,13 +38,6 @@ export function SessionBrowser(props: SessionBrowserProps) {
   const [viewScroll, setViewScroll] = useState(0);
 
   const maxVisible = Math.max(5, Math.floor((dims.height || 20) - 10));
-
-  const scrollOffset = useMemo(() => {
-    if (selected < maxVisible) return 0;
-    return selected - maxVisible + 1;
-  }, [selected, maxVisible]);
-
-  const visibleConvs = conversations.slice(scrollOffset, scrollOffset + maxVisible);
 
   useKeyboard((key: any) => {
     if (viewMode) {
@@ -114,16 +108,19 @@ export function SessionBrowser(props: SessionBrowserProps) {
       <box
         borderStyle="single"
         borderColor={t.primary}
+        backgroundColor={customBg || t.bg}
         paddingX={2}
         paddingY={1}
         flexDirection="column"
         flexGrow={1}
       >
-        <text fg={t.primary} attributes={TextAttributes.BOLD}>
-          {"Sessions"}
-        </text>
+        <box flexDirection="row" flexShrink={0}>
+          <text fg={t.primary} attributes={TextAttributes.BOLD} flexGrow={1}>
+            {"Sessions"}
+          </text>
+          <text fg={t.textDim}>{"esc"}</text>
+        </box>
         <text fg={t.textDim}>{"\nNo saved conversations.\n"}</text>
-        <text fg={t.textMuted}>{"Esc  Close"}</text>
       </box>
     );
   }
@@ -140,29 +137,36 @@ export function SessionBrowser(props: SessionBrowserProps) {
         borderStyle="single"
         borderColor={t.primary}
         paddingX={1}
-        paddingY={0}
+        paddingY={1}
         flexDirection="column"
         flexGrow={1}
       >
-        <text fg={t.primary} attributes={TextAttributes.BOLD}>
-          {`Viewing: ${conv?.title || "Untitled"}`}
-        </text>
-        <text fg={t.textDim}>
+        <box flexDirection="row" flexShrink={0}>
+          <text fg={t.primary} attributes={TextAttributes.BOLD} flexGrow={1}>
+            {`Viewing: ${conv?.title || "Untitled"}`}
+          </text>
+          <text fg={t.textDim}>{"esc"}</text>
+        </box>
+        <text fg={t.textDim} flexShrink={0}>
           {`${viewScroll + 1}–${Math.min(viewScroll + maxVisible, total)} of ${total} messages`}
         </text>
-        <text>{""}</text>
-        {visibleMsgs.map((m, i) => {
-          const prefix = m.role === "user" ? "❯" : "◆";
-          const color = m.role === "user" ? t.success : t.text;
-          const content = m.content.length > 120 ? m.content.substring(0, 117) + "..." : m.content;
-          return (
-            <text key={`view-${viewScroll + i}`} fg={color}>
-              {`  ${prefix} ${content.replace(/\n/g, " ")}`}
-            </text>
-          );
-        })}
-        <text>{""}</text>
-        <text fg={t.textMuted}>{"  ↑↓ Scroll  Enter Resume  Esc Back"}</text>
+        <text flexShrink={0}>{""}</text>
+        <scrollbox flexGrow={1}>
+          <box flexShrink={0}>
+            {visibleMsgs.map((m, i) => {
+              const prefix = m.role === "user" ? "❯" : "◆";
+              const color = m.role === "user" ? t.success : t.text;
+              const content = m.content.length > 120 ? m.content.substring(0, 117) + "..." : m.content;
+              return (
+                <text key={`view-${viewScroll + i}`} fg={color}>
+                  {`  ${prefix} ${content.replace(/\n/g, " ")}`}
+                </text>
+              );
+            })}
+          </box>
+        </scrollbox>
+        <text flexShrink={0}>{""}</text>
+        <text fg={t.textMuted} flexShrink={0}>{"  ↑↓ Scroll  Enter Resume  Esc Back"}</text>
       </box>
     );
   }
@@ -172,49 +176,56 @@ export function SessionBrowser(props: SessionBrowserProps) {
     <box
       borderStyle="single"
       borderColor={t.primary}
+      backgroundColor={customBg || t.bg}
       paddingX={1}
-      paddingY={0}
+      paddingY={1}
       flexDirection="column"
       flexGrow={1}
     >
-      <text fg={t.primary} attributes={TextAttributes.BOLD}>
-        {"Sessions"}
-      </text>
-      <text fg={t.textDim}>
+      <box flexDirection="row" flexShrink={0}>
+        <text fg={t.primary} attributes={TextAttributes.BOLD} flexGrow={1}>
+          {"Sessions"}
+        </text>
+        <text fg={t.textDim}>{"esc"}</text>
+      </box>
+      <text fg={t.textDim} flexShrink={0}>
         {`${conversations.length} conversation${conversations.length !== 1 ? "s" : ""}`}
       </text>
-      <text>{""}</text>
-      {visibleConvs.map((conv, i) => {
-        const idx = scrollOffset + i;
-        const isSelected = idx === selected;
-        const date = formatRelativeDate(conv.updatedAt);
-        const msgCount = conv.messages.filter((m) => m.role === "user").length;
-        const title = conv.title.length > 40 ? conv.title.substring(0, 37) + "..." : conv.title;
+      <text flexShrink={0}>{""}</text>
+      <scrollbox flexGrow={1}>
+        <box flexShrink={0}>
+          {conversations.map((conv, idx) => {
+            const isSelected = idx === selected;
+            const date = formatRelativeDate(conv.updatedAt);
+            const msgCount = conv.messages.filter((m) => m.role === "user").length;
+            const title = conv.title.length > 40 ? conv.title.substring(0, 37) + "..." : conv.title;
 
-        return (
-          <box key={conv.id} flexDirection="row">
-            <text
-              fg={isSelected ? t.primary : t.textMuted}
-              attributes={isSelected ? TextAttributes.BOLD : undefined}
-            >
-              {`  ${isSelected ? "❯" : " "} ${title}`}
-            </text>
-            <text fg={t.textDim}>
-              {`  ${date}  (${msgCount} msgs)`}
-            </text>
-          </box>
-        );
-      })}
+            return (
+              <box key={conv.id} flexDirection="row">
+                <text
+                  fg={isSelected ? t.primary : t.textMuted}
+                  attributes={isSelected ? TextAttributes.BOLD : undefined}
+                >
+                  {`  ${isSelected ? "❯" : " "} ${title}`}
+                </text>
+                <text fg={t.textDim}>
+                  {`  ${date}  (${msgCount} msgs)`}
+                </text>
+              </box>
+            );
+          })}
+        </box>
+      </scrollbox>
       {confirmDelete && (
-        <box>
+        <box flexShrink={0}>
           <text>{""}</text>
           <text fg={t.warning} attributes={TextAttributes.BOLD}>
             {`  Delete "${conversations[selected]?.title}"? (y/n)`}
           </text>
         </box>
       )}
-      <text>{""}</text>
-      <text fg={t.textMuted}>{"  ↑↓ Navigate  Enter Resume  v View  d Delete  f Fork  Esc Close"}</text>
+      <text flexShrink={0}>{""}</text>
+      <text fg={t.textMuted} flexShrink={0}>{"  ↑↓ Navigate  Enter Resume  v View  d Delete  f Fork  Esc Close"}</text>
     </box>
   );
 }

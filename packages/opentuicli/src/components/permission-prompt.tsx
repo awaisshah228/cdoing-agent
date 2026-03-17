@@ -20,7 +20,7 @@ const OPTIONS = [
 ];
 
 export function PermissionPrompt(props: PermissionPromptProps) {
-  const { theme } = useTheme();
+  const { theme, customBg } = useTheme();
   const t = theme;
   const [selected, setSelected] = useState(0);
 
@@ -44,6 +44,7 @@ export function PermissionPrompt(props: PermissionPromptProps) {
     <box
       borderStyle="single"
       borderColor={t.warning}
+      backgroundColor={customBg || t.bg}
       paddingX={1}
       paddingY={0}
       flexDirection="column"

@@ -17,7 +17,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { createRoot, useKeyboard, useTerminalDimensions } from "@opentui/react";
-import { createCliRenderer, TextAttributes } from "@opentui/core";
+import { createCliRenderer, TextAttributes, RGBA } from "@opentui/core";
 import { useState, useRef, useCallback } from "react";
 import {
   ToolRegistry,
@@ -76,7 +76,7 @@ function AppShell(props: {
   permissionManager: PermissionManager;
 }) {
   const dims = useTerminalDimensions();
-  const { theme, themeId, setMode, setThemeId } = useTheme();
+  const { theme, themeId, customBg, setMode, setThemeId } = useTheme();
   const t = theme;
 
   const [route, setRoute] = useState<Route>(props.options.prompt ? "session" : "home");
@@ -260,7 +260,7 @@ function AppShell(props: {
   }, []);
 
   return (
-    <box width={dims.width} height={dims.height} flexDirection="column">
+    <box width={dims.width} height={dims.height} flexDirection="column" backgroundColor={customBg ? RGBA.fromHex(customBg) : t.bg}>
       {/* Header bar */}
       <box height={1} flexDirection="row" paddingX={1} flexShrink={0}>
         <text fg={t.primary} attributes={TextAttributes.BOLD}>{"cdoing"}</text>
@@ -337,6 +337,7 @@ function AppShell(props: {
                 onContextPercent={setContextPercent}
                 onOpenDialog={(d) => setDialog(d as Dialog)}
                 initialMessage={initialMessageRef.current}
+                dialogOpen={dialog !== "none"}
               />
             )}
           </box>

@@ -1,13 +1,11 @@
 /**
  * DialogHelp — help dialog showing keyboard shortcuts, slash commands, and @mentions
  *
- * Opens as a centered scrollable modal. Navigate with Up/Down/PgUp/PgDn,
- * close with Esc or q.
+ * Uses native <scrollbox> for smooth scrolling. Close with Esc or q.
  */
 
 import { TextAttributes } from "@opentui/core";
-import { useState } from "react";
-import { useKeyboard } from "@opentui/react";
+import { useKeyboard, useTerminalDimensions } from "@opentui/react";
 import { useTheme } from "../context/theme";
 
 // ── Content Sections ────────────────────────────────────
@@ -78,150 +76,75 @@ const AT_MENTIONS: HelpEntry[] = [
   { key: "@file", description: "Include file" },
 ];
 
-// ── Build Lines ─────────────────────────────────────────
+const keyColWidth = 20;
 
-interface HelpLine {
-  type: "header" | "entry" | "blank";
-  text?: string;
-  key?: string;
-  description?: string;
+function Section(props: { title: string; entries: HelpEntry[]; theme: any }) {
+  const t = props.theme;
+  return (
+    <box flexDirection="column" flexShrink={0}>
+      <text fg={t.primary} attributes={TextAttributes.BOLD}>
+        {`  ${props.title}`}
+      </text>
+      <text>{""}</text>
+      {props.entries.map((entry) => (
+        <box key={entry.key} flexDirection="row">
+          <text fg={t.secondary}>{`    ${entry.key.padEnd(keyColWidth)}`}</text>
+          <text fg={t.textMuted}>{entry.description}</text>
+        </box>
+      ))}
+      <text>{""}</text>
+    </box>
+  );
 }
-
-function buildLines(): HelpLine[] {
-  const lines: HelpLine[] = [];
-
-  lines.push({ type: "header", text: "Keyboard Shortcuts" });
-  lines.push({ type: "blank" });
-  for (const entry of KEYBOARD_SHORTCUTS) {
-    lines.push({ type: "entry", key: entry.key, description: entry.description });
-  }
-
-  lines.push({ type: "blank" });
-  lines.push({ type: "header", text: "Slash Commands" });
-  lines.push({ type: "blank" });
-  for (const entry of SLASH_COMMANDS) {
-    lines.push({ type: "entry", key: entry.key, description: entry.description });
-  }
-
-  lines.push({ type: "blank" });
-  lines.push({ type: "header", text: "@Mentions" });
-  lines.push({ type: "blank" });
-  for (const entry of AT_MENTIONS) {
-    lines.push({ type: "entry", key: entry.key, description: entry.description });
-  }
-
-  return lines;
-}
-
-const ALL_LINES = buildLines();
-const PAGE_SIZE = 15;
 
 // ── Component ───────────────────────────────────────────
 
 export function DialogHelp(props: {
   onClose: () => void;
 }) {
-  const { theme } = useTheme();
+  const { theme, customBg } = useTheme();
   const t = theme;
-  const [scrollOffset, setScrollOffset] = useState(0);
-
-  const maxOffset = Math.max(0, ALL_LINES.length - PAGE_SIZE);
+  const dims = useTerminalDimensions();
+  const dialogWidth = Math.min(70, (dims.width || 80) - 4);
+  const dialogHeight = Math.max(10, (dims.height || 24) - 6);
 
   useKeyboard((key: any) => {
     if (key.name === "escape" || key.name === "q") {
       props.onClose();
-      return;
-    }
-
-    if (key.name === "up" || key.name === "k") {
-      setScrollOffset((s) => Math.max(0, s - 1));
-      return;
-    }
-
-    if (key.name === "down" || key.name === "j") {
-      setScrollOffset((s) => Math.min(maxOffset, s + 1));
-      return;
-    }
-
-    if (key.name === "pageup") {
-      setScrollOffset((s) => Math.max(0, s - PAGE_SIZE));
-      return;
-    }
-
-    if (key.name === "pagedown") {
-      setScrollOffset((s) => Math.min(maxOffset, s + PAGE_SIZE));
-      return;
-    }
-
-    // Home / End
-    if (key.name === "home") {
-      setScrollOffset(0);
-      return;
-    }
-    if (key.name === "end") {
-      setScrollOffset(maxOffset);
-      return;
     }
   });
-
-  const visibleLines = ALL_LINES.slice(scrollOffset, scrollOffset + PAGE_SIZE);
-  const keyColWidth = 20;
 
   return (
     <box
       borderStyle="double"
       borderColor={t.primary}
+      backgroundColor={customBg || t.bg}
       paddingX={2}
       paddingY={1}
       flexDirection="column"
       position="absolute"
-      top="10%"
-      left="15%"
-      width="70%"
-      height="80%"
+      top={Math.max(1, Math.floor((dims.height || 24) * 0.05))}
+      left={Math.max(1, Math.floor(((dims.width || 80) - dialogWidth) / 2))}
+      width={dialogWidth}
+      height={dialogHeight}
     >
-      {/* Title */}
-      <text fg={t.primary} attributes={TextAttributes.BOLD}>
-        {"  Help"}
-      </text>
-      <text fg={t.textDim}>{""}</text>
+      {/* Title bar */}
+      <box flexDirection="row" flexShrink={0}>
+        <text fg={t.primary} attributes={TextAttributes.BOLD} flexGrow={1}>
+          {"  Help"}
+        </text>
+        <text fg={t.textDim}>{"esc"}</text>
+      </box>
+      <text flexShrink={0}>{""}</text>
 
       {/* Scrollable content */}
-      {visibleLines.map((line, i) => {
-        if (line.type === "blank") {
-          return <text key={`line-${scrollOffset + i}`} fg={t.textDim}>{""}</text>;
-        }
-
-        if (line.type === "header") {
-          return (
-            <text
-              key={`line-${scrollOffset + i}`}
-              fg={t.primary}
-              attributes={TextAttributes.BOLD}
-            >
-              {`  ${line.text}`}
-            </text>
-          );
-        }
-
-        // entry
-        const paddedKey = (line.key || "").padEnd(keyColWidth);
-        return (
-          <box key={`line-${scrollOffset + i}`} flexDirection="row">
-            <text fg={t.secondary}>{`    ${paddedKey}`}</text>
-            <text fg={t.textMuted}>{line.description || ""}</text>
-          </box>
-        );
-      })}
-
-      {/* Scroll indicator */}
-      <text fg={t.textDim}>{""}</text>
-      <text fg={t.textDim}>
-        {`  ${scrollOffset > 0 ? "..." : "   "} ${scrollOffset + 1}-${Math.min(scrollOffset + PAGE_SIZE, ALL_LINES.length)} of ${ALL_LINES.length} ${scrollOffset < maxOffset ? "..." : "   "}`}
-      </text>
-
-      {/* Footer */}
-      <text fg={t.textDim}>{"  Up/Down/j/k Scroll  PgUp/PgDn Page  Esc/q Close"}</text>
+      <scrollbox flexGrow={1}>
+        <box flexShrink={0}>
+          <Section title="Keyboard Shortcuts" entries={KEYBOARD_SHORTCUTS} theme={t} />
+          <Section title="Slash Commands" entries={SLASH_COMMANDS} theme={t} />
+          <Section title="@Mentions" entries={AT_MENTIONS} theme={t} />
+        </box>
+      </scrollbox>
     </box>
   );
 }
