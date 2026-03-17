@@ -16,7 +16,9 @@
     "remote:tui": "yarn build && yarn workspace @cdoing/remote-coding-agent tui",
     "remote:dashboard": "yarn build && yarn workspace @cdoing/remote-coding-agent dashboard",
     "remote:status": "yarn build && yarn workspace @cdoing/remote-coding-agent status",
-    "remote:skills": "yarn build && yarn workspace @cdoing/remote-coding-agent skills"
+    "remote:skills": "yarn build && yarn workspace @cdoing/remote-coding-agent skills",
+    "remote-tui": "yarn build && yarn workspace @cdoing/remote-agent-tui start",
+    "remote-tui:setup": "yarn build && yarn workspace @cdoing/remote-agent-tui start:setup"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

@@ -10,7 +10,10 @@
   },
   "scripts": {
     "build": "node esbuild.config.cjs",
+    "typecheck": "tsc --noEmit",
     "dev": "node esbuild.config.cjs --watch",
+    "start": "node dist/index.js",
+    "start:setup": "node dist/index.js setup",
     "clean": "rm -rf dist"
   },
   "dependencies": {
