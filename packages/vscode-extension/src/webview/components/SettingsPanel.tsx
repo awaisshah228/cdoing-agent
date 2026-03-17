@@ -387,32 +387,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
             <div className="settings-auth-content">
               {authMethod === "oauth" && providerSupportsOAuth ? (
                 <div className="oauth-section">
-                  <div className="oauth-status">
-                    <span className={`oauth-status-dot oauth-status-${oauthStatus}`} />
-                    <span className="oauth-status-text">
-                      {oauthStatus === "active" && "Logged in"}
-                      {oauthStatus === "expired" && "Session expired"}
-                      {oauthStatus === "none" && "Not logged in"}
-                    </span>
-                    {oauthStatus === "active" && oauthExpiresAt && (
-                      <span className="oauth-status-expires">
-                        expires {new Date(oauthExpiresAt).toLocaleDateString()}
-                      </span>
-                    )}
-                  </div>
-                  <div className="oauth-actions">
-                    {oauthStatus === "active" ? (
-                      <button className="oauth-btn oauth-btn-logout" onClick={handleOAuthLogout}>Logout</button>
-                    ) : (
-                      <button className="oauth-btn oauth-btn-login" onClick={handleStartOAuth}>
-                        Login with {currentOAuthProvider?.name || provider}
-                      </button>
-                    )}
-                  </div>
-                  {/* OAuth model selector — inside the OAuth tab */}
+                  {/* Model selector FIRST — user picks model, then logs in */}
                   {currentOAuthProvider?.models && currentOAuthProvider.models.length > 0 && (
                     <div className="oauth-model-select">
-                      <label className="settings-label" style={{ fontSize: "11px", marginTop: 10 }}>Model</label>
+                      <label className="settings-label" style={{ fontSize: "11px" }}>Model</label>
                       {currentOAuthProvider.models.length === 1 ? (
                         <div className="settings-model-fixed">
                           {currentOAuthProvider.models[0].name}
@@ -435,6 +413,29 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                       )}
                     </div>
                   )}
+                  {/* Status + login/logout below */}
+                  <div className="oauth-status">
+                    <span className={`oauth-status-dot oauth-status-${oauthStatus}`} />
+                    <span className="oauth-status-text">
+                      {oauthStatus === "active" && "Logged in"}
+                      {oauthStatus === "expired" && "Session expired"}
+                      {oauthStatus === "none" && "Not logged in"}
+                    </span>
+                    {oauthStatus === "active" && oauthExpiresAt && (
+                      <span className="oauth-status-expires">
+                        expires {new Date(oauthExpiresAt).toLocaleDateString()}
+                      </span>
+                    )}
+                  </div>
+                  <div className="oauth-actions">
+                    {oauthStatus === "active" ? (
+                      <button className="oauth-btn oauth-btn-logout" onClick={handleOAuthLogout}>Logout</button>
+                    ) : (
+                      <button className="oauth-btn oauth-btn-login" onClick={handleStartOAuth}>
+                        Login with {currentOAuthProvider?.name || provider}
+                      </button>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <>
