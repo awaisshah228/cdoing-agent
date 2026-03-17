@@ -1,6 +1,6 @@
 {
   "name": "@cdoing/opentuicli",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "description": "OpenTUI-based terminal interface for cdoing agent (inspired by opencode's TUI)",
   "type": "module",
   "main": "dist/index.js",

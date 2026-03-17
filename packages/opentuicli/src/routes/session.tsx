@@ -1091,10 +1091,12 @@ export function SessionView(props: {
           setStreamingText("");
         }
 
-        const description = (input as any)?.description || "";
+        const toolInput = (typeof input === "object" && input) ? input as Record<string, any> : {};
+        const description = toolInput.description || "";
         currentToolId = addMessage("tool", description, {
           toolName: name,
           toolStatus: "running",
+          toolInput,
         });
         setActiveTool(name);
         props.onActiveTool(name);
