@@ -451,7 +451,7 @@ export class AgentBridge {
    *   - System prompt (assistant: routing prompt, coding: coding prompt)
    *   - Model config (assistant: fast model, coding: powerful model)
    */
-  private getOrCreateAgent(
+  getOrCreateAgent(
     sessionId: string,
     workingDir: string,
     role: AgentRole,

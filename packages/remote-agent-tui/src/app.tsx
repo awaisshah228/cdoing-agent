@@ -32,6 +32,7 @@ import { Sidebar } from "./components/sidebar";
 import { DialogCommand } from "./components/dialog-command";
 import { DialogHelp } from "./components/dialog-help";
 import { Dashboard } from "./routes/dashboard";
+import { Chat } from "./routes/chat";
 import { Setup } from "./routes/setup";
 import { Skills } from "./routes/skills";
 import { Config } from "./routes/config";
@@ -88,9 +89,11 @@ function IntroScreen(props: { onSetup: () => void }) {
       <box flexDirection="row" gap={2}>
         <text fg={t.primary} attributes={TextAttributes.BOLD}>{"Press  s  to start setup"}</text>
         <text fg={t.border}>{"\u2502"}</text>
-        <text fg={t.textMuted}>{"Ctrl+P  command palette"}</text>
+        <text fg={t.textMuted}>{"c  chat"}</text>
         <text fg={t.border}>{"\u2502"}</text>
-        <text fg={t.textMuted}>{"F1  help"}</text>
+        <text fg={t.textMuted}>{"1  dashboard"}</text>
+        <text fg={t.border}>{"\u2502"}</text>
+        <text fg={t.textMuted}>{"Ctrl+P  palette"}</text>
         <text fg={t.border}>{"\u2502"}</text>
         <text fg={t.textMuted}>{"q  quit"}</text>
       </box>
@@ -135,11 +138,11 @@ function AppShell(props: { engine: Engine }) {
   const hasChannels = Object.values(config.channels).some((c: any) => c.enabled);
   const isConfigured = hasApiKey || hasChannels || state.channels.length > 0;
 
-  // If not configured and on dashboard, show intro screen
-  const showIntro = !isConfigured && route === "dashboard";
+  // If not configured and on chat/dashboard, show intro screen
+  const showIntro = !isConfigured && (route === "chat" || route === "dashboard");
 
   const wide = dims.width > 120;
-  const showSidebar = sidebarVisible && wide && !showIntro;
+  const showSidebar = sidebarVisible && wide && !showIntro && route !== "chat";
 
   // ── Global Keyboard ──────────────────────────────────
 
@@ -159,7 +162,9 @@ function AppShell(props: { engine: Engine }) {
     if (key.ctrl && key.name === "b") toggleSidebar();
     if (key.name === "f1") setDialog((d) => (d === "help" ? null : "help"));
 
-    // Route switching
+    // Route switching (don't capture when in chat input)
+    if (route === "chat") return; // Chat handles its own keyboard
+    if (key.sequence === "c" && !key.ctrl && !key.meta) setRoute("chat");
     if (key.name === "1") setRoute("dashboard");
     if (key.name === "2") setRoute("skills");
     if (key.name === "3") setRoute("config");
@@ -177,6 +182,7 @@ function AppShell(props: { engine: Engine }) {
   const handleCommand = useCallback((commandId: string) => {
     setDialog(null);
     switch (commandId) {
+      case "route:chat": setRoute("chat"); break;
       case "route:dashboard": setRoute("dashboard"); break;
       case "route:skills": setRoute("skills"); break;
       case "route:config": setRoute("config"); break;
@@ -224,8 +230,9 @@ function AppShell(props: { engine: Engine }) {
       <box flexDirection="row" flexGrow={1}>
         <box flexGrow={1} flexDirection="column">
           {showIntro && <IntroScreen onSetup={() => setRoute("setup")} />}
+          {!showIntro && route === "chat" && <Chat />}
           {!showIntro && route === "dashboard" && <Dashboard />}
-          {route === "setup" && <Setup onComplete={() => setRoute("dashboard")} />}
+          {route === "setup" && <Setup onComplete={() => setRoute("chat")} />}
           {route === "skills" && <Skills />}
           {route === "config" && <Config />}
         </box>

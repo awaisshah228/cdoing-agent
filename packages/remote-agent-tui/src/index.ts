@@ -60,7 +60,7 @@ addCommonOptions(
       const engine = new Engine(config);
       await engine.start();
 
-      await startTUI({ engine, route: "dashboard", workingDir: opts.dir });
+      await startTUI({ engine, route: "chat", workingDir: opts.dir });
     } catch (err) {
       console.error(`Error: ${err instanceof Error ? err.message : err}`);
       process.exit(1);

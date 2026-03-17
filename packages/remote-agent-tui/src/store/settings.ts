@@ -51,7 +51,7 @@ const fileStorage: StateStorage = {
 
 // ── Types ───────────────────────────────────────────────
 
-export type Route = "dashboard" | "setup" | "skills" | "config";
+export type Route = "chat" | "dashboard" | "setup" | "skills" | "config";
 export type Dialog = "command" | "help" | "model" | null;
 
 // ── Settings State ──────────────────────────────────────
