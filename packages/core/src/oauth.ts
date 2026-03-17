@@ -42,6 +42,8 @@ export interface OAuthProviderConfig {
   extraParams?: Record<string, string>;
   /** Default model to use with OAuth for this provider */
   defaultModel?: string;
+  /** All models available via OAuth for this provider (first is default) */
+  models?: Array<{ id: string; name: string; hint?: string }>;
 }
 
 /** Built-in OAuth provider configs */
@@ -57,6 +59,9 @@ const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
     usePkce: true,
     extraParams: { code: "true" },
     defaultModel: "claude-haiku-4-5-20251001",
+    models: [
+      { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5", hint: "fastest · free tier" },
+    ],
   },
   "github-copilot": {
     id: "github-copilot",

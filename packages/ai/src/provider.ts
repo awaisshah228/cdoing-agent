@@ -153,9 +153,13 @@ export function resolveModelInfo(config: Partial<ModelConfig> = {}): {
   let authMethod: "oauth" | "apiKey" = "apiKey";
 
   if (config.oauthToken) {
-    // OAuth active — read the model from the provider's OAuth config
+    // OAuth active — use the user-selected model if it's in the allowed OAuth models,
+    // otherwise fall back to the provider's default OAuth model
     const oauthConfig = getOAuthProvider(provider);
-    if (oauthConfig?.defaultModel) {
+    const allowedModels = oauthConfig?.models?.map(m => m.id) || [];
+    if (config.model && allowedModels.includes(config.model)) {
+      model = config.model; // User selected a valid OAuth model
+    } else if (oauthConfig?.defaultModel) {
       model = oauthConfig.defaultModel;
     }
     authMethod = "oauth";
@@ -181,11 +185,14 @@ export function createModel(config: Partial<ModelConfig> = {}) {
       // OAuth token: use Bearer auth with Anthropic beta headers (not x-api-key)
       if (config.oauthToken) {
         const oauthToken = config.oauthToken;
-        // Use the model from OAuth provider config (not hardcoded)
+        // Use the user-selected OAuth model if it's in the allowed list, else default
         const oauthConfig = getOAuthProvider(provider);
-        const oauthModel = oauthConfig?.defaultModel || modelName;
+        const allowedModels = oauthConfig?.models?.map(m => m.id) || [];
+        const oauthModel = (modelName && allowedModels.includes(modelName))
+          ? modelName
+          : oauthConfig?.defaultModel || modelName;
         if (modelName && modelName !== oauthModel) {
-          console.log(`[cdoing] OAuth uses ${oauthModel}, overriding "${modelName}"`);
+          console.log(`[cdoing] OAuth model "${modelName}" not in allowed list, using ${oauthModel}`);
         }
         const arch = process.arch === "arm64" ? "arm64" : "x64";
         const osPlatform = process.platform === "darwin" ? "Darwin"

@@ -981,7 +981,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         // Extra info for settings panel to show correct status
         hasConfigFileApiKey: !!configApiKey,
         // OAuth-capable providers (from core, single source of truth)
-        oauthProviders: getOAuthProviders().map(p => ({ id: p.id, name: p.name, defaultModel: p.defaultModel })),
+        oauthProviders: getOAuthProviders().map(p => ({ id: p.id, name: p.name, defaultModel: p.defaultModel, models: p.models || [] })),
       },
     });
     // Also send OAuth status

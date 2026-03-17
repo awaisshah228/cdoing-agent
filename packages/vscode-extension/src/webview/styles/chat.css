@@ -2045,6 +2045,49 @@ pre.tool-io-block {
 }
 .oauth-btn-logout:hover { background: var(--error-soft); }
 
+/* OAuth model selector */
+.oauth-model-select { margin-top: 4px; }
+.oauth-model-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.settings-model-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 6px 10px;
+  border: 1px solid var(--subtle-border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 11px;
+  transition: all var(--transition-fast);
+  flex: 1;
+  min-width: 90px;
+}
+.settings-model-option:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+.settings-model-option.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.settings-model-option-name {
+  font-weight: 600;
+  font-size: 11px;
+}
+.settings-model-option-hint {
+  font-size: 9px;
+  color: var(--desc-fg);
+  margin-top: 1px;
+}
+.settings-model-option.active .settings-model-option-hint {
+  color: var(--accent);
+}
+
 /* ═══ Permission Prompt ═══ */
 .permission-prompt {
   background: var(--surface);

@@ -18,10 +18,17 @@ interface SettingsPanelProps {
   onClose: () => void;
 }
 
+interface OAuthModelInfo {
+  id: string;
+  name: string;
+  hint?: string;
+}
+
 interface OAuthProviderInfo {
   id: string;
   name: string;
   defaultModel?: string;
+  models?: OAuthModelInfo[];
 }
 
 const PROVIDER_OPTIONS: SelectOption[] = [
@@ -403,6 +410,33 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                       </button>
                     )}
                   </div>
+                  {/* OAuth model selector */}
+                  {currentOAuthProvider?.models && currentOAuthProvider.models.length > 0 && (
+                    <div className="oauth-model-select">
+                      <label className="settings-label" style={{ fontSize: "11px", marginTop: 8 }}>OAuth Model</label>
+                      {currentOAuthProvider.models.length === 1 ? (
+                        <div className="settings-model-fixed">
+                          {currentOAuthProvider.models[0].name}
+                          {currentOAuthProvider.models[0].hint && (
+                            <span style={{ opacity: 0.5, marginLeft: 6, fontSize: 10 }}>{currentOAuthProvider.models[0].hint}</span>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="oauth-model-grid">
+                          {currentOAuthProvider.models.map((m) => (
+                            <button
+                              key={m.id}
+                              className={`settings-model-option ${model === m.id ? "active" : ""}`}
+                              onClick={() => setModel(m.id)}
+                            >
+                              <span className="settings-model-option-name">{m.name}</span>
+                              {m.hint && <span className="settings-model-option-hint">{m.hint}</span>}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <>
