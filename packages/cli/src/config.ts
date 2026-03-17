@@ -8,8 +8,8 @@ import * as path from "path";
 import * as os from "os";
 import * as readline from "readline";
 import chalk from "chalk";
-import { PermissionManager, PermissionMode, SandboxManager, supportsOAuth } from "@cdoing/core";
-import { getApiKeyEnvVar, type ModelConfig } from "@cdoing/ai";
+import { PermissionManager, PermissionMode, SandboxManager, supportsOAuth, getOAuthProvider } from "@cdoing/core";
+import { getApiKeyEnvVar, getProviderCatalog, type ModelConfig } from "@cdoing/ai";
 import { resolveOAuthToken, oauthLogin } from "./oauth";
 
 const CONFIG_DIR = path.join(os.homedir(), ".cdoing");
@@ -285,46 +285,14 @@ export function selectMenu(title: string, options: SelectOption[], defaultIndex 
 
 // ── API key resolution ──────────────────────────────────────
 
-const PROVIDER_INFO: Record<string, { name: string; url: string; supportsOAuth?: boolean }> = {
-  anthropic: { name: "Anthropic (Claude)", url: "https://console.anthropic.com/settings/keys", supportsOAuth: true },
-  openai: { name: "OpenAI (GPT)", url: "https://platform.openai.com/api-keys" },
-  google: { name: "Google (Gemini)", url: "https://aistudio.google.com/apikey" },
-  "github-copilot": { name: "GitHub Copilot", url: "https://github.com/settings/copilot", supportsOAuth: true },
-  "google-vertex": { name: "Google Vertex AI", url: "https://console.cloud.google.com/apis/credentials" },
-  ollama: { name: "Ollama (Local)", url: "https://ollama.ai" },
-};
-
-const PROVIDER_MODELS: Record<string, SelectOption[]> = {
-  anthropic: [
-    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", hint: "recommended · fast & smart" },
-    { value: "claude-opus-4-6",   label: "Claude Opus 4.6",   hint: "most capable" },
-    { value: "claude-haiku-4-5",  label: "Claude Haiku 4.5",  hint: "fastest" },
-  ],
-  openai: [
-    { value: "gpt-4o",      label: "GPT-4o",      hint: "recommended" },
-    { value: "gpt-4o-mini", label: "GPT-4o mini",  hint: "fastest" },
-    { value: "o3-mini",     label: "o3-mini",      hint: "reasoning" },
-  ],
-  google: [
-    { value: "gemini-2.0-flash",  label: "Gemini 2.0 Flash",  hint: "recommended · fast" },
-    { value: "gemini-1.5-pro",    label: "Gemini 1.5 Pro",    hint: "most capable" },
-    { value: "gemini-1.5-flash",  label: "Gemini 1.5 Flash",  hint: "fastest" },
-  ],
-  "github-copilot": [
-    { value: "gpt-4o",       label: "GPT-4o",       hint: "recommended" },
-    { value: "gpt-4o-mini",  label: "GPT-4o mini",  hint: "fastest" },
-    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", hint: "via Copilot" },
-  ],
-  "google-vertex": [
-    { value: "gemini-2.0-flash",  label: "Gemini 2.0 Flash",  hint: "recommended" },
-    { value: "gemini-1.5-pro",    label: "Gemini 1.5 Pro",    hint: "most capable" },
-  ],
-  ollama: [
-    { value: "llama3.1",        label: "Llama 3.1",       hint: "recommended · general purpose" },
-    { value: "codellama",       label: "Code Llama",       hint: "coding-specialized" },
-    { value: "deepseek-coder",  label: "DeepSeek Coder",   hint: "coding-specialized" },
-  ],
-};
+// Build provider info and model lists from the centralized catalog (single source of truth)
+const _catalog = getProviderCatalog();
+const PROVIDER_INFO: Record<string, { name: string; url: string }> = {};
+const PROVIDER_MODELS: Record<string, SelectOption[]> = {};
+for (const p of _catalog) {
+  PROVIDER_INFO[p.id] = { name: p.label, url: p.keyUrl || "" };
+  if (p.models.length > 0) PROVIDER_MODELS[p.id] = p.models;
+}
 
 /**
  * Run the apiKeyHelper script and return its stdout trimmed, or null on failure.
@@ -392,14 +360,12 @@ export async function resolveApiKey(options: CLIOptions): Promise<void> {
   console.log(chalk.dim("  Let's set up authentication."));
 
   // Always show provider selection — pre-select stored or current value
-  const providerOptions = [
-    { value: "anthropic",      label: "Anthropic (Claude)",   hint: "claude-sonnet-4-6 · API key or OAuth" },
-    { value: "openai",         label: "OpenAI (GPT)",         hint: "gpt-4o, gpt-4o-mini" },
-    { value: "google",         label: "Google (Gemini)",       hint: "gemini-2.0-flash, gemini-1.5-pro" },
-    { value: "github-copilot", label: "GitHub Copilot",        hint: "uses your Copilot subscription" },
-    { value: "google-vertex",  label: "Google Vertex AI",      hint: "enterprise · service account auth" },
-    { value: "ollama",         label: "Ollama (Local)",         hint: "free · runs locally" },
-  ];
+  // Build provider options from the centralized catalog
+  const providerOptions = _catalog.map(p => ({
+    value: p.id,
+    label: p.label,
+    hint: p.supportsOAuth ? `${p.hint} · OAuth` : p.hint,
+  }));
   const currentProvider = stored2.provider || options.provider || "anthropic";
   const defaultProviderIdx = Math.max(0, providerOptions.findIndex(p => p.value === currentProvider));
   const chosenProvider = await selectMenu("Choose a provider  (↑↓ navigate · Enter select)", providerOptions, defaultProviderIdx);
@@ -430,9 +396,11 @@ export async function resolveApiKey(options: CLIOptions): Promise<void> {
 
   // Offer OAuth for any provider that supports it
   if (supportsOAuth(provider2)) {
+    const oauthConfig = getOAuthProvider(provider2);
+    const oauthName = oauthConfig?.name || provider2;
     const authMethod = await selectMenu("Choose authentication method", [
-      { value: "apikey", label: "API key",        hint: "from console.anthropic.com" },
-      { value: "oauth",  label: "OAuth token",    hint: "Claude Pro/Max · run: claude config get oauth_token" },
+      { value: "apikey", label: "API key",        hint: info?.url ? `from ${new URL(info.url).hostname}` : "enter manually" },
+      { value: "oauth",  label: "OAuth (free)",   hint: `login with ${oauthName}` },
     ]);
 
     if (authMethod === "oauth") {

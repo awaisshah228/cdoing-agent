@@ -4,6 +4,8 @@ export { ContextManager, type TokenUsage, type TurnUsage } from "./context-manag
 export {
   createModel,
   resolveModelInfo,
+  getProviderCatalog,
+  type ProviderCatalogEntry,
   registerCustomProvider,
   getApiKeyEnvVar,
   getDefaultModel,
