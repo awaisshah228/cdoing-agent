@@ -1,17 +1,23 @@
 /**
- * Credential Manager — Stores API keys and OAuth tokens for the remote agent.
+ * Credential Manager — Isolated credential store for the remote agent.
  *
- * Credentials are stored separately from the coding agent (@cdoing/core) to
- * allow different auth for the personal assistant vs coding agent:
+ * IMPORTANT: This is completely SEPARATE from the coding agent CLI/VS Code.
+ * The remote agent stores credentials in its own directory:
  *
- *   ~/.cdoing/remote-credentials.json  — API keys (encrypted at rest)
- *   ~/.cdoing/remote-oauth.json        — OAuth tokens
+ *   ~/.cdoing/remote/credentials.enc  — API keys (AES-256-CBC encrypted)
+ *   ~/.cdoing/remote/oauth-tokens.enc — OAuth tokens (separate from CLI)
+ *
+ * Why separate?
+ *   - The remote agent runs as a persistent daemon, not interactively.
+ *   - The personal assistant and coding agent may use different providers/keys.
+ *   - Logging out of the CLI should NOT affect the remote agent (and vice versa).
+ *   - Security isolation: a compromise of one doesn't affect the other.
  *
  * Supports:
- *   - Claude OAuth (via @cdoing/core's PKCE flow)
- *   - Manual API keys (Anthropic, OpenAI, Google)
+ *   - Claude OAuth (via @cdoing/core's PKCE flow, stored locally)
+ *   - Manual API keys (Anthropic, OpenAI, Google, Ollama)
  *   - Separate keys for assistant model vs coding model
- *   - Auto-resolution: OAuth → config file → env var
+ *   - Auto-resolution chain: stored key → local OAuth → env var
  *
  * Usage:
  *   const creds = new CredentialManager();
@@ -25,10 +31,11 @@ import * as path from "path";
 import * as os from "os";
 import * as crypto from "crypto";
 
-// ── Paths ───────────────────────────────────────────────────────────────
+// ── Paths (isolated from CLI/VS Code) ────────────────────────────────────
 
-const CONFIG_DIR = path.join(os.homedir(), ".cdoing");
-const CREDS_FILE = path.join(CONFIG_DIR, "remote-credentials.json");
+const REMOTE_DIR = path.join(os.homedir(), ".cdoing", "remote");
+const CREDS_FILE = path.join(REMOTE_DIR, "credentials.enc");
+const OAUTH_FILE = path.join(REMOTE_DIR, "oauth-tokens.enc");
 
 // ── Types ───────────────────────────────────────────────────────────────
 
@@ -44,9 +51,9 @@ interface StoredCredentials {
 
 // ── Encryption Helpers ──────────────────────────────────────────────────
 
-/** Derive an encryption key from machine-specific info. */
+/** Derive an encryption key from machine-specific info (different salt from CLI). */
 function deriveKey(): Buffer {
-  const seed = os.hostname() + os.userInfo().username + "remote-agent";
+  const seed = os.hostname() + os.userInfo().username + "cdoing-remote-agent";
   return crypto.createHash("sha256").update(seed).digest();
 }
 
@@ -128,16 +135,9 @@ export class CredentialManager {
     const stored = this.getApiKey(provider, role);
     if (stored) return stored;
 
-    // 2. Try OAuth for Anthropic
-    if (provider === "anthropic") {
-      try {
-        const { resolveOAuthToken } = await import("@cdoing/core");
-        const token = await resolveOAuthToken();
-        if (token) return token;
-      } catch {
-        // @cdoing/core may not have OAuth configured
-      }
-    }
+    // 2. Try local OAuth token (remote agent's own store, NOT shared with CLI)
+    const oauthToken = await this.resolveOAuthToken(provider);
+    if (oauthToken) return oauthToken;
 
     // 3. Environment variable
     const envMap: Record<string, string> = {
@@ -151,15 +151,16 @@ export class CredentialManager {
     return null;
   }
 
-  // ── OAuth ─────────────────────────────────────────────────────────────
+  // ── OAuth (stored locally, NOT shared with CLI/VS Code) ─────────────
 
   /**
-   * Run the Claude OAuth login flow.
-   * Opens a browser for authentication and returns the tokens.
+   * Run the OAuth login flow via @cdoing/core's PKCE helpers,
+   * but store the tokens in the remote agent's own encrypted file.
    */
-  async oauthLogin(): Promise<{ accessToken: string; expiresAt?: number }> {
-    const { generateOAuthUrl, exchangeOAuthCode } = await import("@cdoing/core");
-    const { url, codeVerifier } = generateOAuthUrl();
+  async oauthLogin(provider: string = "anthropic"): Promise<{ accessToken: string; expiresAt?: number }> {
+    const { startLocalOAuthServer, exchangeOAuthCode } = await import("@cdoing/core");
+
+    const { url, codeVerifier, state, port, codePromise, close } = await startLocalOAuthServer(provider);
 
     // Open browser
     const { exec } = await import("child_process");
@@ -170,24 +171,47 @@ export class CredentialManager {
 
     exec(cmd, () => {}); // best effort
 
-    console.log("\n  Opening browser for Claude OAuth login...");
+    console.log("\n  Opening browser for OAuth login...");
     console.log(`  If it doesn't open, visit:\n  ${url}\n`);
 
-    // Prompt for code
-    const readline = await import("readline");
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    const code = await new Promise<string>((resolve) => {
-      rl.question("  Paste the authorization code here: ", (a) => {
-        rl.close();
-        resolve(a.trim());
+    let code: string;
+    let usedLocalRedirect = true;
+
+    try {
+      code = await codePromise;
+    } catch {
+      close();
+      usedLocalRedirect = false;
+      // Fallback: manual code paste
+      const readline = await import("readline");
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      code = await new Promise<string>((resolve) => {
+        rl.question("  Paste the authorization code here: ", (a) => {
+          rl.close();
+          resolve(a.trim());
+        });
       });
-    });
+    }
 
     if (!code) throw new Error("No authorization code provided");
-    const tokens = await exchangeOAuthCode(code, codeVerifier);
 
-    // Mark OAuth as enabled
-    this.creds.oauth.anthropic = { enabled: true, provider: "anthropic" };
+    const tokens = await exchangeOAuthCode(
+      code,
+      codeVerifier,
+      provider,
+      usedLocalRedirect ? `http://localhost:${port}/callback` : undefined,
+      usedLocalRedirect ? state : undefined,
+    );
+
+    // Store tokens in the remote agent's own file (NOT the shared Keychain)
+    this.saveOAuthTokens(provider, {
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      expires_at: tokens.expires_at,
+      token_type: tokens.token_type || "Bearer",
+    });
+
+    this.creds.oauth[provider] = { enabled: true, provider };
     this.save();
 
     return {
@@ -197,27 +221,95 @@ export class CredentialManager {
   }
 
   /**
-   * Get OAuth status.
+   * Get OAuth status from the remote agent's own token store.
    */
-  async getOAuthStatus(): Promise<{ status: "none" | "active" | "expired"; expiresAt?: number }> {
-    try {
-      const { getOAuthStatus } = await import("@cdoing/core");
-      return getOAuthStatus();
-    } catch {
-      return { status: "none" };
+  async getOAuthStatus(provider: string = "anthropic"): Promise<{ status: "none" | "active" | "expired"; expiresAt?: number }> {
+    const tokens = this.loadOAuthTokens(provider);
+    if (!tokens) return { status: "none" };
+    if (tokens.expires_at && Date.now() >= tokens.expires_at) {
+      return { status: "expired", expiresAt: tokens.expires_at };
     }
+    return { status: "active", expiresAt: tokens.expires_at };
   }
 
   /**
-   * Logout from OAuth.
+   * Resolve an OAuth token for a provider, with auto-refresh.
    */
-  async oauthLogout(): Promise<void> {
-    try {
-      const { clearOAuthTokens } = await import("@cdoing/core");
-      clearOAuthTokens();
-    } catch {}
-    delete this.creds.oauth.anthropic;
+  async resolveOAuthToken(provider: string = "anthropic"): Promise<string | null> {
+    const tokens = this.loadOAuthTokens(provider);
+    if (!tokens) return null;
+
+    // If expired and has refresh token, try refreshing
+    if (tokens.expires_at && Date.now() >= tokens.expires_at && tokens.refresh_token) {
+      try {
+        const { refreshAccessToken } = await import("@cdoing/core");
+        const refreshed = await refreshAccessToken(tokens.refresh_token, provider);
+        if (refreshed) {
+          this.saveOAuthTokens(provider, {
+            access_token: refreshed.access_token,
+            refresh_token: refreshed.refresh_token || tokens.refresh_token,
+            expires_at: refreshed.expires_at,
+            token_type: refreshed.token_type || "Bearer",
+          });
+          return refreshed.access_token;
+        }
+      } catch { /* refresh failed */ }
+      return null;
+    }
+
+    return tokens.access_token;
+  }
+
+  /**
+   * Logout from OAuth for the remote agent.
+   */
+  async oauthLogout(provider?: string): Promise<void> {
+    if (provider) {
+      delete this.creds.oauth[provider];
+      this.deleteOAuthTokens(provider);
+    } else {
+      this.creds.oauth = {};
+      // Delete the whole OAuth file
+      try { if (fs.existsSync(OAUTH_FILE)) fs.unlinkSync(OAUTH_FILE); } catch {}
+    }
     this.save();
+  }
+
+  // ── OAuth Token Storage (separate encrypted file) ──────────────────
+
+  private saveOAuthTokens(provider: string, tokens: { access_token: string; refresh_token?: string; expires_at?: number; token_type: string }): void {
+    const store = this.loadOAuthStore();
+    store[provider] = { ...tokens, saved_at: Date.now() };
+    this.saveOAuthStore(store);
+  }
+
+  private loadOAuthTokens(provider: string): { access_token: string; refresh_token?: string; expires_at?: number; token_type: string } | null {
+    const store = this.loadOAuthStore();
+    return store[provider] || null;
+  }
+
+  private deleteOAuthTokens(provider: string): void {
+    const store = this.loadOAuthStore();
+    delete store[provider];
+    if (Object.keys(store).length === 0) {
+      try { if (fs.existsSync(OAUTH_FILE)) fs.unlinkSync(OAUTH_FILE); } catch {}
+    } else {
+      this.saveOAuthStore(store);
+    }
+  }
+
+  private loadOAuthStore(): Record<string, any> {
+    if (!fs.existsSync(OAUTH_FILE)) return {};
+    try {
+      return JSON.parse(decrypt(fs.readFileSync(OAUTH_FILE, "utf-8")));
+    } catch {
+      return {};
+    }
+  }
+
+  private saveOAuthStore(store: Record<string, any>): void {
+    if (!fs.existsSync(REMOTE_DIR)) fs.mkdirSync(REMOTE_DIR, { recursive: true });
+    fs.writeFileSync(OAUTH_FILE, encrypt(JSON.stringify(store)), { mode: 0o600 });
   }
 
   // ── Status ────────────────────────────────────────────────────────────
@@ -250,8 +342,8 @@ export class CredentialManager {
   }
 
   private save(): void {
-    if (!fs.existsSync(CONFIG_DIR)) {
-      fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    if (!fs.existsSync(REMOTE_DIR)) {
+      fs.mkdirSync(REMOTE_DIR, { recursive: true });
     }
     this.creds.updatedAt = new Date().toISOString();
     const encrypted = encrypt(JSON.stringify(this.creds));
