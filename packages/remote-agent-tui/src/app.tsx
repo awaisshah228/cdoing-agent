@@ -1,13 +1,12 @@
 /**
  * Main TUI Application — OpenTUI + React
  *
- * Full-featured terminal UI for monitoring the Remote Coding Agent:
- *   - Dashboard with agent status, channels, sessions, event stream
+ * Features:
+ *   - Intro screen if not configured (with setup shortcut)
+ *   - Dashboard with agent status, channels, sessions, events
+ *   - Config status indicators (configured/not)
  *   - Route navigation (dashboard, setup, skills, config)
- *   - Command palette (Ctrl+P)
- *   - Help dialog (F1)
- *   - Collapsible sidebar (Ctrl+B)
- *   - Keyboard-driven navigation
+ *   - Command palette (Ctrl+P), Help (F1), Sidebar (Ctrl+B)
  */
 
 import { createRoot, useKeyboard, useTerminalDimensions } from "@opentui/react";
@@ -47,7 +46,7 @@ export interface StartTUIOptions {
   workingDir?: string;
 }
 
-// ── Uptime Formatter ─────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────
 
 function formatUptime(seconds: number): string {
   if (seconds < 60) return `${Math.floor(seconds)}s`;
@@ -55,6 +54,62 @@ function formatUptime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   return `${h}h${m}m`;
+}
+
+// ── Intro Screen (shown when not configured) ─────────────
+
+function IntroScreen(props: { onSetup: () => void }) {
+  const { theme: t } = useTheme();
+
+  return (
+    <box flexDirection="column" paddingX={2} paddingY={1} flexGrow={1}>
+      <box height={1} />
+      <text fg={t.primary} attributes={TextAttributes.BOLD}>
+        {"Welcome to Remote Coding Agent"}
+      </text>
+      <box height={1} />
+      <text fg={t.text}>
+        {"Your personal AI assistant accessible via Telegram, Discord, and web."}
+      </text>
+      <text fg={t.text}>
+        {"It handles chat, scheduling, skills, and delegates coding tasks to a powerful model."}
+      </text>
+      <box height={2} />
+
+      <text fg={t.warning} attributes={TextAttributes.BOLD}>{"⚠ Not configured yet"}</text>
+      <box height={1} />
+      <text fg={t.text}>{"To get started, you need to:"}</text>
+      <text fg={t.textMuted}>{"  1. Select an AI provider and authenticate (OAuth or API key)"}</text>
+      <text fg={t.textMuted}>{"  2. Choose models for assistant and coding agent"}</text>
+      <text fg={t.textMuted}>{"  3. Enable skills (coding agent, math, weather, etc.)"}</text>
+      <text fg={t.textMuted}>{"  4. Connect a channel (Telegram bot token)"}</text>
+      <box height={2} />
+
+      <box flexDirection="row" gap={2}>
+        <text fg={t.primary} attributes={TextAttributes.BOLD}>{"Press  s  to start setup"}</text>
+        <text fg={t.border}>{"\u2502"}</text>
+        <text fg={t.textMuted}>{"Ctrl+P  command palette"}</text>
+        <text fg={t.border}>{"\u2502"}</text>
+        <text fg={t.textMuted}>{"F1  help"}</text>
+        <text fg={t.border}>{"\u2502"}</text>
+        <text fg={t.textMuted}>{"q  quit"}</text>
+      </box>
+      <box height={2} />
+
+      <text fg={t.textDim}>{"Or run:  remote-agent-tui setup"}</text>
+      <text fg={t.textDim}>{"Config:  ~/.cdoing/remote/"}</text>
+    </box>
+  );
+}
+
+// ── Config Status Badge ──────────────────────────────────
+
+function ConfigStatusBadge(props: { configured: boolean }) {
+  const { theme: t } = useTheme();
+  if (props.configured) {
+    return <text fg={t.success}>{"\u2713 configured"}</text>;
+  }
+  return <text fg={t.warning}>{"\u26A0 not configured"}</text>;
 }
 
 // ── App Shell ────────────────────────────────────────────
@@ -74,92 +129,60 @@ function AppShell(props: { engine: Engine }) {
 
   const closeDialog = useCallback(() => setDialog(null), []);
 
-  // Auto-hide sidebar when terminal is too narrow
+  // Detect if configured: has API key, OAuth, or env var
+  const config = props.engine.getConfig();
+  const hasApiKey = !!config.agent.apiKey;
+  const hasChannels = Object.values(config.channels).some((c: any) => c.enabled);
+  const isConfigured = hasApiKey || hasChannels || state.channels.length > 0;
+
+  // If not configured and on dashboard, show intro screen
+  const showIntro = !isConfigured && route === "dashboard";
+
   const wide = dims.width > 120;
-  const showSidebar = sidebarVisible && wide;
+  const showSidebar = sidebarVisible && wide && !showIntro;
 
   // ── Global Keyboard ──────────────────────────────────
 
   useKeyboard((key: any) => {
-    // When a dialog is open, only handle close/quit
     if (dialog !== null) {
-      if (key.ctrl && key.name === "c") {
-        process.exit(0);
-      }
-      if (key.name === "escape") {
-        setDialog(null);
-      }
+      if (key.ctrl && key.name === "c") process.exit(0);
+      if (key.name === "escape") setDialog(null);
       return;
     }
 
-    // Ctrl+C — quit
     if (key.ctrl && key.name === "c") {
       const cleanup = (globalThis as any).__remoteTuiCleanup;
       if (cleanup) cleanup();
       else process.exit(0);
     }
+    if (key.ctrl && key.name === "p") setDialog((d) => (d === "command" ? null : "command"));
+    if (key.ctrl && key.name === "b") toggleSidebar();
+    if (key.name === "f1") setDialog((d) => (d === "help" ? null : "help"));
 
-    // Ctrl+P — command palette
-    if (key.ctrl && key.name === "p") {
-      setDialog((d) => (d === "command" ? null : "command"));
-    }
-
-    // Ctrl+B — toggle sidebar
-    if (key.ctrl && key.name === "b") {
-      toggleSidebar();
-    }
-
-    // F1 — help
-    if (key.name === "f1") {
-      setDialog((d) => (d === "help" ? null : "help"));
-    }
-
-    // Number keys — route switching
+    // Route switching
     if (key.name === "1") setRoute("dashboard");
     if (key.name === "2") setRoute("skills");
     if (key.name === "3") setRoute("config");
-
-    // s — setup
-    if (key.sequence === "s" && !key.ctrl && !key.meta) {
-      setRoute("setup");
-    }
-
-    // q — quit
+    if (key.sequence === "s" && !key.ctrl && !key.meta) setRoute("setup");
     if (key.sequence === "q" && !key.ctrl && !key.meta) {
       const cleanup = (globalThis as any).__remoteTuiCleanup;
       if (cleanup) cleanup();
       else process.exit(0);
     }
-
-    // Escape — go back to dashboard
-    if (key.name === "escape") {
-      setRoute("dashboard");
-    }
+    if (key.name === "escape" && route !== "dashboard") setRoute("dashboard");
   }, {});
 
-  // ── Command palette handler ──────────────────────────
+  // ── Command palette ──────────────────────────────────
 
   const handleCommand = useCallback((commandId: string) => {
     setDialog(null);
     switch (commandId) {
-      case "route:dashboard":
-        setRoute("dashboard");
-        break;
-      case "route:skills":
-        setRoute("skills");
-        break;
-      case "route:config":
-        setRoute("config");
-        break;
-      case "route:setup":
-        setRoute("setup");
-        break;
-      case "display:sidebar":
-        toggleSidebar();
-        break;
-      case "system:help":
-        setDialog("help");
-        break;
+      case "route:dashboard": setRoute("dashboard"); break;
+      case "route:skills": setRoute("skills"); break;
+      case "route:config": setRoute("config"); break;
+      case "route:setup": setRoute("setup"); break;
+      case "display:sidebar": toggleSidebar(); break;
+      case "system:help": setDialog("help"); break;
       case "system:quit": {
         const cleanup = (globalThis as any).__remoteTuiCleanup;
         if (cleanup) cleanup();
@@ -184,7 +207,11 @@ function AppShell(props: { engine: Engine }) {
         <text fg={t.primary} attributes={TextAttributes.BOLD}>{"Remote Coding Agent"}</text>
         <text fg={t.border}>{" \u2502 "}</text>
         <text fg={t.textMuted}>{route}</text>
+        <text fg={t.border}>{" \u2502 "}</text>
+        <ConfigStatusBadge configured={isConfigured} />
         <box flexGrow={1} />
+        {isConfigured && <text fg={t.textDim}>{`${state.stats.assistantProvider}/${state.stats.assistantModel}`}</text>}
+        {isConfigured && <text fg={t.border}>{" \u2502 "}</text>}
         <text fg={t.textDim}>{`uptime ${upStr}`}</text>
       </box>
 
@@ -193,24 +220,21 @@ function AppShell(props: { engine: Engine }) {
         <text fg={t.border}>{"\u2500".repeat(Math.max(dims.width, 40))}</text>
       </box>
 
-      {/* Main content area with optional sidebar */}
+      {/* Main content */}
       <box flexDirection="row" flexGrow={1}>
-        {/* Content */}
         <box flexGrow={1} flexDirection="column">
-          {route === "dashboard" && <Dashboard />}
+          {showIntro && <IntroScreen onSetup={() => setRoute("setup")} />}
+          {!showIntro && route === "dashboard" && <Dashboard />}
           {route === "setup" && <Setup onComplete={() => setRoute("dashboard")} />}
           {route === "skills" && <Skills />}
           {route === "config" && <Config />}
         </box>
 
-        {/* Vertical border between content and sidebar */}
         {showSidebar && (
           <box width={1} flexShrink={0}>
             <text fg={t.border}>{"\u2502\n".repeat(Math.max(dims.height - 4, 1))}</text>
           </box>
         )}
-
-        {/* Sidebar (right panel) */}
         {showSidebar && <Sidebar state={state} />}
       </box>
 
@@ -226,18 +250,9 @@ function AppShell(props: { engine: Engine }) {
         allConnected={allConnected}
       />
 
-      {/* Command palette dialog (overlay) */}
-      {dialog === "command" && (
-        <DialogCommand
-          onSelect={handleCommand}
-          onClose={closeDialog}
-        />
-      )}
-
-      {/* Help dialog (overlay) */}
-      {dialog === "help" && (
-        <DialogHelp onClose={closeDialog} />
-      )}
+      {/* Dialogs */}
+      {dialog === "command" && <DialogCommand onSelect={handleCommand} onClose={closeDialog} />}
+      {dialog === "help" && <DialogHelp onClose={closeDialog} />}
     </box>
   );
 }
@@ -245,23 +260,19 @@ function AppShell(props: { engine: Engine }) {
 // ── Entry Point ──────────────────────────────────────────
 
 export async function startTUI(options: StartTUIOptions): Promise<void> {
-  const { engine, route: initialRoute, workingDir } = options;
+  const { engine, route: initialRoute } = options;
 
-  // Set initial route if provided
   if (initialRoute) {
     useSettingsStore.getState().setRoute(initialRoute);
   }
 
-  // Detect terminal background for auto theme
   let detectedMode: "dark" | "light" | undefined;
   detectedMode = await detectTerminalTheme();
 
-  // Read persisted settings
   const settings = useSettingsStore.getState();
   const initialThemeId = settings.themeId || "vercel";
   const initialMode = settings.mode || detectedMode || "dark";
 
-  // Set terminal background before clearing
   const initialColors = getThemeColors(initialThemeId, initialMode);
   if (settings.syncTerminalBg) {
     setTerminalBackground(initialColors.bg);
@@ -288,7 +299,6 @@ export async function startTUI(options: StartTUIOptions): Promise<void> {
     </ThemeProvider>,
   );
 
-  // Graceful cleanup
   let isCleaningUp = false;
   const cleanup = () => {
     if (isCleaningUp) return;
@@ -303,6 +313,5 @@ export async function startTUI(options: StartTUIOptions): Promise<void> {
   process.on("SIGTERM", cleanup);
   (globalThis as any).__remoteTuiCleanup = cleanup;
 
-  // Keep alive
   await new Promise(() => {});
 }
