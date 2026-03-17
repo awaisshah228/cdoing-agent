@@ -41,15 +41,26 @@ interface CronRun {
 
 function getBaseUrl() {
   if (typeof window !== "undefined") {
-    const env = process.env.NEXT_PUBLIC_GATEWAY_URL;
-    return env || window.location.origin;
+    return process.env.NEXT_PUBLIC_GATEWAY_URL || window.location.origin;
   }
-  return "http://localhost:4567";
+  return process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:4567";
+}
+
+function getAuthToken(): string {
+  if (typeof window !== "undefined") {
+    const params = new URLSearchParams(window.location.search);
+    const urlToken = params.get("token");
+    if (urlToken) return urlToken;
+  }
+  return process.env.NEXT_PUBLIC_GATEWAY_TOKEN || "";
 }
 
 async function api<T>(path: string, opts?: RequestInit): Promise<T> {
+  const h: HeadersInit = { "Content-Type": "application/json" };
+  const token = getAuthToken();
+  if (token) (h as Record<string, string>)["Authorization"] = `Bearer ${token}`;
   const res = await fetch(`${getBaseUrl()}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: h,
     ...opts,
   });
   return res.json();

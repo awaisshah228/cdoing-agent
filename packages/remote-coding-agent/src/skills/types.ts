@@ -23,6 +23,10 @@ export interface Skill {
   always?: boolean;
   /** Whether users can invoke this skill via /skill command. */
   userInvocable?: boolean;
+  /** Whether this skill is enabled by default (true if omitted). */
+  defaultEnabled?: boolean;
+  /** CLI tools this skill requires (e.g., ["gh", "git"]). Used to warn owner. */
+  requiredTools?: string[];
   /** Custom metadata from frontmatter. */
   metadata?: Record<string, unknown>;
 }

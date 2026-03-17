@@ -1,0 +1,45 @@
+{
+  "agent": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-6",
+    "maxTurns": 25,
+    "permissionMode": "auto",
+    "codingProvider": "anthropic",
+    "codingModel": "claude-sonnet-4-6"
+  },
+  "gateway": {
+    "port": 4567,
+    "authToken": "5d8b140ece813520bb2b34b9bd54fb76f5152b3af4fd4bc6906dc5dbadd2f194"
+  },
+  "session": {
+    "ttlMs": 1800000,
+    "maxHistoryMessages": 50,
+    "maxSessions": 100
+  },
+  "security": {
+    "channelRules": {},
+    "rateLimitPerMinute": 20,
+    "allowedDirs": [
+      "/Users/awaisshah228/Documents/testing_dir"
+    ]
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "botToken": "8654745084:AAEmxetIQSiShFoO2KV3eo2cUoavWAN4qwo"
+    }
+  },
+  "workingDir": "/Users/awaisshah228/Documents/testing_dir",
+  "logLevel": "info",
+  "skills": {
+    "enabled": [
+      "coding-agent",
+      "math",
+      "weather",
+      "commit",
+      "review",
+      "test",
+      "explain"
+    ]
+  }
+}

@@ -18,6 +18,7 @@
 
 import type { SkillRegistry } from "../skills/registry";
 import type { AgentRole } from "../types";
+import { buildToolEnvironmentSummary, type ToolReport } from "../tools/tool-checker";
 
 export interface RemoteSystemPromptOptions {
   /** Working directory for coding operations. */
@@ -38,6 +39,8 @@ export interface RemoteSystemPromptOptions {
   codingModel?: string;
   /** Skill registry for including always-on skills. */
   skillRegistry?: SkillRegistry;
+  /** Cached tool report — injected into coding prompt so it knows what's available. */
+  toolReport?: ToolReport;
 }
 
 /**
@@ -70,6 +73,11 @@ export function buildRemoteSystemPrompt(opts: RemoteSystemPromptOptions): string
     if (skillSection) {
       parts.push(`\n${skillSection}`);
     }
+  }
+
+  // ── Tool Environment (coding agent only) ────────────────────────────
+  if (opts.role === "coding" && opts.toolReport) {
+    parts.push(`\n${buildToolEnvironmentSummary(opts.toolReport)}`);
   }
 
   // ── Custom User Prompt ────────────────────────────────────────────────
@@ -140,7 +148,52 @@ Invoke reusable workflows.
 
 Examples:
 - "commit these changes" → delegate_to_coder first, then skill_manager if needed
-- "what skills are available?" → \`skill_manager({ action: "list" })\``;
+- "what skills are available?" → \`skill_manager({ action: "list" })\`
+
+## setup_tool
+Check, install, and configure CLI tools on the owner's PC (git, gh, vercel, docker, etc.).
+
+Use this when:
+- The coding agent reports a missing tool (e.g., "gh is not installed")
+- The owner asks to install or set up a tool
+- You want to check what tools are available before delegating a task
+
+Examples:
+- "set up GitHub CLI" → \`setup_tool({ action: "install", tool_id: "gh" })\` then \`setup_tool({ action: "setup", tool_id: "gh" })\`
+- "what tools do I have?" → \`setup_tool({ action: "list" })\`
+- "is docker installed?" → \`setup_tool({ action: "check", tool_id: "docker" })\`
+- "install vercel" → \`setup_tool({ action: "install", tool_id: "vercel" })\`
+
+# Handling Missing Tools & Credentials
+
+When the coding agent reports a missing tool or missing credentials:
+
+## Missing Tool (not installed)
+1. Tell the owner clearly: "The coding agent needs \`<tool>\` but it's not installed."
+2. Offer to install: \`setup_tool({ action: "install", tool_id: "<id>" })\`
+3. After install, run setup: \`setup_tool({ action: "setup", tool_id: "<id>" })\`
+4. Retry the original task via delegate_to_coder.
+
+## Missing Credentials (installed but not authenticated)
+1. Tell the owner clearly: "\`<tool>\` is installed but not logged in. Commands like push/deploy will fail."
+2. Check what's needed: \`setup_tool({ action: "info", tool_id: "<id>" })\`
+3. Run setup: \`setup_tool({ action: "setup", tool_id: "<id>" })\`
+4. If setup requires interactive login (browser auth), tell the owner exactly what to run in their terminal.
+5. After owner confirms they've authenticated, retry the task.
+
+## Missing Skill (disabled)
+1. If the coding agent or a task needs a skill that's disabled, tell the owner.
+2. Offer to enable it: \`skill_manager({ action: "enable", skill_name: "<id>" })\`
+3. If the skill requires tools, check those too: \`setup_tool({ action: "check", tool_ids: [...] })\`
+
+## Example: "build a website and deploy to Vercel"
+1. Delegate the build task → coding agent builds the site.
+2. Coding agent reports: "vercel is not authenticated — can't deploy."
+3. You tell the owner: "The site is built! To deploy, I need to set up Vercel CLI. Want me to install it?"
+4. Owner says yes → install + setup → report "run \`vercel login\` in your terminal"
+5. Owner runs it → retry deploy via delegate_to_coder.
+
+The owner should always be able to configure tools from the chat channel — they shouldn't need to SSH in or open a terminal separately (except for interactive auth like browser-based login).`;
 
 // ── Coding Prompt ───────────────────────────────────────────────────────
 // Dedicated coding agent — full tool access, focused on code.
@@ -193,6 +246,27 @@ Do NOT give up after one failure — always attempt to fix.
 - Don't add unnecessary comments, types, or error handling.
 - Don't introduce security vulnerabilities.
 - Prefer simple solutions over clever ones.
+
+# Missing Tools & Credentials — CRITICAL
+
+Before running a shell command that depends on a CLI tool, check the "CLI Tools Available" section
+in your environment context.
+
+## Tool NOT installed:
+1. **Do NOT attempt to use it** — the command will fail.
+2. **Do NOT try to install it yourself** — you don't have permission.
+3. **STOP and report clearly**: "This task requires \`<tool>\` which is not installed on this machine."
+
+## Tool installed but NOT authenticated:
+1. **Do NOT attempt commands that need auth** (push, deploy, API calls) — they will fail.
+2. **STOP and report clearly**: "This task requires \`<tool>\` to be authenticated. It's installed but not logged in. Please set up credentials."
+3. Complete whatever work you CAN do (build, test, etc.) and report the auth blocker at the end.
+
+## If a command fails with "command not found", "auth required", "permission denied", or similar:
+- Identify which tool is missing or needs auth.
+- Report it clearly with the exact error.
+- Do NOT retry the same command — it will fail again.
+- The personal assistant will handle installation/auth via setup_tool and ask the owner.
 
 # Response Format
 - Be concise — you're reporting back to an assistant that will format for chat.

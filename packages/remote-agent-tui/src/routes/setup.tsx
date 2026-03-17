@@ -22,8 +22,34 @@ import { useTheme } from "../context/theme";
 import { useEngine } from "../context/engine";
 import { getProviders } from "@cdoing/ai";
 import { supportsOAuth } from "@cdoing/core";
-import { writeSetupConfig, generateSecretKey } from "@cdoing/remote-coding-agent";
+import { execSync } from "child_process";
+import * as fs from "fs";
+import * as nodePath from "path";
+import { writeSetupConfig, generateSecretKey, CredentialManager } from "@cdoing/remote-coding-agent";
 import type { Engine } from "@cdoing/remote-coding-agent";
+
+// ── Directory completion helper ───────────────────────────────────────────
+
+function getDirCompletions(partial: string): string[] {
+  try {
+    const resolved = partial.startsWith("~")
+      ? nodePath.join(process.env.HOME || "", partial.substring(1))
+      : nodePath.resolve(partial);
+    const dir = partial.endsWith("/") ? resolved : nodePath.dirname(resolved);
+    const prefix = partial.endsWith("/") ? "" : nodePath.basename(resolved);
+
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return [];
+
+    return fs.readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+      .filter((e) => !prefix || e.name.toLowerCase().startsWith(prefix.toLowerCase()))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, 15)
+      .map((e) => nodePath.join(dir, e.name) + "/");
+  } catch {
+    return [];
+  }
+}
 
 // ── Data from centralized catalog ─────────────────────────────────────────
 
@@ -61,14 +87,6 @@ const LOG_LEVELS = ["info", "debug", "warn", "error"];
 
 const SKILL_OPTIONS = [
   { id: "coding-agent", name: "Coding Agent", desc: "Delegate coding tasks to a powerful model", defaultOn: true },
-  { id: "math", name: "Math", desc: "Evaluate expressions and calculations", defaultOn: true },
-  { id: "weather", name: "Weather", desc: "Fetch weather via wttr.in", defaultOn: true },
-  { id: "commit", name: "Git Commit", desc: "Structured git commits", defaultOn: true },
-  { id: "review", name: "Code Review", desc: "Review code changes", defaultOn: true },
-  { id: "test", name: "Test Runner", desc: "Run and analyze tests", defaultOn: true },
-  { id: "explain", name: "Explain Code", desc: "Explain code in plain language", defaultOn: true },
-  { id: "deploy-check", name: "Deploy Check", desc: "Pre-deployment validation", defaultOn: false },
-  { id: "summarize", name: "Summarize", desc: "Summarize changes or code", defaultOn: false },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -134,10 +152,9 @@ export function Setup(props: SetupProps) {
   const [codingModelId, setCodingModelId] = useState("");
 
   // Channels (step 6)
-  const [channelSubStep, setChannelSubStep] = useState<"telegram-toggle" | "telegram-token" | "discord-toggle">("telegram-toggle");
+  const [channelSubStep, setChannelSubStep] = useState<"telegram-toggle" | "telegram-token">("telegram-toggle");
   const [telegramEnabled, setTelegramEnabled] = useState(false);
   const [telegramToken, setTelegramToken] = useState("");
-  const [discordEnabled, setDiscordEnabled] = useState(false);
 
   // Security (step 7)
   const authTokenRef = useRef(generateSecretKey());
@@ -147,8 +164,15 @@ export function Setup(props: SetupProps) {
   // Working dir, port, log level (step 8)
   const [envSubStep, setEnvSubStep] = useState<"workdir" | "port" | "loglevel">("workdir");
   const [workingDir, setWorkingDir] = useState(process.cwd());
+  const [dirCompletions, setDirCompletions] = useState<string[]>([]);
+  const [dirCompIdx, setDirCompIdx] = useState(-1);
   const [portInput, setPortInput] = useState("4567");
   const [logLevelIndex, setLogLevelIndex] = useState(0);
+
+  // OAuth flow state
+  const [oauthStatus, setOauthStatus] = useState<"idle" | "waiting" | "success" | "error">("idle");
+  const [oauthMessage, setOauthMessage] = useState("");
+  const oauthCloseRef = useRef<(() => void) | null>(null);
 
   // Error display
   const [error, setError] = useState("");
@@ -209,9 +233,50 @@ export function Setup(props: SetupProps) {
             setSelectedIndex(0);
             setStep(3);
           } else if (chosen.id === "oauth") {
-            // OAuth flow would be handled externally
-            setSelectedIndex(0);
-            setStep(3);
+            // Start OAuth flow: local server + open browser
+            setOauthStatus("waiting");
+            setOauthMessage("Starting OAuth server...");
+            (async () => {
+              try {
+                const creds = new CredentialManager();
+                const { url, codeVerifier, state, port, codePromise, close } =
+                  await creds.startOAuth(providerId);
+                oauthCloseRef.current = close;
+                setOauthMessage(`Waiting for browser login on port ${port}...`);
+
+                // Open browser
+                const openCmd =
+                  process.platform === "darwin" ? "open" :
+                  process.platform === "win32" ? "start \"\"" : "xdg-open";
+                try {
+                  execSync(`${openCmd} "${url}"`, { stdio: "ignore" });
+                } catch {
+                  setOauthMessage(`Open this URL in your browser:\n${url}`);
+                }
+
+                const code = await codePromise;
+                setOauthMessage("Exchanging code for token...");
+                const localRedirectUri = `http://localhost:${port}/callback`;
+                // Exchange + save to remote agent's own store (not the CLI's)
+                await creds.completeOAuth(providerId, code, codeVerifier, localRedirectUri, state);
+                setOauthStatus("success");
+                setOauthMessage("Authenticated successfully!");
+                oauthCloseRef.current = null;
+                // Move to next step after short delay so user sees success
+                setTimeout(() => {
+                  setSelectedIndex(0);
+                  setOauthStatus("idle");
+                  setOauthMessage("");
+                  setStep(3);
+                }, 1000);
+              } catch (err) {
+                oauthCloseRef.current = null;
+                setOauthStatus("error");
+                setOauthMessage(
+                  `OAuth failed: ${err instanceof Error ? err.message : String(err)}\nPress Enter to try API key instead.`
+                );
+              }
+            })();
           }
         }
         return;
@@ -331,14 +396,19 @@ export function Setup(props: SetupProps) {
           setChannelSubStep("telegram-token");
         } else if (key.sequence === "n" || key.sequence === "N" || key.name === "return") {
           if (!telegramEnabled) {
-            setChannelSubStep("discord-toggle");
+            // Skip token input, go to security
+            setSelectedIndex(0);
+            setSecSubStep("token");
+            setStep(7);
           } else {
             setChannelSubStep("telegram-token");
           }
         }
       } else if (channelSubStep === "telegram-token") {
         if (key.name === "return") {
-          setChannelSubStep("discord-toggle");
+          setSelectedIndex(0);
+          setSecSubStep("token");
+          setStep(7);
         } else if ((key.ctrl || key.meta) && key.name === "v") {
           const clip = readClipboard().trim();
           if (clip) setTelegramToken((s) => s + clip);
@@ -348,17 +418,6 @@ export function Setup(props: SetupProps) {
           setTelegramToken("");
         } else if (key.sequence && !key.ctrl && !key.meta) {
           setTelegramToken((s) => s + key.sequence);
-        }
-      } else if (channelSubStep === "discord-toggle") {
-        if (key.sequence === "y" || key.sequence === "Y") {
-          setDiscordEnabled(true);
-          setSelectedIndex(0);
-          setSecSubStep("token");
-          setStep(7);
-        } else if (key.sequence === "n" || key.sequence === "N" || key.name === "return") {
-          setSelectedIndex(0);
-          setSecSubStep("token");
-          setStep(7);
         }
       }
       return;
@@ -389,16 +448,38 @@ export function Setup(props: SetupProps) {
     if (step === 8) {
       if (envSubStep === "workdir") {
         if (key.name === "return") {
+          setDirCompletions([]);
+          setDirCompIdx(-1);
           setEnvSubStep("port");
+        } else if (key.name === "tab") {
+          // Tab completion for directories
+          if (dirCompletions.length === 0) {
+            const comps = getDirCompletions(workingDir);
+            if (comps.length === 1) {
+              setWorkingDir(comps[0]);
+            } else if (comps.length > 1) {
+              setDirCompletions(comps);
+              setDirCompIdx(0);
+              setWorkingDir(comps[0]);
+            }
+          } else {
+            // Cycle through completions
+            const next = (dirCompIdx + 1) % dirCompletions.length;
+            setDirCompIdx(next);
+            setWorkingDir(dirCompletions[next]);
+          }
         } else if ((key.ctrl || key.meta) && key.name === "v") {
           const clip = readClipboard().trim();
-          if (clip) setWorkingDir((s) => s + clip);
+          if (clip) { setWorkingDir((s) => s + clip); setDirCompletions([]); setDirCompIdx(-1); }
         } else if (key.name === "backspace") {
           setWorkingDir((s) => s.slice(0, -1));
+          setDirCompletions([]); setDirCompIdx(-1);
         } else if (key.ctrl && key.name === "u") {
           setWorkingDir("");
+          setDirCompletions([]); setDirCompIdx(-1);
         } else if (key.sequence && !key.ctrl && !key.meta) {
           setWorkingDir((s) => s + key.sequence);
+          setDirCompletions([]); setDirCompIdx(-1);
         }
       } else if (envSubStep === "port") {
         if (key.name === "return") {
@@ -438,8 +519,6 @@ export function Setup(props: SetupProps) {
           codingApiKey: undefined,
           telegramEnabled,
           telegramToken: telegramToken || undefined,
-          discordEnabled,
-          discordToken: undefined,
           authToken: authTokenRef.current,
           allowedDirs: [workingDir],
           workingDir,
@@ -447,8 +526,19 @@ export function Setup(props: SetupProps) {
           permissionMode: PERMISSION_MODES[permModeIndex].id,
           logLevel: LOG_LEVELS[logLevelIndex],
           enabledSkills: enabledSkillIds,
+          gatewayBind: "loopback" as const,
+          gatewayAuthMode: "token" as const,
         };
         writeSetupConfig(result);
+
+        // Save API key to CredentialManager so engine can resolve it
+        if (authMethod === "apikey" && apiKeyInput.trim()) {
+          try {
+            const creds = new CredentialManager();
+            creds.saveApiKey(providerId, apiKeyInput.trim(), "assistant");
+          } catch { /* non-fatal */ }
+        }
+
         setConfigWritten(true);
         props.onComplete();
       }
@@ -488,7 +578,7 @@ export function Setup(props: SetupProps) {
             <text
               key={p.id}
               fg={selectedIndex === i ? t.primary : t.textMuted}
-              attributes={selectedIndex === i ? TextAttributes.BOLD : undefined}
+              {...(selectedIndex === i ? { attributes: TextAttributes.BOLD } : {})}
             >
               {`  ${selectedIndex === i ? ">" : " "} ${p.name}  ${selectedIndex === i ? p.hint : ""}`}
             </text>
@@ -511,7 +601,7 @@ export function Setup(props: SetupProps) {
               <text
                 key={m.id}
                 fg={selectedIndex === i ? t.primary : t.textMuted}
-                attributes={selectedIndex === i ? TextAttributes.BOLD : undefined}
+                {...(selectedIndex === i ? { attributes: TextAttributes.BOLD } : {})}
               >
                 {`  ${selectedIndex === i ? ">" : " "} ${m.name}  ${selectedIndex === i ? m.hint : ""}`}
               </text>
@@ -546,7 +636,7 @@ export function Setup(props: SetupProps) {
             <text
               key={m.id}
               fg={selectedIndex === i ? t.primary : t.textMuted}
-              attributes={selectedIndex === i ? TextAttributes.BOLD : undefined}
+              {...(selectedIndex === i ? { attributes: TextAttributes.BOLD } : {})}
             >
               {`  ${selectedIndex === i ? ">" : " "} ${m.name}${m.hint ? `  ${m.hint}` : ""}`}
             </text>
@@ -566,15 +656,21 @@ export function Setup(props: SetupProps) {
             const marker = on ? "[Y]" : "[n]";
             const markerColor = on ? t.success : t.textMuted;
             return (
-              <text
-                key={s.id}
-                fg={selectedIndex === i ? t.primary : t.textMuted}
-                attributes={selectedIndex === i ? TextAttributes.BOLD : undefined}
-              >
-                {`  ${selectedIndex === i ? ">" : " "} `}
+              <box key={s.id} flexDirection="row">
+                <text
+                  fg={selectedIndex === i ? t.primary : t.textMuted}
+                  {...(selectedIndex === i ? { attributes: TextAttributes.BOLD } : {})}
+                >
+                  {`  ${selectedIndex === i ? ">" : " "} `}
+                </text>
                 <text fg={markerColor}>{marker}</text>
-                {` ${s.name} — ${s.desc}`}
-              </text>
+                <text
+                  fg={selectedIndex === i ? t.primary : t.textMuted}
+                  {...(selectedIndex === i ? { attributes: TextAttributes.BOLD } : {})}
+                >
+                  {` ${s.name} — ${s.desc}`}
+                </text>
+              </box>
             );
           })}
           <text>{""}</text>
@@ -592,7 +688,7 @@ export function Setup(props: SetupProps) {
             <text
               key={p.id}
               fg={selectedIndex === i ? t.primary : t.textMuted}
-              attributes={selectedIndex === i ? TextAttributes.BOLD : undefined}
+              {...(selectedIndex === i ? { attributes: TextAttributes.BOLD } : {})}
             >
               {`  ${selectedIndex === i ? ">" : " "} ${p.name}`}
             </text>
@@ -612,7 +708,7 @@ export function Setup(props: SetupProps) {
             <text
               key={m.id}
               fg={selectedIndex === i ? t.primary : t.textMuted}
-              attributes={selectedIndex === i ? TextAttributes.BOLD : undefined}
+              {...(selectedIndex === i ? { attributes: TextAttributes.BOLD } : {})}
             >
               {`  ${selectedIndex === i ? ">" : " "} ${m.name}${m.hint ? `  ${m.hint}` : ""}`}
             </text>
@@ -646,15 +742,6 @@ export function Setup(props: SetupProps) {
         </box>
       )}
 
-      {/* Step 6: Channels — Discord toggle */}
-      {step === 6 && channelSubStep === "discord-toggle" && (
-        <box flexDirection="column">
-          <text fg={t.text}>{"  Enable Discord channel? (y/N)"}</text>
-          <text>{""}</text>
-          <text fg={t.textMuted}>{"  Y Yes  N No  Esc Cancel"}</text>
-        </box>
-      )}
-
       {/* Step 7: Security — auth token */}
       {step === 7 && secSubStep === "token" && (
         <box flexDirection="column">
@@ -678,7 +765,7 @@ export function Setup(props: SetupProps) {
             <text
               key={m.id}
               fg={permModeIndex === i ? t.primary : t.textMuted}
-              attributes={permModeIndex === i ? TextAttributes.BOLD : undefined}
+              {...(permModeIndex === i ? { attributes: TextAttributes.BOLD } : {})}
             >
               {`  ${permModeIndex === i ? ">" : " "} ${m.label}`}
             </text>
@@ -696,8 +783,21 @@ export function Setup(props: SetupProps) {
           <text fg={t.text}>
             {`  > ${workingDir}|`}
           </text>
+          {dirCompletions.length > 1 && (
+            <box flexDirection="column">
+              <text>{""}</text>
+              {dirCompletions.slice(0, 8).map((c, i) => (
+                <text key={c} fg={i === dirCompIdx ? t.primary : t.textDim}>
+                  {`  ${i === dirCompIdx ? ">" : " "} ${c}`}
+                </text>
+              ))}
+              {dirCompletions.length > 8 && (
+                <text fg={t.textDim}>{`    ...and ${dirCompletions.length - 8} more`}</text>
+              )}
+            </box>
+          )}
           <text>{""}</text>
-          <text fg={t.textMuted}>{"  Enter Continue  Ctrl+V Paste  Esc Cancel"}</text>
+          <text fg={t.textMuted}>{"  Tab Autocomplete  Enter Continue  Ctrl+V Paste"}</text>
         </box>
       )}
 
@@ -723,7 +823,7 @@ export function Setup(props: SetupProps) {
             <text
               key={level}
               fg={logLevelIndex === i ? t.primary : t.textMuted}
-              attributes={logLevelIndex === i ? TextAttributes.BOLD : undefined}
+              {...(logLevelIndex === i ? { attributes: TextAttributes.BOLD } : {})}
             >
               {`  ${logLevelIndex === i ? ">" : " "} ${level}`}
             </text>
@@ -747,7 +847,6 @@ export function Setup(props: SetupProps) {
           )}
           <text fg={t.text}>{`    Skills:       ${enabledSkillIds.join(", ")}`}</text>
           <text fg={t.text}>{`    Telegram:     ${telegramEnabled ? "enabled" : "disabled"}`}</text>
-          <text fg={t.text}>{`    Discord:      ${discordEnabled ? "enabled" : "disabled"}`}</text>
           <text fg={t.text}>{`    Permission:   ${PERMISSION_MODES[permModeIndex].id}`}</text>
           <text fg={t.text}>{`    Working dir:  ${workingDir}`}</text>
           <text fg={t.text}>{`    Port:         ${portInput}`}</text>

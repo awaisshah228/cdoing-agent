@@ -16,11 +16,21 @@ function getBaseUrl(): string {
   return process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:4567";
 }
 
-const AUTH_TOKEN = process.env.NEXT_PUBLIC_GATEWAY_TOKEN || "";
+function getAuthToken(): string {
+  // 1. Check URL query param (?token=...)
+  if (typeof window !== "undefined") {
+    const params = new URLSearchParams(window.location.search);
+    const urlToken = params.get("token");
+    if (urlToken) return urlToken;
+  }
+  // 2. Fall back to build-time env var
+  return process.env.NEXT_PUBLIC_GATEWAY_TOKEN || "";
+}
 
 function headers(): HeadersInit {
   const h: HeadersInit = { "Content-Type": "application/json" };
-  if (AUTH_TOKEN) h["Authorization"] = `Bearer ${AUTH_TOKEN}`;
+  const token = getAuthToken();
+  if (token) h["Authorization"] = `Bearer ${token}`;
   return h;
 }
 

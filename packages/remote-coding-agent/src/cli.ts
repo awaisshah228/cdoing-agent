@@ -19,7 +19,7 @@ const program = new Command();
 
 program
   .name("remote-coding-agent")
-  .description("Multi-channel remote coding agent — Telegram, Discord, and more")
+  .description("Multi-channel remote coding agent — Telegram and more")
   .version("0.1.0");
 
 // ── Common CLI options (shared across start/tui/dashboard) ────────────────
@@ -34,7 +34,6 @@ function addCommonOptions(cmd: Command): Command {
     .option("--mode <mode>", "Permission mode (ask, auto-edit, auto)", "auto")
     .option("--port <port>", "Gateway server port", "4567")
     .option("--telegram-token <token>", "Telegram bot token")
-    .option("--discord-token <token>", "Discord bot token")
     .option("--log-level <level>", "Log level (debug, info, warn, error)", "info");
 }
 
@@ -122,13 +121,84 @@ program
   .command("setup")
   .description("Interactive setup wizard — configure everything step by step")
   .option("-o, --output <path>", "Output config file path", "remote-coding-agent.config.json")
+  .option("--flow <flow>", "Setup flow: quickstart or advanced")
+  .option("--accept-risk", "Skip security acknowledgement")
+  .option("--non-interactive", "Non-interactive mode (use with --accept-risk)")
+  .option("--provider <provider>", "AI provider (non-interactive)")
+  .option("-m, --model <model>", "Model name (non-interactive)")
+  .option("--api-key <key>", "API key (non-interactive)")
+  .option("--telegram-token <token>", "Telegram bot token (non-interactive)")
+  .option("--port <port>", "Gateway port (non-interactive)")
+  .option("--permission-mode <mode>", "Permission mode (non-interactive)")
+  .option("--skills <skills>", "Comma-separated skill IDs (non-interactive)")
   .action(async (opts) => {
     try {
-      const { runSetupWizard, writeSetupConfig, printSetupSummary } = await import("./tui/setup-wizard");
-      const result = await runSetupWizard();
-      const configPath = writeSetupConfig(result, path.resolve(opts.output));
-      printSetupSummary(result, configPath);
+      const { runSetupWizard, createCliPrompter } = await import("./wizard");
+
+      const overrides = opts.nonInteractive ? {
+        provider: opts.provider,
+        model: opts.model,
+        apiKey: opts.apiKey,
+        telegramEnabled: Boolean(opts.telegramToken),
+        telegramToken: opts.telegramToken,
+        port: opts.port ? parseInt(opts.port, 10) : undefined,
+        permissionMode: opts.permissionMode,
+        enabledSkills: opts.skills ? opts.skills.split(",").map((s: string) => s.trim()) : undefined,
+      } : undefined;
+
+      const { launchChoice, configPath } = await runSetupWizard({
+        prompter: createCliPrompter(),
+        flow: opts.flow as "quickstart" | "advanced" | undefined,
+        acceptRisk: opts.acceptRisk,
+        outputPath: path.resolve(opts.output),
+        nonInteractive: opts.nonInteractive,
+        overrides,
+        skipHealth: true, // Gateway isn't running yet during setup
+      });
+
+      // Act on the user's launch choice
+      if (launchChoice === "later") {
+        process.exit(0);
+      }
+
+      const config = loadConfig({ configFile: configPath });
+
+      if (launchChoice === "start") {
+        printBanner(config);
+        const { Engine } = await import("./core/engine");
+        const engine = new Engine(config);
+        await engine.start();
+        setupShutdown(engine);
+      } else if (launchChoice === "dashboard") {
+        printBanner(config, "dashboard");
+        const { Engine } = await import("./core/engine");
+        const engine = new Engine(config, { enableDashboard: true });
+        await engine.start();
+
+        // Open browser after gateway is actually running
+        const { openUrl } = await import("./wizard/onboard-helpers");
+        const dashUrl = config.gateway.authToken
+          ? `http://localhost:${config.gateway.port}/dashboard/?token=${config.gateway.authToken}`
+          : `http://localhost:${config.gateway.port}/dashboard/`;
+        console.log(`\n  Dashboard: ${dashUrl}\n`);
+        await openUrl(dashUrl);
+
+        setupShutdown(engine);
+      } else if (launchChoice === "tui") {
+        const { Engine } = await import("./core/engine");
+        const engine = new Engine(config);
+        await engine.start();
+
+        const { renderDashboard } = await import("./tui/app");
+        await renderDashboard(engine);
+
+        await engine.stop();
+      }
     } catch (err) {
+      if (err instanceof Error && err.name === "WizardCancelledError") {
+        console.log("\nSetup cancelled.");
+        process.exit(0);
+      }
       const error = err instanceof Error ? err : new Error(String(err));
       console.error(`Setup failed: ${error.message}`);
       process.exit(1);
@@ -233,7 +303,7 @@ program
     console.log(`\n  Auth token generated: ${token.substring(0, 8)}...${token.substring(56)}`);
     console.log("  (saved in config file — needed for API & dashboard access)\n");
     console.log("Next steps:");
-    console.log("  1. Edit the config with your channel tokens (Telegram, Discord, etc.)");
+    console.log("  1. Edit the config with your channel tokens (Telegram, etc.)");
     console.log("  2. Set your AI provider API key (ANTHROPIC_API_KEY or OPENAI_API_KEY)");
     console.log("  3. Run: remote-coding-agent setup   (interactive wizard)");
     console.log("  4. Or:  remote-coding-agent start    (headless)");
@@ -416,7 +486,6 @@ function buildConfig(opts: Record<string, string>) {
 
   const channels: Record<string, Record<string, unknown>> = {};
   if (opts.telegramToken) channels.telegram = { enabled: true, botToken: opts.telegramToken };
-  if (opts.discordToken) channels.discord = { enabled: true, botToken: opts.discordToken };
   if (Object.keys(channels).length > 0) cliOverrides.channels = channels;
 
   return loadConfig({ configFile: opts.config, cliOverrides });
@@ -459,7 +528,7 @@ function handleStartError(err: unknown) {
   if (error.message.includes("token") || error.message.includes("required")) {
     console.error("\nSetup options:");
     console.error("  1. Run: remote-coding-agent init  (generates config template)");
-    console.error("  2. Set env vars: TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY");
+    console.error("  2. Set env vars: ANTHROPIC_API_KEY (or TELEGRAM_BOT_TOKEN for Telegram)");
     console.error("  3. CLI flags: --telegram-token TOKEN --api-key KEY");
   }
   process.exit(1);

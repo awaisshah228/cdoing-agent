@@ -51,14 +51,29 @@ export { AgentBridge } from "./core/bridge";
 export { BaseChannel } from "./channels/base";
 export { ChannelRegistry, createDefaultRegistry } from "./channels/registry";
 export { TelegramChannel, telegramPlugin } from "./channels/telegram";
-export { DiscordChannel, discordPlugin } from "./channels/discord";
 
 // Tools (remote-agent specific)
 export { ConfigManagerTool, type ConfigManagerState } from "./tools/config-manager";
 export { CronTool, type CronToolState } from "./tools/cron-tool";
 export { SkillTool, type SkillToolState } from "./tools/skill-tool";
 export { DelegateToCoder, type DelegateState } from "./tools/delegate-to-coder";
+export { SetupToolTool, type SetupToolState } from "./tools/setup-tool";
+export { GatewayTool, type GatewayToolState } from "./tools/gateway-tool";
 export { selectToolsForTurn, compactToolDescription, compactToolSchema } from "./tools/smart-selector";
+
+// Tool Checker (CLI tool detection)
+export {
+  KNOWN_TOOLS,
+  checkTool,
+  checkToolById,
+  scanAllTools,
+  scanTools,
+  getInstallInstructions,
+  buildToolEnvironmentSummary,
+  type KnownTool,
+  type ToolStatus,
+  type ToolReport,
+} from "./tools/tool-checker";
 
 // Session
 export { SessionManager } from "./session/session-manager";
@@ -79,8 +94,64 @@ export type { Skill, SkillEntry, SkillResult } from "./skills/types";
 export { generateSecretKey, generateShortToken, validateSecretKey, secureCompare } from "./auth/secret";
 export { CredentialManager } from "./auth/credentials";
 
-// Setup Wizard
-export { runSetupWizard, writeSetupConfig, printSetupSummary } from "./tui/setup-wizard";
+// Setup Wizard (legacy — kept for backwards compatibility)
+export { runSetupWizard as runLegacySetupWizard, writeSetupConfig as writeLegacySetupConfig, printSetupSummary as printLegacySetupSummary } from "./tui/setup-wizard";
+
+// Wizard (modular — openclaw-style)
+export {
+  // Main orchestrator
+  runSetupWizard,
+  // Prompter
+  createCliPrompter,
+  WizardCancelledError,
+  // Modules
+  buildProviderList,
+  promptProvider,
+  promptAuthChoice,
+  promptModel,
+  promptCodingModel,
+  setupChannels,
+  setupSkills,
+  SKILL_OPTIONS,
+  configureGateway,
+  probeGatewayReachable,
+  waitForGatewayReachable,
+  promptPermissionMode,
+  promptWorkingDir,
+  promptLogLevel,
+  writeSetupConfig,
+  runHealthCheck,
+  printSetupSummary,
+  promptLaunchChoice,
+  finalizeSetupWizard,
+  // Onboard helpers
+  detectBrowserOpenSupport,
+  openUrl,
+  formatSshHint,
+  resolveControlUiLinks,
+  ensureWorkspaceAndSessions,
+  moveToTrash,
+  handleReset,
+  printWizardHeader,
+} from "./wizard";
+export type {
+  WizardPrompter,
+  WizardFlow,
+  SetupResult,
+  SetupWizardOptions,
+  NonInteractiveOverrides,
+  LaunchChoice,
+  ProviderDef,
+  AuthChoice,
+  GatewayBind,
+  GatewayAuthMode,
+  GatewayWizardSettings,
+  GatewayProbeResult,
+  ConfigSnapshot,
+  ChannelSetupResult,
+  CodingModelResult,
+  BrowserOpenSupport,
+} from "./wizard";
 
 // TUI
 export { Dashboard, renderDashboard } from "./tui/app";

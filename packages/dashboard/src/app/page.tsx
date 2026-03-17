@@ -40,7 +40,7 @@ export default function OverviewPage() {
         <div className="card text-center py-12">
           <p className="text-red-400 text-lg font-medium">Cannot connect to gateway</p>
           <p className="text-gray-500 text-sm mt-2">{error}</p>
-          <p className="text-gray-600 text-xs mt-4">Make sure the remote coding agent is running on port 4567</p>
+          <p className="text-gray-600 text-xs mt-4">Make sure the remote coding agent is running and accessible</p>
         </div>
       </div>
     );

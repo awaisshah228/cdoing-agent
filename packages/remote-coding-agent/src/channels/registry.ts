@@ -115,7 +115,6 @@ export function createDefaultRegistry(logLevel: string = "info"): ChannelRegistr
 
   // Auto-register built-in channels
   try { registry.register(require("./telegram").telegramPlugin); } catch { /* optional */ }
-  try { registry.register(require("./discord").discordPlugin); } catch { /* optional */ }
 
   return registry;
 }

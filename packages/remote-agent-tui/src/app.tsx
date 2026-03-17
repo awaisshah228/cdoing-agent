@@ -140,6 +140,11 @@ function AppShell(props: { engine: Engine }) {
       case "route:setup": setRoute("setup"); break;
       case "display:sidebar": toggleSidebar(); break;
       case "system:help": setDialog("help"); break;
+      case "system:detach": {
+        const detach = (globalThis as any).__remoteTuiDetach;
+        if (detach) detach();
+        break;
+      }
       case "system:quit": {
         const cleanup = (globalThis as any).__remoteTuiCleanup;
         if (cleanup) cleanup();
@@ -257,7 +262,9 @@ export async function startTUI(options: StartTUIOptions): Promise<void> {
   );
 
   let isCleaningUp = false;
-  const cleanup = async () => {
+
+  /** Full shutdown — stop engine, gateway, channels, then exit. */
+  const cleanupFull = async () => {
     if (isCleaningUp) return;
     isCleaningUp = true;
     try { root.unmount(); } catch {}
@@ -268,9 +275,27 @@ export async function startTUI(options: StartTUIOptions): Promise<void> {
     process.exit(0);
   };
 
-  process.on("SIGINT", cleanup);
-  process.on("SIGTERM", cleanup);
-  (globalThis as any).__remoteTuiCleanup = cleanup;
+  /** Detach — exit TUI only, keep engine/gateway/channels running in background. */
+  const detach = () => {
+    try { root.unmount(); } catch {}
+    try { renderer.destroy(); } catch {}
+    restoreTerminalBackground();
+    console.log("\nTUI detached. Engine is still running.");
+    console.log(`Gateway: http://localhost:${engine.getConfig().gateway.port}`);
+    console.log("Channels and cron jobs continue in background.");
+    console.log("Press Ctrl+C to stop the engine.\n");
+    // Don't call engine.stop() — keep it alive
+    // Re-attach SIGINT to engine stop for background mode
+    process.removeAllListeners("SIGINT");
+    process.removeAllListeners("SIGTERM");
+    process.on("SIGINT", async () => { await engine.stop(); process.exit(0); });
+    process.on("SIGTERM", async () => { await engine.stop(); process.exit(0); });
+  };
+
+  process.on("SIGINT", cleanupFull);
+  process.on("SIGTERM", cleanupFull);
+  (globalThis as any).__remoteTuiCleanup = cleanupFull;
+  (globalThis as any).__remoteTuiDetach = detach;
 
   await new Promise(() => {});
 }

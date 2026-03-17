@@ -115,9 +115,6 @@ function loadEnvOverrides(): Record<string, unknown> {
   if (process.env.TELEGRAM_BOT_TOKEN) {
     channels.telegram = { enabled: true, botToken: process.env.TELEGRAM_BOT_TOKEN };
   }
-  if (process.env.DISCORD_BOT_TOKEN) {
-    channels.discord = { enabled: true, botToken: process.env.DISCORD_BOT_TOKEN };
-  }
   if (Object.keys(channels).length > 0) o.channels = channels;
 
   // Security

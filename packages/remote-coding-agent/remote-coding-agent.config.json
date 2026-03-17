@@ -1,0 +1,40 @@
+{
+  "agent": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-6",
+    "maxTurns": 25,
+    "permissionMode": "auto",
+    "codingProvider": "anthropic",
+    "codingModel": "claude-opus-4-6"
+  },
+  "gateway": {
+    "port": 4567,
+    "authToken": "808a8fee1dc36d4aa5e2424ff1c067b83093d9e640346db8cd8d82d6338b9b27",
+    "bind": "loopback"
+  },
+  "session": {
+    "ttlMs": 1800000,
+    "maxHistoryMessages": 50,
+    "maxSessions": 100
+  },
+  "security": {
+    "channelRules": {},
+    "rateLimitPerMinute": 20,
+    "allowedDirs": [
+      "/Users/awaisshah228/Documents/coding/cdoing-agent/test"
+    ]
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "botToken": "8654745084:AAEmxetIQSiShFoO2KV3eo2cUoavWAN4qwo"
+    }
+  },
+  "workingDir": "/Users/awaisshah228/Documents/coding/cdoing-agent/test",
+  "logLevel": "info",
+  "skills": {
+    "enabled": [
+      "coding-agent"
+    ]
+  }
+}

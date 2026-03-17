@@ -59,8 +59,8 @@ export class Engine {
     this.sessionManager = new SessionManager(config.session, config.logLevel);
     this.rateLimiter = new UserRateLimiter(config.security.rateLimitPerMinute);
 
-    // Auto-resolve API keys from credential store if not in config
-    this.resolveCredentials(config);
+    // Sync-resolve API keys from credential store (OAuth resolved later in start())
+    this.resolveCredentialsSync(config);
 
     // Cron service
     this.cronService = new CronService(config.logLevel, async (job) => {
@@ -120,6 +120,9 @@ export class Engine {
   async start(): Promise<void> {
     this.emit({ type: "engine:start" });
     this.logger.info("Starting Remote Coding Agent engine...");
+
+    // Resolve OAuth tokens + env vars (async — covers what sync missed)
+    await this.resolveCredentialsAsync(this.config);
 
     // Load saved sessions from disk (continuity across restarts)
     this.sessionManager.loadFromDisk();
@@ -222,14 +225,13 @@ export class Engine {
   // ── Credential Resolution ──────────────────────────────────────────────
 
   /**
-   * Auto-resolve API keys from the credential store if not already in config.
-   * Checks: config → credential store → environment variables.
+   * Sync resolve — checks credential store only (no OAuth).
+   * Called in constructor so the config is populated early.
    */
-  private resolveCredentials(config: AppConfig): void {
+  private resolveCredentialsSync(config: AppConfig): void {
     try {
       const creds = new CredentialManager();
 
-      // Resolve assistant model API key
       if (!config.agent.apiKey) {
         const stored = creds.getApiKey(config.agent.provider, "assistant");
         if (stored) {
@@ -238,7 +240,6 @@ export class Engine {
         }
       }
 
-      // Resolve coding model API key (if coding model is configured)
       if (config.agent.codingModel && !config.agent.codingApiKey) {
         const codingProvider = config.agent.codingProvider || config.agent.provider;
         const stored = creds.getApiKey(codingProvider, "coding");
@@ -248,7 +249,42 @@ export class Engine {
         }
       }
     } catch (err) {
-      this.logger.debug(`Credential resolution skipped: ${err}`);
+      this.logger.debug(`Credential resolution (sync) skipped: ${err}`);
+    }
+  }
+
+  /**
+   * Async resolve — checks credential store, OAuth tokens, AND env vars.
+   * Called in start() to pick up OAuth tokens that sync resolution missed.
+   */
+  private async resolveCredentialsAsync(config: AppConfig): Promise<void> {
+    try {
+      const creds = new CredentialManager();
+
+      if (!config.agent.apiKey) {
+        this.logger.info(`Resolving API key for ${config.agent.provider} (assistant)...`);
+        const resolved = await creds.resolveApiKey(config.agent.provider, "assistant");
+        if (resolved) {
+          config.agent.apiKey = resolved;
+          this.logger.info(`Resolved ${config.agent.provider} API key (assistant): ${resolved.substring(0, 12)}...`);
+        } else {
+          this.logger.warn(`No API key found for ${config.agent.provider} (assistant) — check credentials or set ANTHROPIC_API_KEY`);
+        }
+      }
+
+      if (config.agent.codingModel && !config.agent.codingApiKey) {
+        const codingProvider = config.agent.codingProvider || config.agent.provider;
+        this.logger.info(`Resolving API key for ${codingProvider} (coding)...`);
+        const resolved = await creds.resolveApiKey(codingProvider, "coding");
+        if (resolved) {
+          config.agent.codingApiKey = resolved;
+          this.logger.info(`Resolved ${codingProvider} API key (coding): ${resolved.substring(0, 12)}...`);
+        } else {
+          this.logger.warn(`No API key found for ${codingProvider} (coding) — will fall back to assistant key`);
+        }
+      }
+    } catch (err) {
+      this.logger.error(`Credential resolution failed: ${err}`);
     }
   }
 

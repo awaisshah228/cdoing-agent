@@ -221,6 +221,54 @@ export class CredentialManager {
   }
 
   /**
+   * Start an OAuth flow — returns the URL and helpers.
+   * The TUI calls this, opens the browser itself, then calls completeOAuth().
+   */
+  async startOAuth(provider: string = "anthropic"): Promise<{
+    url: string;
+    codeVerifier: string;
+    state: string;
+    port: number;
+    codePromise: Promise<string>;
+    close: () => void;
+  }> {
+    const { startLocalOAuthServer } = await import("@cdoing/core");
+    return startLocalOAuthServer(provider);
+  }
+
+  /**
+   * Complete an OAuth flow — exchanges the code for tokens and stores
+   * them in the remote agent's own encrypted file (NOT the CLI's store).
+   */
+  async completeOAuth(
+    provider: string,
+    code: string,
+    codeVerifier: string,
+    redirectUri?: string,
+    state?: string,
+  ): Promise<{ accessToken: string; expiresAt?: number }> {
+    const { exchangeOAuthCode } = await import("@cdoing/core");
+
+    const tokens = await exchangeOAuthCode(code, codeVerifier, provider, redirectUri, state);
+
+    // Store in the remote agent's own file (NOT the CLI Keychain)
+    this.saveOAuthTokens(provider, {
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      expires_at: tokens.expires_at,
+      token_type: tokens.token_type || "Bearer",
+    });
+
+    this.creds.oauth[provider] = { enabled: true, provider };
+    this.save();
+
+    return {
+      accessToken: tokens.access_token,
+      expiresAt: tokens.expires_at,
+    };
+  }
+
+  /**
    * Get OAuth status from the remote agent's own token store.
    */
   async getOAuthStatus(provider: string = "anthropic"): Promise<{ status: "none" | "active" | "expired"; expiresAt?: number }> {

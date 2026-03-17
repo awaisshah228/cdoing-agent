@@ -40,10 +40,10 @@ export class SkillRegistry {
   register(skill: Skill): void {
     this.skills.set(skill.id, {
       skill,
-      enabled: true,
+      enabled: skill.defaultEnabled !== false, // enabled unless explicitly false
       loadedAt: Date.now(),
     });
-    this.logger.debug(`Skill registered: ${skill.name} (${skill.id})`);
+    this.logger.debug(`Skill registered: ${skill.name} (${skill.id}) [${skill.defaultEnabled !== false ? "enabled" : "disabled"}]`);
   }
 
   /** Load skills from a directory (searches for *.md files with frontmatter). */
@@ -116,6 +116,10 @@ export class SkillRegistry {
     return this.getAll().filter((e) => e.enabled && e.skill.always);
   }
 
+  getDisabled(): SkillEntry[] {
+    return this.getAll().filter((e) => !e.enabled);
+  }
+
   get size(): number {
     return this.skills.size;
   }
@@ -178,6 +182,19 @@ export class SkillRegistry {
         parts.push(`- **${e.skill.name}**: ${e.skill.description}`);
       }
       parts.push("");
+    }
+
+    const disabled = this.getDisabled();
+    if (disabled.length > 0) {
+      parts.push("### Disabled Skills (available but not active)\n");
+      parts.push("These skills exist but are disabled. If a task needs one, ask the owner to enable it:\n");
+      for (const e of disabled) {
+        const toolReq = e.skill.requiredTools?.length
+          ? ` (requires: ${e.skill.requiredTools.join(", ")})`
+          : "";
+        parts.push(`- **${e.skill.name}**: ${e.skill.description}${toolReq}`);
+      }
+      parts.push("\nTo enable: `skill_manager({ action: 'enable', skill_id: '<id>' })`\n");
     }
 
     return parts.join("\n");

@@ -10,7 +10,6 @@ import { TextAttributes } from "@opentui/core";
 import { useKeyboard } from "@opentui/react";
 import { useTheme } from "../context/theme";
 import { useEngine } from "../context/engine";
-import type { Engine } from "@cdoing/remote-coding-agent";
 
 export function Skills() {
   const { theme } = useTheme();
@@ -71,18 +70,27 @@ export function Skills() {
 
         return (
           <box key={skill.id} flexDirection="column">
-            <text
-              fg={selectedIndex === i ? t.primary : t.textMuted}
-              attributes={selectedIndex === i ? TextAttributes.BOLD : undefined}
-            >
-              {`  ${selectedIndex === i ? ">" : " "} `}
+            <box flexDirection="row">
+              <text
+                fg={selectedIndex === i ? t.primary : t.textMuted}
+                attributes={selectedIndex === i ? TextAttributes.BOLD : undefined}
+              >
+                {`  ${selectedIndex === i ? ">" : " "} `}
+              </text>
               <text fg={markerColor}>{marker}</text>
-              {` ${skill.name} — ${skill.description}`}
-            </text>
-            {isCoding && entry.enabled && selectedIndex === i && (
+              <text
+                fg={selectedIndex === i ? t.primary : t.textMuted}
+                attributes={selectedIndex === i ? TextAttributes.BOLD : undefined}
+              >
+                {` ${skill.name} \u2014 ${skill.description}`}
+              </text>
+            </box>
+            {(isCoding && entry.enabled && selectedIndex === i) ? (
               <text fg={t.textDim}>
                 {"      Note: Configure the coding model in setup or config."}
               </text>
+            ) : (
+              <box />
             )}
           </box>
         );

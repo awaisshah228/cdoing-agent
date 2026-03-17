@@ -56,16 +56,14 @@ import { ConfigManagerTool, type ConfigManagerState } from "../tools/config-mana
 import { CronTool, type CronToolState } from "../tools/cron-tool";
 import { SkillTool, type SkillToolState } from "../tools/skill-tool";
 import { DelegateToCoder, type DelegateState } from "../tools/delegate-to-coder";
-import { selectToolsForTurn } from "../tools/smart-selector";
+import { SetupToolTool, type SetupToolState } from "../tools/setup-tool";
+import { scanAllTools, type ToolReport } from "../tools/tool-checker";
 import { buildRemoteSystemPrompt } from "./system-prompt";
 import type { CronService } from "../cron/service";
 import type { SkillRegistry } from "../skills/registry";
-import { formatHelp, formatStatus, formatError } from "../formatter";
+import { formatHelp, formatError } from "../formatter";
 import { Logger } from "../utils/logger";
 
-const FAST_TIMEOUT_MS = 8_000;
-const TYPING_INTERVAL_MS = 4_000;
-const TIMED_OUT = Symbol("TIMED_OUT");
 
 export interface AgentBridgeOptions {
   sessionManager: SessionManager;
@@ -80,6 +78,24 @@ export interface AgentBridgeOptions {
   logLevel?: string;
 }
 
+/** Tracks a running background task. */
+interface RunningTask {
+  id: string;
+  query: string;
+  startedAt: number;
+  toolCalls: string[];
+  status: "running" | "done" | "error";
+  result?: string;
+  error?: string;
+  durationMs?: number;
+  usage?: { inputTokens: number; outputTokens: number };
+}
+
+let taskCounter = 0;
+function generateTaskId(): string {
+  return `task-${++taskCounter}`;
+}
+
 export class AgentBridge {
   private sessionManager: SessionManager;
   private agentConfig: AgentConfig;
@@ -90,11 +106,14 @@ export class AgentBridge {
   private skillRegistry?: SkillRegistry;
   private logger: Logger;
 
+  /** Cached tool report — scanned at startup, refreshed on install. */
+  private toolReport: ToolReport;
+
   /** Active agent runners per session key + role. */
   private agents = new Map<string, AgentRunner>();
 
-  /** Currently processing keys (prevent concurrent runs per user). */
-  private processing = new Set<string>();
+  /** Running tasks per user key — non-blocking background processing. */
+  private runningTasks = new Map<string, RunningTask>();
 
   private listeners: EngineEventListener[] = [];
 
@@ -107,6 +126,11 @@ export class AgentBridge {
     this.cronService = options.cronService;
     this.skillRegistry = options.skillRegistry;
     this.logger = new Logger("AgentBridge", options.logLevel);
+
+    // Scan CLI tools at startup so prompts know what's available
+    this.toolReport = scanAllTools();
+    const installed = this.toolReport.tools.filter((t) => t.installed).length;
+    this.logger.info(`Tool scan: ${installed}/${this.toolReport.tools.length} CLI tools available`);
   }
 
   // ── Events ─────────────────────────────────────────────────────────────
@@ -133,137 +157,117 @@ export class AgentBridge {
       return;
     }
 
-    // Slash commands
+    // Slash commands — always processed immediately, even during a running task
     if (text.startsWith("/")) {
       await this.handleCommand(message, adapter);
       return;
     }
 
-    // Prevent concurrent runs
-    const key = `${channel}:${chatId}:${userId}`;
-    if (this.processing.has(key)) {
-      await adapter.sendMessage(chatId, "Still working on your previous request. Please wait...", {
-        replyToMessageId: message.messageId,
-      });
+    const userKey = `${channel}:${chatId}:${userId}`;
+
+    // If a task is already running, queue info but don't block
+    const existing = this.runningTasks.get(userKey);
+    if (existing && existing.status === "running") {
+      const elapsed = Math.round((Date.now() - existing.startedAt) / 1000);
+      await adapter.sendMessage(chatId,
+        `⏳ Task ${existing.id} is still running (${elapsed}s).\n` +
+        `Tools used: ${existing.toolCalls.length > 0 ? existing.toolCalls.join(", ") : "none yet"}\n\n` +
+        `Your new message has been queued. Use /status to check progress.`,
+        { replyToMessageId: message.messageId },
+      );
       return;
     }
 
-    this.processing.add(key);
-    this.emit({ type: "agent:start", channel, chatId, role: "assistant" });
-
-    try {
-      await this.processWithAssistant(message, adapter);
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      this.logger.error(`Agent error: ${error.message}`);
-      this.emit({ type: "agent:error", channel, chatId, error });
-      await adapter.sendMessage(chatId, formatError(error), {
-        replyToMessageId: message.messageId,
-      });
-    } finally {
-      this.processing.delete(key);
-    }
-  }
-
-  // ── Assistant Execution ────────────────────────────────────────────────
-  // Every message goes through the personal assistant first.
-  // The assistant has delegate_to_coder to hand off coding work.
-
-  private async processWithAssistant(message: IncomingMessage, adapter: ChannelAdapter): Promise<void> {
-    const { channel, chatId, userId, text } = message;
-    const session = this.sessionManager.getOrCreate(channel, chatId, userId, this.workingDir);
-
-    const assistantRegistry = this.createAssistantToolRegistry(session.workingDir, session.id);
-
-    // Smart selection for assistant tools
-    const selection = selectToolsForTurn(text, 1, assistantRegistry, "assistant");
-    if (selection.filtered) {
-      this.logger.debug(`Assistant tools: ${selection.count} [${selection.matchedCategories.join(", ")}]`);
-    }
-
-    const agent = this.getOrCreateAgent(session.id, session.workingDir, "assistant", channel, message.username);
-
-    const toolCalls: ToolCallSummary[] = [];
-    let totalIn = 0;
-    let totalOut = 0;
-    const startTime = Date.now();
-
-    // Typing indicator loop
-    const typingLoop = setInterval(() => adapter.sendTyping(chatId).catch(() => {}), TYPING_INTERVAL_MS);
-    await adapter.sendTyping(chatId);
-
-    const callbacks: AgentCallbacks = {
-      onToken: (token) => this.emit({ type: "agent:token", channel, chatId, token }),
-      onToolCall: (name, input) => {
-        this.logger.debug(`Tool: ${name}`);
-        this.emit({ type: "agent:tool_call", channel, chatId, name });
-        if (name === "delegate_to_coder") {
-          this.emit({ type: "agent:delegated", channel, chatId, task: (input as any).task || "" });
-        }
-      },
-      onToolResult: (name, result, isError) => {
-        toolCalls.push({ name, input: {}, output: result.substring(0, 200), isError });
-      },
-      onComplete: () => {},
-      onError: (err) => this.logger.error(`Agent error: ${err.message}`),
-      onUsage: (usage) => { totalIn += usage.inputTokens; totalOut += usage.outputTokens; },
+    // Create a task and process in the background
+    const task: RunningTask = {
+      id: generateTaskId(),
+      query: text.length > 100 ? text.substring(0, 100) + "..." : text,
+      startedAt: Date.now(),
+      toolCalls: [],
+      status: "running",
     };
+    this.runningTasks.set(userKey, task);
 
-    this.sessionManager.addMessage(session, "user", text);
-
-    // Race: agent vs timeout
-    const agentPromise = agent.run(text, callbacks);
-    const timeoutPromise = new Promise<typeof TIMED_OUT>((r) => setTimeout(() => r(TIMED_OUT), FAST_TIMEOUT_MS));
-    const result = await Promise.race([agentPromise, timeoutPromise]);
-
-    clearInterval(typingLoop);
-
-    const buildReply = (responseText: string): AgentReply => ({
-      text: responseText || "(no response)",
-      toolCalls,
-      usage: { inputTokens: totalIn, outputTokens: totalOut, totalTokens: totalIn + totalOut },
-      durationMs: Date.now() - startTime,
+    // Acknowledge immediately with task ID
+    await adapter.sendMessage(chatId, `🔄 Processing (${task.id})...`, {
+      replyToMessageId: message.messageId,
     });
 
-    if (result !== TIMED_OUT) {
-      // Fast path
-      const reply = buildReply(result as string);
+    this.emit({ type: "agent:start", channel, chatId, role: "assistant" });
+
+    // Run in the background — don't await
+    this.processInBackground(message, adapter, task, userKey).catch((err) => {
+      const error = err instanceof Error ? err : new Error(String(err));
+      this.logger.error(`Background task ${task.id} error: ${error.message}`);
+    });
+  }
+
+  // ── Background Processing ─────────────────────────────────────────────
+
+  private async processInBackground(
+    message: IncomingMessage,
+    adapter: ChannelAdapter,
+    task: RunningTask,
+    userKey: string,
+  ): Promise<void> {
+    const { channel, chatId, userId, text } = message;
+
+    try {
+      const session = this.sessionManager.getOrCreate(channel, chatId, userId, this.workingDir);
+      const agent = this.getOrCreateAgent(session.id, session.workingDir, "assistant", channel, message.username);
+
+      let totalIn = 0;
+      let totalOut = 0;
+      const toolCallSummaries: ToolCallSummary[] = [];
+
+      const callbacks: AgentCallbacks = {
+        onToken: (token) => this.emit({ type: "agent:token", channel, chatId, token }),
+        onToolCall: (name, input) => {
+          this.logger.debug(`Tool: ${name}`);
+          task.toolCalls.push(name);
+          this.emit({ type: "agent:tool_call", channel, chatId, name });
+          if (name === "delegate_to_coder") {
+            this.emit({ type: "agent:delegated", channel, chatId, task: (input as any).task || "" });
+          }
+        },
+        onToolResult: (name, result, isError) => {
+          toolCallSummaries.push({ name, input: {}, output: result.substring(0, 200), isError });
+        },
+        onComplete: () => {},
+        onError: (err) => this.logger.error(`Agent error: ${err.message}`),
+        onUsage: (usage) => { totalIn += usage.inputTokens; totalOut += usage.outputTokens; },
+      };
+
+      this.sessionManager.addMessage(session, "user", text);
+      const responseText = await agent.run(text, callbacks);
+
+      const durationMs = Date.now() - task.startedAt;
+      const reply: AgentReply = {
+        text: responseText || "(no response)",
+        toolCalls: toolCallSummaries,
+        usage: { inputTokens: totalIn, outputTokens: totalOut, totalTokens: totalIn + totalOut },
+        durationMs,
+      };
+
+      // Update task status
+      task.status = "done";
+      task.result = reply.text;
+      task.durationMs = durationMs;
+      task.usage = { inputTokens: totalIn, outputTokens: totalOut };
+
       this.sessionManager.addMessage(session, "assistant", reply.text);
       this.emit({ type: "agent:complete", channel, chatId, reply, role: "assistant" });
-      await adapter.sendMessage(chatId, reply.text, { replyToMessageId: message.messageId });
-    } else {
-      // Slow path — send "Working..." then follow up
-      const workingMsgId = await adapter.sendMessage(chatId, "Working on your request...", {
-        replyToMessageId: message.messageId,
-      });
 
-      const bgTyping = setInterval(() => adapter.sendTyping(chatId).catch(() => {}), TYPING_INTERVAL_MS);
+      // Send the result
+      await adapter.sendMessage(chatId, reply.text);
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      task.status = "error";
+      task.error = error.message;
+      task.durationMs = Date.now() - task.startedAt;
 
-      try {
-        const responseText = await agentPromise;
-        clearInterval(bgTyping);
-
-        const reply = buildReply(responseText);
-        this.sessionManager.addMessage(session, "assistant", reply.text);
-        this.emit({ type: "agent:complete", channel, chatId, reply, role: "assistant" });
-
-        // Try editing the "Working..." message, otherwise send new
-        if (reply.text.length <= 4000) {
-          try {
-            await adapter.editMessage(chatId, workingMsgId, reply.text);
-          } catch {
-            await adapter.sendMessage(chatId, reply.text);
-          }
-        } else {
-          try {
-            await adapter.editMessage(chatId, workingMsgId, "Done! See below:");
-          } catch { /* best effort */ }
-          await adapter.sendMessage(chatId, reply.text);
-        }
-      } catch (err) {
-        clearInterval(bgTyping);
-        throw err;
-      }
+      this.emit({ type: "agent:error", channel, chatId, error });
+      await adapter.sendMessage(chatId, formatError(error));
     }
   }
 
@@ -347,22 +351,49 @@ export class AgentBridge {
         break;
 
       case "/status": {
+        const statusKey = `${channel}:${chatId}:${userId}`;
+        const task = this.runningTasks.get(statusKey);
         const session = this.sessionManager.get(channel, chatId, userId);
-        if (!session) {
-          await adapter.sendMessage(chatId, "No active session. Send a message to start.");
+
+        const lines: string[] = [];
+
+        // Task status
+        if (task && task.status === "running") {
+          const elapsed = Math.round((Date.now() - task.startedAt) / 1000);
+          lines.push(`⏳ Task ${task.id} — running (${elapsed}s)`);
+          lines.push(`Query: ${task.query}`);
+          if (task.toolCalls.length > 0) {
+            lines.push(`Tools: ${task.toolCalls.join(" → ")}`);
+          }
+        } else if (task && task.status === "done") {
+          const duration = task.durationMs ? `${(task.durationMs / 1000).toFixed(1)}s` : "?";
+          lines.push(`✅ Last task ${task.id} — done (${duration})`);
+          if (task.usage) {
+            lines.push(`Tokens: ${task.usage.inputTokens} in / ${task.usage.outputTokens} out`);
+          }
+          if (task.toolCalls.length > 0) {
+            lines.push(`Tools: ${task.toolCalls.join(" → ")}`);
+          }
+        } else if (task && task.status === "error") {
+          lines.push(`❌ Last task ${task.id} — error`);
+          if (task.error) lines.push(`Error: ${task.error}`);
         } else {
-          const codingInfo = this.agentConfig.codingModel
-            ? `\nCoding: ${this.agentConfig.codingProvider || this.agentConfig.provider}/${this.agentConfig.codingModel}`
-            : "";
-          await adapter.sendMessage(chatId, formatStatus({
-            sessionId: session.id,
-            channel: session.channel,
-            workingDir: session.workingDir,
-            historyLength: session.history.length,
-            provider: this.agentConfig.provider,
-            model: this.agentConfig.model,
-          }) + codingInfo);
+          lines.push("No recent tasks.");
         }
+
+        // Session info
+        if (session) {
+          lines.push("");
+          lines.push(`Session: ${session.id}`);
+          lines.push(`Working dir: ${session.workingDir}`);
+          lines.push(`History: ${session.history.length} messages`);
+          lines.push(`Assistant: ${this.agentConfig.provider}/${this.agentConfig.model}`);
+          if (this.agentConfig.codingModel) {
+            lines.push(`Coding: ${this.agentConfig.codingProvider || this.agentConfig.provider}/${this.agentConfig.codingModel}`);
+          }
+        }
+
+        await adapter.sendMessage(chatId, lines.join("\n"));
         break;
       }
 
@@ -470,12 +501,18 @@ export class AgentBridge {
     const model = useCoding
       ? (this.agentConfig.codingModel || this.agentConfig.model)
       : this.agentConfig.model;
-    const apiKey = useCoding
+    const resolvedKey = useCoding
       ? (this.agentConfig.codingApiKey || this.agentConfig.apiKey)
       : this.agentConfig.apiKey;
     const maxTokens = useCoding
       ? (this.agentConfig.codingMaxTokens || this.agentConfig.maxTokens)
       : this.agentConfig.maxTokens;
+
+    // Detect OAuth tokens (sk-ant-oat01-...) and pass as oauthToken, not apiKey.
+    // OAuth requires Bearer auth + special headers, not x-api-key.
+    const isOAuth = resolvedKey?.startsWith("sk-ant-oat01-");
+    const apiKey = isOAuth ? undefined : resolvedKey;
+    const oauthToken = isOAuth ? resolvedKey : undefined;
 
     // Create role-appropriate tool registry
     const toolRegistry = role === "assistant"
@@ -497,10 +534,11 @@ export class AgentBridge {
       codingModel: useCoding ? undefined : (this.agentConfig.codingModel || undefined),
       customPrompt: this.agentConfig.systemPrompt,
       skillRegistry: this.skillRegistry,
+      toolReport: this.toolReport,
     });
 
     agent = new AgentRunner(
-      { provider, model, apiKey, maxTokens },
+      { provider, model, apiKey, oauthToken, maxTokens },
       toolRegistry,
       permissionManager,
       undefined,
@@ -565,6 +603,18 @@ export class AgentBridge {
       const skillState: SkillToolState = { skillRegistry: this.skillRegistry };
       registry.register(new SkillTool(skillState));
     }
+
+    // Setup tool — check, install, configure CLI tools on the PC
+    const setupState: SetupToolState = {
+      lastReport: this.toolReport,
+      onToolInstalled: (toolId) => {
+        this.logger.info(`Tool installed: ${toolId} — refreshing tool report`);
+        this.toolReport = scanAllTools();
+        // Clear cached agents so they pick up the new tool environment
+        this.agents.clear();
+      },
+    };
+    registry.register(new SetupToolTool(setupState));
 
     return registry;
   }
