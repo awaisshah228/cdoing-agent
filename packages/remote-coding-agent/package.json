@@ -10,8 +10,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "dev": "tsc && node --watch --inspect dist/cli.js dashboard",
-    "dev:start": "tsc && node --watch --inspect dist/cli.js start",
+    "dev": "tsc --watch & sleep 2 && node --watch --inspect dist/cli.js dashboard",
+    "dev:start": "tsc --watch & sleep 2 && node --watch --inspect dist/cli.js start",
     "dev:setup": "tsc && node dist/cli.js setup",
     "clean": "rm -rf dist",
     "start": "node dist/cli.js start",
