@@ -13,6 +13,11 @@
 
 import type { Session, SerializedMessage, SessionConfig } from "../types";
 import { Logger } from "../utils/logger";
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
+
+const SESSIONS_DIR = path.join(os.homedir(), ".cdoing", "remote", "sessions");
 
 const DEFAULTS: SessionConfig = {
   ttlMs: 30 * 60 * 1000,
@@ -190,5 +195,82 @@ export class SessionManager {
 
   private key(channel: string, chatId: string, userId: string): string {
     return `${channel}:${chatId}:${userId}`;
+  }
+
+  // ── Disk Persistence ──────────────────────────────────────────────────
+  // Save sessions to ~/.cdoing/remote/sessions/ on shutdown,
+  // load them back on startup for continuity across restarts.
+
+  /** Save all sessions to disk. Call this on graceful shutdown. */
+  saveToDisk(): void {
+    try {
+      if (!fs.existsSync(SESSIONS_DIR)) fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+
+      const sessions = this.getAll().map((s) => ({
+        id: s.id,
+        channel: s.channel,
+        chatId: s.chatId,
+        userId: s.userId,
+        workingDir: s.workingDir,
+        history: s.history.slice(-this.config.maxHistoryMessages),
+        createdAt: s.createdAt.toISOString(),
+        lastActiveAt: s.lastActiveAt.toISOString(),
+        metadata: s.metadata,
+      }));
+
+      const filePath = path.join(SESSIONS_DIR, "sessions.json");
+      fs.writeFileSync(filePath, JSON.stringify(sessions, null, 2), { mode: 0o600 });
+      this.logger.info(`Saved ${sessions.length} sessions to disk`);
+    } catch (err) {
+      this.logger.error(`Failed to save sessions: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  /** Load sessions from disk. Call this on startup before accepting messages. */
+  loadFromDisk(): number {
+    try {
+      const filePath = path.join(SESSIONS_DIR, "sessions.json");
+      if (!fs.existsSync(filePath)) return 0;
+
+      const raw = fs.readFileSync(filePath, "utf-8");
+      const data = JSON.parse(raw) as Array<{
+        id: string;
+        channel: string;
+        chatId: string;
+        userId: string;
+        workingDir: string;
+        history: SerializedMessage[];
+        createdAt: string;
+        lastActiveAt: string;
+        metadata: Record<string, unknown>;
+      }>;
+
+      let loaded = 0;
+      for (const entry of data) {
+        // Skip expired sessions
+        const lastActive = new Date(entry.lastActiveAt);
+        if (Date.now() - lastActive.getTime() > this.config.ttlMs) continue;
+
+        const session: Session = {
+          id: entry.id,
+          channel: entry.channel,
+          chatId: entry.chatId,
+          userId: entry.userId,
+          workingDir: entry.workingDir,
+          history: entry.history,
+          createdAt: new Date(entry.createdAt),
+          lastActiveAt: lastActive,
+          metadata: entry.metadata || {},
+        };
+        this.sessions.set(session.id, session);
+        loaded++;
+      }
+
+      if (loaded > 0) this.logger.info(`Loaded ${loaded} sessions from disk`);
+      return loaded;
+    } catch (err) {
+      this.logger.error(`Failed to load sessions: ${err instanceof Error ? err.message : err}`);
+      return 0;
+    }
   }
 }

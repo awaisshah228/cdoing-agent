@@ -166,15 +166,38 @@ export class Gateway {
   }
 
   async start(): Promise<void> {
-    return new Promise((resolve) => {
-      this.server = this.app.listen(this.config.port, () => {
-        this.logger.info(`Gateway on port ${this.config.port}`);
-        if (this.dashboardEnabled) {
-          this.logger.info(`Dashboard: http://localhost:${this.config.port}/dashboard/`);
+    const maxRetries = 5;
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      const port = this.config.port + attempt;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          this.server = this.app.listen(port, () => {
+            if (attempt > 0) {
+              this.logger.info(`Port ${this.config.port} in use — using ${port}`);
+            }
+            this.config.port = port; // Update to actual port
+            this.logger.info(`Gateway on port ${port}`);
+            if (this.dashboardEnabled) {
+              this.logger.info(`Dashboard: http://localhost:${port}/dashboard/`);
+            }
+            resolve();
+          });
+          this.server!.once("error", (err: NodeJS.ErrnoException) => {
+            if (err.code === "EADDRINUSE") {
+              this.server = null;
+              reject(err);
+            } else {
+              reject(err);
+            }
+          });
+        });
+        return; // Success
+      } catch (err: any) {
+        if (err?.code !== "EADDRINUSE" || attempt === maxRetries - 1) {
+          throw new Error(`Failed to start server. Ports ${this.config.port}-${this.config.port + maxRetries - 1} all in use.`);
         }
-        resolve();
-      });
-    });
+      }
+    }
   }
 
   async stop(): Promise<void> {

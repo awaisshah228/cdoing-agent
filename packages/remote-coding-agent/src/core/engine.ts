@@ -121,6 +121,9 @@ export class Engine {
     this.emit({ type: "engine:start" });
     this.logger.info("Starting Remote Coding Agent engine...");
 
+    // Load saved sessions from disk (continuity across restarts)
+    this.sessionManager.loadFromDisk();
+
     // Start session cleanup
     this.sessionManager.startCleanup();
 
@@ -163,7 +166,7 @@ export class Engine {
     this.logger.info("Engine is running!");
   }
 
-  /** Stop everything gracefully. */
+  /** Stop everything gracefully — saves sessions to disk. */
   async stop(): Promise<void> {
     this.logger.info("Stopping engine...");
     this.bridge.cancelAll();
@@ -171,6 +174,8 @@ export class Engine {
     await this.channelRegistry.stopAll();
     await this.gateway.stop();
     this.sessionManager.stopCleanup();
+    // Save sessions to disk for continuity across restarts
+    this.sessionManager.saveToDisk();
     this.emit({ type: "engine:stop" });
     this.logger.info("Engine stopped.");
   }

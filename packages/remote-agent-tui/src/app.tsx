@@ -307,12 +307,14 @@ export async function startTUI(options: StartTUIOptions): Promise<void> {
   );
 
   let isCleaningUp = false;
-  const cleanup = () => {
+  const cleanup = async () => {
     if (isCleaningUp) return;
     isCleaningUp = true;
     try { root.unmount(); } catch {}
     try { renderer.destroy(); } catch {}
     restoreTerminalBackground();
+    // Gracefully stop the engine (saves sessions to disk, closes gateway)
+    try { await engine.stop(); } catch {}
     process.exit(0);
   };
 
