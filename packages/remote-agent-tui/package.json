@@ -1,0 +1,35 @@
+{
+  "name": "@cdoing/remote-agent-tui",
+  "version": "0.1.0",
+  "description": "OpenTUI-based terminal interface for cdoing remote coding agent",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "remote-agent-tui": "dist/index.js"
+  },
+  "scripts": {
+    "build": "node esbuild.config.cjs",
+    "dev": "node esbuild.config.cjs --watch",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@cdoing/ai": "*",
+    "@cdoing/core": "*",
+    "@cdoing/remote-coding-agent": "*",
+    "@opentui/core": "0.1.87",
+    "@opentui/react": "0.1.87",
+    "chalk": "^4.1.2",
+    "commander": "^13.1.0",
+    "react": "^19.1.0",
+    "zustand": "^5.0.12"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/react": "^19.1.0",
+    "esbuild": "^0.25.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.2"
+  },
+  "license": "Apache-2.0"
+}
