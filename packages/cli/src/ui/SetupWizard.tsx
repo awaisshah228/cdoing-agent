@@ -13,46 +13,29 @@ import { Box, Text, useInput } from "ink";
 import { loadConfig, saveConfig } from "../config";
 import { generateOAuthUrl, exchangeOAuthCode } from "../oauth";
 import { getOAuthProvider, supportsOAuth } from "@cdoing/core";
+import { getProviders, type ProviderEntry } from "@cdoing/ai";
 import { getTheme } from "./theme";
 
-// ── Static data ───────────────────────────────────────────────────────────────
+// ── Data from centralized catalog ─────────────────────────────────────────────
 
-const PROVIDERS = [
-  { value: "anthropic", label: "Anthropic (Claude)",  hint: "claude-sonnet-4-6, claude-opus-4-6" },
-  { value: "openai",    label: "OpenAI (GPT)",        hint: "gpt-4o, gpt-4o-mini" },
-  { value: "google",    label: "Google (Gemini)",     hint: "gemini-2.0-flash, gemini-1.5-pro" },
-  { value: "ollama",    label: "Ollama (local)",      hint: "llama3.1, mistral, codellama" },
-];
+const _catalog = getProviders();
+
+const PROVIDERS = _catalog.map((p) => ({
+  value: p.id,
+  label: p.label,
+  hint: p.hint,
+}));
 
 const AUTH_METHODS = [
   { value: "apikey", label: "API key",  hint: "all models available · console.anthropic.com" },
   { value: "oauth",  label: "OAuth",    hint: "Claude Pro/Max · opens browser" },
 ];
 
-// All models per provider
-const ALL_MODELS: Record<string, { value: string; label: string; hint: string }[]> = {
-  anthropic: [
-    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", hint: "recommended · fast & smart" },
-    { value: "claude-opus-4-6",   label: "Claude Opus 4.6",   hint: "most capable" },
-    { value: "claude-haiku-4-5",  label: "Claude Haiku 4.5",  hint: "fastest" },
-  ],
-  openai: [
-    { value: "gpt-4o",      label: "GPT-4o",      hint: "recommended" },
-    { value: "gpt-4o-mini", label: "GPT-4o mini", hint: "fastest · cheapest" },
-    { value: "o3-mini",     label: "o3-mini",      hint: "reasoning" },
-  ],
-  google: [
-    { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash", hint: "recommended · fast" },
-    { value: "gemini-1.5-pro",   label: "Gemini 1.5 Pro",   hint: "most capable" },
-    { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash", hint: "fastest" },
-  ],
-  ollama: [
-    { value: "llama3.1",    label: "LLaMA 3.1",   hint: "general purpose" },
-    { value: "mistral",     label: "Mistral",      hint: "fast & capable" },
-    { value: "codellama",   label: "CodeLlama",    hint: "code-focused" },
-    { value: "phi3",        label: "Phi-3",        hint: "small & fast" },
-  ],
-};
+// All models per provider — from catalog
+const ALL_MODELS: Record<string, { value: string; label: string; hint: string }[]> = {};
+for (const p of _catalog) {
+  ALL_MODELS[p.id] = p.models.map((m) => ({ value: m.id, label: m.label, hint: m.hint || "" }));
+}
 
 /** Get available OAuth models for a provider (from core config) */
 function getOAuthModels(provider: string) {
@@ -65,11 +48,11 @@ function getOAuthModels(provider: string) {
   return config.models.map(m => ({ value: m.id, label: m.name, hint: m.hint || "OAuth" }));
 }
 
-const KEY_URLS: Record<string, string> = {
-  anthropic: "https://console.anthropic.com/settings/keys",
-  openai:    "https://platform.openai.com/api-keys",
-  google:    "https://aistudio.google.com/apikey",
-};
+// Key URLs from catalog
+const KEY_URLS: Record<string, string> = {};
+for (const p of _catalog) {
+  if (p.keyUrl) KEY_URLS[p.id] = p.keyUrl;
+}
 
 type Step =
   | "provider"
@@ -115,7 +98,7 @@ function Menu<T extends { value: string; label: string; hint?: string }>({
         );
       })}
       <Text dimColor={t.useDim} color={t.textDim}>{"─".repeat(50)}</Text>
-      <Text dimColor={t.useDim} color={t.textDim}>{"↑/↓ navigate  Enter select  Esc cancel"}</Text>
+      <Text dimColor={t.useDim} color={t.textDim}>{"↑/↓ navigate  Enter select  Esc go back"}</Text>
     </Box>
   );
 }
@@ -144,6 +127,9 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
   const [chosenProvider, setChosenProvider]   = useState(currentProvider);
   const [chosenAuthMethod, setChosenAuthMethod] = useState<"apikey" | "oauth">("apikey");
   const [chosenModel, setChosenModel]         = useState(currentModel);
+  // Custom model input
+  const [customModelInput, setCustomModelInput] = useState("");
+  const [isCustomModel, setIsCustomModel]     = useState(false);
   // API key step
   const [apiKeyInput, setApiKeyInput]         = useState("");
   const [showKey, setShowKey]                 = useState(false);
@@ -174,7 +160,21 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
   }, []);
 
   useInput(useCallback((char, key) => {
-    if (key.escape) { onCancel(); return; }
+    // ── Go back (Esc) — step by step, cancel only from first step ─────
+    if (key.escape) {
+      if (step === "oauth-paste" || step === "oauth-exchanging") {
+        setStep("model"); setOauthError(""); return;
+      }
+      if (step === "apikey") {
+        setStep("model"); setApiKeyInput(""); return;
+      }
+      if (step === "model") {
+        if (isCustomModel) { setIsCustomModel(false); return; }
+        setStep(supportsOAuth(chosenProvider) ? "auth-method" : "provider"); return;
+      }
+      if (step === "auth-method") { setStep("provider"); return; }
+      onCancel(); return;
+    }
 
     // ── 1. Provider ───────────────────────────────────────────────────────
     if (step === "provider") {
@@ -184,10 +184,11 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
         const p = PROVIDERS[providerIdx].value;
         setChosenProvider(p);
         setAuthIdx(0);
+        setIsCustomModel(false);
+        setCustomModelInput("");
         if (supportsOAuth(p)) {
           setStep("auth-method");
         } else {
-          // No OAuth support: skip auth-method, go straight to model
           const models = ALL_MODELS[p] || [];
           setModelIdx(Math.max(0, models.findIndex(m => m.value === currentModel)));
           setStep("model");
@@ -204,19 +205,52 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
         const auth = AUTH_METHODS[authIdx].value as "apikey" | "oauth";
         setChosenAuthMethod(auth);
         const models = getModels(chosenProvider, auth);
-        // Pre-select current model if available, else 0
         setModelIdx(Math.max(0, models.findIndex(m => m.value === currentModel)));
+        setIsCustomModel(false);
+        setCustomModelInput("");
         setStep("model");
         return;
       }
     }
 
-    // ── 3. Model ──────────────────────────────────────────────────────────
+    // ── 3. Model (presets + custom input) ──────────────────────────────
     if (step === "model") {
+      // Custom model text input mode
+      if (isCustomModel) {
+        if (key.return) {
+          const m = customModelInput.trim();
+          if (!m) return;
+          setChosenModel(m);
+          if (chosenProvider === "ollama") {
+            _save(chosenProvider, m, undefined);
+            onDone({ provider: chosenProvider, model: m });
+            setStep("done");
+          } else if (chosenAuthMethod === "oauth") {
+            exchangingRef.current = false;
+            setStep("oauth-paste");
+          } else {
+            setStep("apikey");
+          }
+          return;
+        }
+        if (key.backspace || key.delete) { setCustomModelInput(k => k.slice(0, -1)); return; }
+        if (char && !key.ctrl && !key.meta) { setCustomModelInput(k => k + char); return; }
+        return;
+      }
+
+      // Preset model selection mode
       const models = getModels(chosenProvider, chosenAuthMethod);
+      // Last item is "Custom model..." — enter custom input mode
+      const totalItems = models.length + 1; // +1 for custom option
       if (key.upArrow)   { setModelIdx(i => Math.max(0, i - 1)); return; }
-      if (key.downArrow) { setModelIdx(i => Math.min(models.length - 1, i + 1)); return; }
+      if (key.downArrow) { setModelIdx(i => Math.min(totalItems - 1, i + 1)); return; }
       if (key.return) {
+        if (modelIdx === models.length) {
+          // Selected "Custom model..."
+          setIsCustomModel(true);
+          setCustomModelInput("");
+          return;
+        }
         const m = models[modelIdx]?.value || "";
         setChosenModel(m);
         if (chosenProvider === "ollama") {
@@ -316,10 +350,36 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
     const title = chosenProvider === "anthropic" && chosenAuthMethod === "oauth"
       ? "  Choose a model  (OAuth supports Haiku only)"
       : `  Choose a model for ${chosenProvider}`;
+    const t = getTheme();
+
+    // Custom model text input mode
+    if (isCustomModel) {
+      return (
+        <Box flexDirection="column" paddingY={1} paddingLeft={2}>
+          <Text color={t.accent} bold>{`  ⚙  Setup Wizard  (${stepNum.model} — Custom Model)`}</Text>
+          <Text dimColor={t.useDim} color={t.textDim}>{"─".repeat(50)}</Text>
+          <Text color={t.text}>{`  Provider: ${chosenProvider}`}</Text>
+          <Text>{" "}</Text>
+          <Box>
+            <Text color={t.prompt}>{"  Model name: "}</Text>
+            <Text color={t.text}>{customModelInput || " "}</Text>
+            <Text color={t.cursor}>{"▊"}</Text>
+          </Box>
+          <Text>{" "}</Text>
+          <Text dimColor={t.useDim} color={t.textDim}>{"  Type model ID then Enter  ·  Esc go back"}</Text>
+        </Box>
+      );
+    }
+
+    // Preset model selection with "Custom..." option at bottom
+    const allItems = [
+      ...models,
+      { value: "__custom__", label: "Custom model...", hint: "type any model name" },
+    ];
     return (
       <Box flexDirection="column" paddingY={1}>
-        <Text color={getTheme().accent} bold>{`  ⚙  Setup Wizard  (${stepNum.model} — Model)`}</Text>
-        <Menu title={title} items={models} selectedIdx={modelIdx} />
+        <Text color={t.accent} bold>{`  ⚙  Setup Wizard  (${stepNum.model} — Model)`}</Text>
+        <Menu title={title} items={allItems} selectedIdx={modelIdx} />
       </Box>
     );
   }

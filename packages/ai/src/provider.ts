@@ -122,7 +122,25 @@ export function getDefaultModel(provider: string): string | undefined {
   return DEFAULT_MODELS[provider.toLowerCase()];
 }
 
-/** Provider catalog entry — everything UI needs to render provider/model selection */
+// Re-export the full catalog from provider-catalog.ts (single source of truth)
+export {
+  getProviders,
+  getProvider,
+  getModelsForProvider,
+  getDefaultModelForProvider,
+  getCustomProviders,
+  getCustomProvider,
+  getCustomProviderModels,
+  getCustomProviderBaseUrl,
+  searchModels,
+  getModelIds,
+  type ModelEntry,
+  type ProviderEntry,
+  type CustomProviderEntry,
+} from "./provider-catalog";
+import { getProviders } from "./provider-catalog";
+
+/** @deprecated Use getProviders() from provider-catalog instead */
 export interface ProviderCatalogEntry {
   id: string;
   label: string;
@@ -132,83 +150,16 @@ export interface ProviderCatalogEntry {
   supportsOAuth: boolean;
 }
 
-/** Get the full provider catalog for UI rendering (CLI, TUI, VS Code) */
+/** @deprecated Use getProviders() instead — kept for backward compat with CLI config.ts */
 export function getProviderCatalog(): ProviderCatalogEntry[] {
-  return [
-    {
-      id: "anthropic", label: "Anthropic (Claude)", hint: "Sonnet, Opus, Haiku",
-      keyUrl: "https://console.anthropic.com/settings/keys",
-      supportsOAuth: true,
-      models: [
-        { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", hint: "recommended · fast & smart" },
-        { value: "claude-opus-4-6", label: "Claude Opus 4.6", hint: "most capable" },
-        { value: "claude-haiku-4-5", label: "Claude Haiku 4.5", hint: "fastest · cheapest" },
-      ],
-    },
-    {
-      id: "openai", label: "OpenAI", hint: "GPT-4o, o3, o4",
-      keyUrl: "https://platform.openai.com/api-keys",
-      supportsOAuth: false,
-      models: [
-        { value: "gpt-4o", label: "GPT-4o", hint: "recommended · vision" },
-        { value: "gpt-4o-mini", label: "GPT-4o Mini", hint: "fast & cheap" },
-        { value: "o3-mini", label: "o3 Mini", hint: "reasoning" },
-        { value: "gpt-4.1", label: "GPT-4.1", hint: "latest" },
-      ],
-    },
-    {
-      id: "openai-codex", label: "OpenAI Codex", hint: "free via ChatGPT login",
-      keyUrl: "https://chatgpt.com",
-      supportsOAuth: true,
-      models: [
-        { value: "gpt-5.1-codex", label: "GPT-5.1 Codex", hint: "recommended" },
-        { value: "gpt-5.1-codex-max", label: "GPT-5.1 Codex Max", hint: "most capable" },
-        { value: "gpt-5.1-codex-mini", label: "GPT-5.1 Codex Mini", hint: "fast" },
-        { value: "gpt-5.2-codex", label: "GPT-5.2 Codex", hint: "latest" },
-      ],
-    },
-    {
-      id: "google", label: "Google (Gemini)", hint: "Flash, Pro",
-      keyUrl: "https://aistudio.google.com/apikey",
-      supportsOAuth: true,
-      models: [
-        { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash", hint: "recommended · fast" },
-        { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro", hint: "most capable" },
-        { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash", hint: "stable" },
-      ],
-    },
-    {
-      id: "github-copilot", label: "GitHub Copilot", hint: "free via GitHub login",
-      keyUrl: "https://github.com/settings/copilot",
-      supportsOAuth: true,
-      models: [
-        { value: "claude-sonnet-4", label: "Claude Sonnet 4", hint: "recommended" },
-        { value: "gpt-4o", label: "GPT-4o", hint: "OpenAI" },
-        { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro", hint: "Google" },
-        { value: "gpt-4.1", label: "GPT-4.1", hint: "latest" },
-      ],
-    },
-    {
-      id: "google-vertex", label: "Google Vertex AI", hint: "enterprise",
-      keyUrl: "https://console.cloud.google.com/apis/credentials",
-      supportsOAuth: false,
-      models: [
-        { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash", hint: "recommended" },
-        { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro", hint: "1M context" },
-      ],
-    },
-    {
-      id: "ollama", label: "Ollama (Local)", hint: "free · runs locally",
-      keyUrl: "https://ollama.ai",
-      supportsOAuth: false,
-      models: [
-        { value: "llama3.1", label: "Llama 3.1", hint: "general" },
-        { value: "codellama", label: "Code Llama", hint: "code" },
-        { value: "mistral", label: "Mistral 7B", hint: "fast" },
-        { value: "qwen2.5-coder", label: "Qwen 2.5 Coder", hint: "code" },
-      ],
-    },
-  ];
+  return getProviders().map((p) => ({
+    id: p.id,
+    label: p.label,
+    hint: p.hint,
+    keyUrl: p.keyUrl,
+    supportsOAuth: p.supportsOAuth,
+    models: p.models.map((m) => ({ value: m.id, label: m.label, hint: m.hint })),
+  }));
 }
 
 export function getApiKeyEnvVar(provider: string): string {

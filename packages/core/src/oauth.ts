@@ -58,9 +58,8 @@ const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
     scopes: "org:create_api_key user:profile user:inference",
     usePkce: true,
     extraParams: { code: "true" },
-    defaultModel: "claude-haiku-4-5-20251001",
+    defaultModel: "claude-haiku-4-5",
     models: [
-      { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5", hint: "fastest · free tier" },
       { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", hint: "fastest · free tier" },
     ],
   },

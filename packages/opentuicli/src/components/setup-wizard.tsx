@@ -16,82 +16,57 @@ import { TextAttributes } from "@opentui/core";
 import { useState, useRef, useEffect } from "react";
 import { useKeyboard } from "@opentui/react";
 import { useTheme } from "../context/theme";
+import { getProviders } from "@cdoing/ai";
+import { getOAuthProvider, supportsOAuth } from "@cdoing/core";
 
 export interface SetupWizardProps {
   onComplete: (config: { provider: string; model: string; apiKey?: string; oauthToken?: string }) => void;
   onClose: () => void;
 }
 
-const PROVIDERS = [
-  { id: "anthropic", name: "Anthropic (Claude)", hint: "Claude Sonnet, Opus, Haiku" },
-  { id: "openai", name: "OpenAI", hint: "GPT-4o, o3" },
-  { id: "google", name: "Google AI", hint: "Gemini 2.0 Flash, 2.5 Pro" },
-  { id: "ollama", name: "Ollama (Local)", hint: "No API key needed" },
-];
+// ── Data from centralized catalog ─────────────────────────────────────────────
+
+const _catalog = getProviders();
+
+const PROVIDERS = _catalog.map((p: { id: string; label: string; hint: string }) => ({
+  id: p.id,
+  name: p.label,
+  hint: p.hint,
+}));
 
 const AUTH_METHODS = [
   { id: "apikey", name: "API Key", hint: "all models available - console.anthropic.com" },
   { id: "oauth", name: "OAuth", hint: "Claude Pro/Max - opens browser" },
 ];
 
-const MODELS: Record<string, { id: string; name: string; hint?: string }[]> = {
-  anthropic: [
-    { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", hint: "recommended - fast & smart" },
-    { id: "claude-opus-4-6", name: "Claude Opus 4.6", hint: "most capable" },
-    { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5", hint: "fastest" },
-  ],
-  openai: [
-    { id: "gpt-4o", name: "GPT-4o", hint: "recommended" },
-    { id: "gpt-4o-mini", name: "GPT-4o mini", hint: "fastest" },
-    { id: "o3", name: "o3", hint: "reasoning" },
-  ],
-  google: [
-    { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash", hint: "recommended" },
-    { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", hint: "most capable" },
-  ],
-  ollama: [
-    { id: "llama3.1", name: "Llama 3.1", hint: "general purpose" },
-    { id: "codellama", name: "Code Llama", hint: "code-focused" },
-    { id: "mistral", name: "Mistral", hint: "fast & capable" },
-  ],
-};
+// All models per provider — from catalog
+const MODELS: Record<string, { id: string; name: string; hint?: string }[]> = {};
+for (const p of _catalog) {
+  MODELS[p.id] = p.models.map((m: { id: string; label: string; hint?: string }) => ({ id: m.id, name: m.label, hint: m.hint }));
+}
 
 /** Get OAuth models for a provider from core config */
 function getOAuthModels(providerId: string) {
-  try {
-    const { getOAuthProvider } = require("@cdoing/core");
-    const config = getOAuthProvider(providerId);
-    if (!config?.models || config.models.length === 0) {
-      return config?.defaultModel
-        ? [{ id: config.defaultModel, name: config.defaultModel, hint: "OAuth" }]
-        : [];
-    }
-    return config.models.map((m: any) => ({ id: m.id, name: m.name, hint: m.hint || "OAuth" }));
-  } catch {
-    return [];
+  const config = getOAuthProvider(providerId);
+  if (!config?.models || config.models.length === 0) {
+    return config?.defaultModel
+      ? [{ id: config.defaultModel, name: config.defaultModel, hint: "OAuth" }]
+      : [];
   }
+  return config.models.map((m: { id: string; name: string; hint?: string }) => ({ id: m.id, name: m.name, hint: m.hint || "OAuth" }));
 }
 
 function providerSupportsOAuth(providerId: string): boolean {
-  try {
-    const { supportsOAuth } = require("@cdoing/core");
-    return supportsOAuth(providerId);
-  } catch {
-    return providerId === "anthropic";
-  }
+  return supportsOAuth(providerId);
 }
 
-const ENV_VARS: Record<string, string> = {
-  anthropic: "ANTHROPIC_API_KEY",
-  openai: "OPENAI_API_KEY",
-  google: "GOOGLE_API_KEY",
-};
-
-const KEY_URLS: Record<string, string> = {
-  anthropic: "https://console.anthropic.com/settings/keys",
-  openai: "https://platform.openai.com/api-keys",
-  google: "https://aistudio.google.com/apikey",
-};
+// Env vars and key URLs from catalog
+const ENV_VARS: Record<string, string> = {};
+const KEY_URLS: Record<string, string> = {};
+for (const p of _catalog as Array<{ id: string; envVar?: string; keyUrl?: string }>) {
+  if (p.envVar) ENV_VARS[p.id] = p.envVar;
+  if (p.keyUrl) KEY_URLS[p.id] = p.keyUrl;
+}
 
 type Step = "provider" | "auth-method" | "model" | "apikey" | "oauth-paste" | "oauth-exchanging";
 
@@ -118,6 +93,9 @@ export function SetupWizard(props: SetupWizardProps) {
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [showKey, setShowKey] = useState(false);
   const [error, setError] = useState("");
+  // Custom model input
+  const [customModelInput, setCustomModelInput] = useState("");
+  const [isCustomModel, setIsCustomModel] = useState(false);
 
   // OAuth state
   const [oauthUrl, setOauthUrl] = useState("");
@@ -156,6 +134,7 @@ export function SetupWizard(props: SetupWizardProps) {
         setStep("model");
         setError("");
       } else if (step === "model") {
+        if (isCustomModel) { setIsCustomModel(false); return; }
         setStep(providerSupportsOAuth(chosenProviderId) ? "auth-method" : "provider");
       } else if (step === "auth-method") {
         setStep("provider");
@@ -201,13 +180,47 @@ export function SetupWizard(props: SetupWizardProps) {
       return;
     }
 
-    // ── Step 3: Model ──
+    // ── Step 3: Model (presets + custom input) ──
     if (step === "model") {
+      // Custom model text input mode
+      if (isCustomModel) {
+        if (key.name === "return") {
+          const m = customModelInput.trim();
+          if (!m) return;
+          setChosenModelId(m);
+          if (chosenProviderId === "ollama") {
+            saveAndComplete(chosenProviderId, m, undefined);
+          } else if (authMethod === "oauth") {
+            exchangingRef.current = false;
+            setStep("oauth-paste");
+          } else {
+            setStep("apikey");
+            setApiKeyInput("");
+            setError("");
+          }
+        } else if (key.name === "backspace") {
+          setCustomModelInput((s) => s.slice(0, -1));
+        } else if (key.ctrl && key.name === "u") {
+          setCustomModelInput("");
+        } else if (key.sequence && key.sequence.length === 1 && !key.ctrl && !key.meta) {
+          setCustomModelInput((s) => s + key.sequence);
+        }
+        return;
+      }
+
+      // Preset selection with "Custom..." at bottom
+      const totalItems = models.length + 1;
       if (key.name === "up" || key.name === "k") {
         setSelectedModel((s) => Math.max(0, s - 1));
       } else if (key.name === "down" || key.name === "j") {
-        setSelectedModel((s) => Math.min(models.length - 1, s + 1));
+        setSelectedModel((s) => Math.min(totalItems - 1, s + 1));
       } else if (key.name === "return") {
+        if (selectedModel === models.length) {
+          // Selected "Custom model..."
+          setIsCustomModel(true);
+          setCustomModelInput("");
+          return;
+        }
         const m = models[selectedModel];
         setChosenModelId(m.id);
         if (chosenProviderId === "ollama") {
@@ -353,7 +366,7 @@ export function SetupWizard(props: SetupWizardProps) {
             {`Step ${stepLabel("provider")}: Select Provider`}
           </text>
           <text>{""}</text>
-          {PROVIDERS.map((p, i) => (
+          {PROVIDERS.map((p: { id: string; name: string; hint: string }, i: number) => (
             <text
               key={p.id}
               fg={selectedProvider === i ? t.primary : t.textMuted}
@@ -389,7 +402,7 @@ export function SetupWizard(props: SetupWizardProps) {
       )}
 
       {/* Step 3: Model */}
-      {step === "model" && (
+      {step === "model" && !isCustomModel && (
         <box flexDirection="column">
           <text fg={t.text} attributes={TextAttributes.BOLD}>
             {authMethod === "oauth"
@@ -406,8 +419,29 @@ export function SetupWizard(props: SetupWizardProps) {
               {`  ${selectedModel === i ? ">" : " "} ${m.name}${m.hint ? `  ${m.hint}` : ""}`}
             </text>
           ))}
+          <text
+            fg={selectedModel === models.length ? t.primary : t.textMuted}
+            attributes={selectedModel === models.length ? TextAttributes.BOLD : undefined}
+          >
+            {`  ${selectedModel === models.length ? ">" : " "} Custom model...  type any model name`}
+          </text>
           <text>{""}</text>
           <text fg={t.textMuted}>{"  Up/Down Navigate  Enter Select  Esc Back"}</text>
+        </box>
+      )}
+
+      {/* Step 3b: Custom model input */}
+      {step === "model" && isCustomModel && (
+        <box flexDirection="column">
+          <text fg={t.text} attributes={TextAttributes.BOLD}>
+            {`Step ${stepLabel("model")}: Custom Model (${provider.name})`}
+          </text>
+          <text>{""}</text>
+          <text fg={t.text}>
+            {`  > ${customModelInput}|`}
+          </text>
+          <text>{""}</text>
+          <text fg={t.textMuted}>{"  Type model ID then Enter  Esc Back"}</text>
         </box>
       )}
 
