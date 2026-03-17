@@ -88,7 +88,11 @@ function AppShell(props: {
   const [tokens, setTokens] = useState<{ input: number; output: number } | undefined>();
   const [contextPercent, setContextPercent] = useState(0);
   const [activeTool, setActiveTool] = useState<string | undefined>();
-  const [showSidebar, setShowSidebar] = useState(true);
+  const [sidebarMode, setSidebarMode] = useState<"auto" | "show" | "hide">("auto");
+
+  // Auto-hide sidebar when terminal is too narrow (like opencode: > 120 cols)
+  const wide = dims.width > 120;
+  const showSidebar = sidebarMode === "show" || (sidebarMode === "auto" && wide);
 
   const closeDialog = useCallback(() => {
     setDialog("none");
@@ -227,7 +231,7 @@ function AppShell(props: {
     }
     // Ctrl+B — toggle sidebar
     if (key.ctrl && key.name === "b") {
-      setShowSidebar((s) => !s);
+      setSidebarMode((m) => m === "hide" ? "show" : m === "show" ? "hide" : showSidebar ? "hide" : "show");
     }
     // Ctrl+T — theme picker
     if (key.ctrl && key.name === "t") {
@@ -424,7 +428,7 @@ function AppShell(props: {
                 break;
               // Display
               case "display:sidebar":
-                setShowSidebar((s) => !s);
+                setSidebarMode((m) => m === "hide" ? "show" : m === "show" ? "hide" : showSidebar ? "hide" : "show");
                 break;
               case "display:timestamps":
               case "display:thinking":
@@ -572,6 +576,11 @@ export async function startTUI(options: TUIOptions): Promise<void> {
     : "dark";
   const initialColors = getThemeColors("default", resolvedMode);
   setTerminalBackground(initialColors.bg);
+
+  // Reset terminal size to a good default (80x24 minimum)
+  const cols = Math.max(process.stdout.columns || 80, 80);
+  const rows = Math.max(process.stdout.rows || 24, 24);
+  process.stdout.write(`\x1b[8;${rows};${cols}t`);
 
   console.clear();
 
