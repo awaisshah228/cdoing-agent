@@ -162,8 +162,9 @@ export {
   getOAuthProvider,
   getOAuthProviders,
   supportsOAuth,
+  startLocalOAuthServer,
 } from "./oauth";
-export type { OAuthTokens, OAuthProviderConfig } from "./oauth";
+export type { OAuthTokens, OAuthProviderConfig, LocalOAuthServer } from "./oauth";
 
 // Codebase Indexing — FTS5 + embeddings
 export { CodebaseIndexer, IndexDatabase, chunkDocument, RecentEditsCache } from "./indexing";

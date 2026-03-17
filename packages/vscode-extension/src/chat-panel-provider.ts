@@ -28,12 +28,13 @@ import {
 } from "@cdoing/ai";
 import { getWebviewContent } from "./webview-content";
 import {
-  generateOAuthUrl,
   exchangeOAuthCode,
   resolveOAuthToken,
   getOAuthStatus,
+  getOAuthProvider,
   oauthLogout,
   loadOAuthTokens,
+  startLocalOAuthServer,
 } from "./oauth";
 import * as fs from "fs";
 import * as path from "path";
@@ -203,6 +204,13 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           const tab = this.getTab();
           if (tab?.isProcessing) {
             tab.agent.cancel();
+            // Immediately reset processing state so the UI unblocks.
+            // The agent's onComplete/onError may also fire, but setting
+            // isProcessing=false here is safe (idempotent) and prevents
+            // the UI from getting stuck when cancel happens mid-tool-execution.
+            tab.isProcessing = false;
+            this._onDidChangeState.fire();
+            this.postTabMessage(tab.id, { type: "endResponse" });
           }
           break;
         }
@@ -236,31 +244,53 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           break;
         }
         case "startOAuth": {
-          const { url, codeVerifier } = generateOAuthUrl();
-          this.oauthCodeVerifier = codeVerifier;
-          vscode.env.openExternal(vscode.Uri.parse(url));
-          this.postMessage({ type: "oauthStarted", url } as any);
-          // Prompt user to paste the code
-          const code = await vscode.window.showInputBox({
-            title: "Claude OAuth Login",
-            prompt: "Paste the authorization code from the browser",
-            placeHolder: "Authorization code...",
-            ignoreFocusOut: true,
-          });
-          if (code && this.oauthCodeVerifier) {
+          const provider = message.provider || "anthropic";
+          try {
+            const { url, codeVerifier, state, port, codePromise, close } = await startLocalOAuthServer(provider);
+            const localRedirectUri = `http://localhost:${port}/callback`;
+            this.oauthCodeVerifier = codeVerifier;
+            this.postMessage({ type: "oauthStarted", url, port } as any);
+            // Open browser — VS Code shows the "Open external website?" dialog
+            vscode.env.openExternal(vscode.Uri.parse(url));
+
+            let code: string;
+            let usedLocalRedirect = true;
             try {
-              await exchangeOAuthCode(code, this.oauthCodeVerifier);
+              // Automatic: wait for browser to redirect to localhost callback
+              code = await codePromise;
+            } catch {
+              close();
+              usedLocalRedirect = false;
+              // Fallback: user pastes code manually
+              const manualCode = await vscode.window.showInputBox({
+                title: "OAuth Authorization",
+                prompt: "Auto-capture failed — paste the authorization code from the browser",
+                placeHolder: "Authorization code...",
+                ignoreFocusOut: true,
+              });
+              if (!manualCode) { this.oauthCodeVerifier = null; break; }
+              code = manualCode;
+            }
+
+            try {
+              await exchangeOAuthCode(
+                code,
+                this.oauthCodeVerifier!,
+                provider,
+                usedLocalRedirect ? localRedirectUri : undefined,
+                usedLocalRedirect ? state : undefined,
+              );
               this.oauthCodeVerifier = null;
               this.postMessage({ type: "oauthResult", success: true } as any);
               this.postMessage({ type: "oauthStatus", ...getOAuthStatus() } as any);
-              // Reinitialize with OAuth token
               this.refreshConfig();
             } catch (err) {
               const errMsg = err instanceof Error ? err.message : String(err);
               this.postMessage({ type: "oauthResult", success: false, error: errMsg } as any);
             }
-          } else {
-            this.oauthCodeVerifier = null;
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            this.postMessage({ type: "oauthResult", success: false, error: errMsg } as any);
           }
           break;
         }
@@ -1400,14 +1430,55 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       }
 
       case "/model": {
-        if (arg) {
-          const config = vscode.workspace.getConfiguration("cdoing");
-          await config.update("model", arg, vscode.ConfigurationTarget.Global);
-          this.refreshConfig();
-          this.postMessage({ type: "systemMessage", text: `Model: **${arg}**` });
-        } else {
-          vscode.commands.executeCommand("cdoing.selectModel");
+        const { provider, modelConfig } = this.getConfig();
+        const isOAuth = !!modelConfig.oauthToken;
+        const oauthConfig = isOAuth ? getOAuthProvider(provider) : null;
+        const oauthModels = oauthConfig?.models || [];
+
+        if (!arg) {
+          // Show current model and available options
+          const cur = modelConfig.model || oauthConfig?.defaultModel || "(default)";
+          const lines = [`**Current model:** ${cur}`, `**Auth:** ${isOAuth ? "OAuth" : "API key"}`];
+          if (isOAuth && oauthModels.length > 0) {
+            lines.push("", "**Available models:**");
+            for (const m of oauthModels) {
+              const marker = m.id === cur ? " ← current" : "";
+              lines.push(`- \`${m.id}\` — ${m.name}${m.hint ? ` (${m.hint})` : ""}${marker}`);
+            }
+            lines.push("", "Usage: `/model <name>` or `/model default`");
+          } else {
+            lines.push("", "Usage: `/model <name>` or `/model default`");
+          }
+          this.postMessage({ type: "systemMessage", text: lines.join("\n") });
+          break;
         }
+
+        if (arg === "default") {
+          const vsConfig = vscode.workspace.getConfiguration("cdoing");
+          await vsConfig.update("model", "", vscode.ConfigurationTarget.Global);
+          this.refreshConfig();
+          const def = oauthConfig?.defaultModel || "provider default";
+          this.postMessage({ type: "systemMessage", text: `Model reset to default: **${def}**` });
+          break;
+        }
+
+        // Validate against OAuth allowed list
+        if (isOAuth && oauthModels.length > 0) {
+          const allowed = oauthModels.map(m => m.id);
+          if (!allowed.includes(arg)) {
+            const available = oauthModels.map(m => `- \`${m.id}\` — ${m.name}`).join("\n");
+            this.postMessage({
+              type: "systemMessage",
+              text: `**Error:** \`${arg}\` is not available with OAuth for ${provider}.\n\n**Available models:**\n${available}`,
+            });
+            break;
+          }
+        }
+
+        const vsConfig = vscode.workspace.getConfiguration("cdoing");
+        await vsConfig.update("model", arg, vscode.ConfigurationTarget.Global);
+        this.refreshConfig();
+        this.postMessage({ type: "systemMessage", text: `Model switched to: **${arg}**` });
         break;
       }
 

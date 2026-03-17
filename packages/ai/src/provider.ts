@@ -244,8 +244,9 @@ export function createModel(config: Partial<ModelConfig> = {}) {
             authToken: oauthToken,
             dangerouslyAllowBrowser: true,
             defaultHeaders: {
-              "anthropic-beta": "oauth-2025-04-20,interleaved-thinking-2025-05-14",
-              "user-agent": "claude-cli/2.1.7 (external, cli)",
+              "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14",
+              "anthropic-version": "2023-06-01",
+              "user-agent": "claude-cli/1.0.83 (external, cli)",
               "x-app": "cli",
               "anthropic-dangerous-direct-browser-access": "true",
               "x-stainless-arch": arch,
@@ -256,13 +257,43 @@ export function createModel(config: Partial<ModelConfig> = {}) {
               "x-stainless-runtime-version": process.version,
             },
             maxRetries: 0,
-            // Strip top_p: -1 and temperature — OAuth API rejects LangChain defaults
+            // Patch request body for OAuth API compatibility
             fetch: async (url: string | URL | Request, init?: RequestInit) => {
               if (init?.body && typeof init.body === "string") {
                 try {
                   const body = JSON.parse(init.body);
                   if (body.top_p === -1) delete body.top_p;
                   if ("temperature" in body) delete body.temperature;
+
+                  // Inject billing header as the first system message.
+                  // This is REQUIRED by Anthropic's OAuth API for Sonnet/Opus models.
+                  // Without it, only Haiku works. The official Claude Code CLI sends
+                  // this as the first system block.
+                  const billingHeader = {
+                    type: "text",
+                    text: `x-anthropic-billing-header: cc_version=1.0.0; cc_entrypoint=cli;`,
+                  };
+                  if (typeof body.system === "string") {
+                    body.system = [billingHeader, { type: "text", text: body.system }];
+                  } else if (Array.isArray(body.system)) {
+                    const hasBilling = body.system.some((s: any) =>
+                      typeof s.text === "string" && s.text.startsWith("x-anthropic-billing-header:"));
+                    if (!hasBilling) body.system.unshift(billingHeader);
+                  } else {
+                    body.system = [billingHeader];
+                  }
+
+                  // Thinking-capable models (Opus, Sonnet) require thinking config
+                  // when the interleaved-thinking beta header is active.
+                  const model = (body.model || "") as string;
+                  const isThinkingModel = model.includes("opus") || model.includes("sonnet");
+                  if (isThinkingModel && !body.thinking) {
+                    body.thinking = {
+                      type: "enabled",
+                      budget_tokens: Math.max((body.max_tokens || 8096) - 1, 1024),
+                    };
+                  }
+
                   init = { ...init, body: JSON.stringify(body) };
                 } catch {}
               }

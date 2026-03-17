@@ -40,6 +40,7 @@ import { getDefaultModel } from "@cdoing/ai";
 import type { ModelConfig, ImageAttachment } from "@cdoing/ai";
 import {
   ShellExecTool,
+  getOAuthProvider,
 } from "@cdoing/core";
 import type {
   ToolRegistry,
@@ -752,26 +753,57 @@ export function useChat(opts: UseChatOptions) {
         }
 
         case "/model": {
+          const provider = String(modelConfigRef.current.provider || "anthropic");
+          const isOAuth = !!modelConfigRef.current.oauthToken;
+          const oauthConfig = isOAuth ? getOAuthProvider(provider) : null;
+          const oauthModels = oauthConfig?.models || [];
+
           if (!arg) {
-            const provider = String(modelConfigRef.current.provider || "anthropic");
             const def = getDefaultModel(provider) || "(none)";
             const cur = modelConfigRef.current.model || `(default: ${def})`;
-            return [
+            const lines = [
               `Current model: ${cur}`,
+              `Auth: ${isOAuth ? "OAuth" : "API key"}`,
               `Usage: /model <name>    — switch to a specific model`,
               `       /model default  — reset to provider default (${def})`,
-              `Provider models:`,
-              `  anthropic: claude-sonnet-4-6, claude-opus-4-6, claude-haiku-4-5`,
-              `  openai:    gpt-4o, gpt-4o-mini, o3-mini`,
-              `  google:    gemini-2.0-flash, gemini-1.5-pro`,
-              `  ollama:    llama3.1, mistral, codellama`,
-            ].join("\n");
+            ];
+            if (isOAuth && oauthModels.length > 0) {
+              lines.push(`Available OAuth models for ${provider}:`);
+              for (const m of oauthModels) {
+                const marker = m.id === cur ? " (current)" : "";
+                lines.push(`  ${m.id} — ${m.name}${m.hint ? ` (${m.hint})` : ""}${marker}`);
+              }
+            } else {
+              lines.push(
+                `Provider models:`,
+                `  anthropic: claude-sonnet-4-6, claude-opus-4-6, claude-haiku-4-5`,
+                `  openai:    gpt-4o, gpt-4o-mini, o3-mini`,
+                `  google:    gemini-2.0-flash, gemini-1.5-pro`,
+                `  ollama:    llama3.1, mistral, codellama`,
+              );
+            }
+            return lines.join("\n");
           }
           if (arg === "default") {
             modelConfigRef.current.model = undefined;
             rebuildAndRefresh();
-            const def = getDefaultModel(String(modelConfigRef.current.provider || "anthropic")) || "provider default";
+            const def = getDefaultModel(provider) || "provider default";
             return `Model reset to default: ${def}`;
+          }
+          // Validate model against OAuth allowed list
+          if (isOAuth && oauthModels.length > 0) {
+            const allowed = oauthModels.map(m => m.id);
+            if (!allowed.includes(arg)) {
+              const available = oauthModels.map(m => `  ${m.id} — ${m.name}`).join("\n");
+              return [
+                `Error: "${arg}" is not available with OAuth for ${provider}.`,
+                ``,
+                `Available models:`,
+                available,
+                ``,
+                `Tip: Use the full model ID (e.g. claude-sonnet-4-6-20260220)`,
+              ].join("\n");
+            }
           }
           modelConfigRef.current.model = arg;
           rebuildAndRefresh();

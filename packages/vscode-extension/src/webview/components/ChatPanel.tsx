@@ -28,6 +28,8 @@ const HEADER_MODEL_OPTIONS: Record<string, Array<{ value: string; label: string;
   anthropic: [
     { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", hint: "recommended" },
     { value: "claude-opus-4-6", label: "Claude Opus 4.6", hint: "most capable" },
+    { value: "claude-sonnet-4-5", label: "Claude Sonnet 4.5", hint: "balanced" },
+    { value: "claude-opus-4-5", label: "Claude Opus 4.5", hint: "powerful" },
     { value: "claude-haiku-4-5", label: "Claude Haiku 4.5", hint: "fastest" },
   ],
   openai: [
@@ -41,9 +43,11 @@ const HEADER_MODEL_OPTIONS: Record<string, Array<{ value: string; label: string;
     { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash", hint: "stable" },
   ],
   "openai-codex": [
-    { value: "gpt-5.1-codex", label: "GPT-5.1 Codex", hint: "recommended" },
+    { value: "gpt-5.3-codex", label: "GPT-5.3 Codex", hint: "latest" },
+    { value: "gpt-5.3-codex-spark", label: "GPT-5.3 Codex Spark", hint: "fast" },
+    { value: "gpt-5.2-codex", label: "GPT-5.2 Codex", hint: "capable" },
     { value: "gpt-5.1-codex-max", label: "GPT-5.1 Codex Max", hint: "most capable" },
-    { value: "gpt-5.2-codex", label: "GPT-5.2 Codex", hint: "latest" },
+    { value: "o4-mini", label: "o4 Mini", hint: "reasoning" },
   ],
 };
 

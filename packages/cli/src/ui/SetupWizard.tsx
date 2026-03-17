@@ -11,7 +11,7 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { Box, Text, useInput } from "ink";
 import { loadConfig, saveConfig } from "../config";
-import { generateOAuthUrl, exchangeOAuthCode } from "../oauth";
+import { exchangeOAuthCode, startLocalOAuthServer } from "../oauth";
 import { getOAuthProvider, supportsOAuth } from "@cdoing/core";
 import { getProviders, type ProviderEntry } from "@cdoing/ai";
 import { getTheme } from "./theme";
@@ -136,20 +136,76 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
   // OAuth paste step
   const [oauthUrl, setOauthUrl]               = useState("");
   const [oauthVerifier, setOauthVerifier]     = useState("");
+  const [oauthState, setOauthState]           = useState("");
+  const [oauthRedirectUri, setOauthRedirectUri] = useState("");
+  const [oauthAutoCapturing, setOauthAutoCapturing] = useState(false);
   const [oauthCodeInput, setOauthCodeInput]   = useState("");
   const [showCode, setShowCode]               = useState(false);
   const [oauthError, setOauthError]           = useState("");
   const exchangingRef                         = useRef(false);
 
-  // Generate OAuth URL and open browser when entering oauth-paste step
+  // Start local OAuth server and open browser when entering oauth-paste step.
+  // Mode 1 (auto): local server captures the code from browser redirect → auto-exchanges.
+  // Mode 2 (fallback): if server fails, user pastes code manually.
   useEffect(() => {
     if (step !== "oauth-paste") return;
-    const { url, codeVerifier } = generateOAuthUrl(chosenProvider);
-    setOauthUrl(url);
-    setOauthVerifier(codeVerifier);
+    let cancelled = false;
+    let serverClose: (() => void) | undefined;
+
     setOauthCodeInput("");
     setOauthError("");
-    openBrowser(url);
+    setOauthAutoCapturing(false);
+
+    (async () => {
+      try {
+        const server = await startLocalOAuthServer(chosenProvider);
+        if (cancelled) { server.close(); return; }
+
+        serverClose = server.close;
+        const localRedirectUri = `http://localhost:${server.port}/callback`;
+
+        setOauthUrl(server.url);
+        setOauthVerifier(server.codeVerifier);
+        setOauthState(server.state);
+        setOauthRedirectUri(localRedirectUri);
+        setOauthAutoCapturing(true);
+        openBrowser(server.url);
+
+        // Auto-capture: wait for browser to redirect to localhost callback
+        const code = await server.codePromise;
+        if (cancelled) return;
+
+        // Code received automatically — skip manual paste, go straight to exchange
+        setOauthAutoCapturing(false);
+        if (exchangingRef.current) return;
+        exchangingRef.current = true;
+        setStep("oauth-exchanging");
+        exchangeOAuthCode(code, server.codeVerifier, chosenProvider, localRedirectUri, server.state)
+          .then((tokens) => {
+            _saveOAuth(chosenProvider, chosenModel);
+            setTimeout(() => {
+              onDone({ provider: chosenProvider, model: chosenModel, oauthToken: tokens.access_token });
+            }, 600);
+          })
+          .catch((err: Error) => {
+            exchangingRef.current = false;
+            setOauthError(err.message);
+            setStep("oauth-paste");
+          });
+      } catch {
+        if (cancelled) return;
+        // Server failed to start — fall back to manual code paste
+        setOauthAutoCapturing(false);
+        setOauthState("");
+        setOauthRedirectUri("");
+        // generateOAuthUrl not needed — oauthUrl stays empty, user sees the fallback hint
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      serverClose?.();
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
 
@@ -281,14 +337,21 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
       if (char && !key.ctrl && !key.meta) { setApiKeyInput(k => k + char); return; }
     }
 
-    // ── 4b. OAuth paste ───────────────────────────────────────────────────
+    // ── 4b. OAuth paste (manual fallback) ────────────────────────────────
     if (step === "oauth-paste") {
       if (key.return) {
         const code = oauthCodeInput.trim();
         if (!code || exchangingRef.current) return;
         exchangingRef.current = true;
         setStep("oauth-exchanging");
-        exchangeOAuthCode(code, oauthVerifier, chosenProvider)
+        // Pass redirectUri + state only if the local server was used; otherwise use provider defaults
+        exchangeOAuthCode(
+          code,
+          oauthVerifier,
+          chosenProvider,
+          oauthRedirectUri || undefined,
+          oauthState || undefined,
+        )
           .then((tokens) => {
             _saveOAuth(chosenProvider, chosenModel);
             setTimeout(() => {
@@ -418,19 +481,31 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
         {oauthUrl
           ? <Text dimColor={tt.useDim} color={tt.textDim}>{`     If it didn't open: ${oauthUrl.substring(0, 72)}…`}</Text>
           : null}
-        <Text color={tt.text}>{"  2. Approve → you'll land on a page with a code in the URL"}</Text>
-        <Text color={tt.text}>{"  3. Copy the code= value from the URL and paste below"}</Text>
+        {oauthAutoCapturing
+          ? <>
+              <Text color={tt.warning}>{"  2. Waiting for browser redirect — complete login in the browser…"}</Text>
+              <Text dimColor={tt.useDim} color={tt.textDim}>{"     (code will be captured automatically)"}</Text>
+            </>
+          : <>
+              <Text color={tt.text}>{"  2. Approve → you'll land on a page with a code in the URL"}</Text>
+              <Text color={tt.text}>{"  3. Copy the code= value from the URL and paste below"}</Text>
+            </>
+        }
         {oauthError
           ? <Text color={tt.error}>{`\n  ✗ ${oauthError}`}</Text>
           : null}
-        <Text>{" "}</Text>
-        <Box>
-          <Text color={tt.prompt}>{"  Code: "}</Text>
-          <Text color={tt.text}>{maskedCode || " "}</Text>
-          <Text color={tt.cursor}>{"▊"}</Text>
-        </Box>
-        <Text>{" "}</Text>
-        <Text dimColor={tt.useDim} color={tt.textDim}>{"  Paste code then Enter  ·  Ctrl+S toggle visible  ·  Esc cancel"}</Text>
+        {!oauthAutoCapturing && (
+          <>
+            <Text>{" "}</Text>
+            <Box>
+              <Text color={tt.prompt}>{"  Code: "}</Text>
+              <Text color={tt.text}>{maskedCode || " "}</Text>
+              <Text color={tt.cursor}>{"▊"}</Text>
+            </Box>
+            <Text>{" "}</Text>
+            <Text dimColor={tt.useDim} color={tt.textDim}>{"  Paste code then Enter  ·  Ctrl+S toggle visible  ·  Esc cancel"}</Text>
+          </>
+        )}
       </Box>
     );
   }

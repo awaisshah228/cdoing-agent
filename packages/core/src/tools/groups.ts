@@ -16,6 +16,7 @@ import type { TodoStore } from "../utils/todo";
 import type { QuestionPromptFn } from "./session/question";
 import type { PlanExitCallback } from "./session/plan-exit";
 import type { DiagnosticsCallback } from "./file/file-write";
+import type { ConfigUpdateCallback } from "./system/config-update";
 
 // ── Tool Categories ────────────────────────────────────────────────────────
 
@@ -31,6 +32,7 @@ export interface ToolGroupOptions {
   questionPromptFn?: QuestionPromptFn;
   planExitCallback?: PlanExitCallback;
   diagnosticsCallback?: DiagnosticsCallback;
+  onConfigUpdate?: ConfigUpdateCallback;
 }
 
 /** Tool category names */
@@ -151,7 +153,7 @@ export async function registerSessionTools(registry: ToolRegistry, opts: ToolGro
   }
 }
 
-/** Register system tools: system_info, lsp */
+/** Register system tools: system_info, lsp, config_update */
 export async function registerSystemTools(registry: ToolRegistry, opts: ToolGroupOptions): Promise<void> {
   const { LspTool } = await import("./system/lsp");
   registry.register(new LspTool(opts.workingDir));
@@ -160,6 +162,9 @@ export async function registerSystemTools(registry: ToolRegistry, opts: ToolGrou
     const { SystemInfoTool } = await import("./system/system-info");
     registry.register(new SystemInfoTool(opts.permissionManager, registry, opts.sandboxManager));
   }
+
+  const { ConfigUpdateTool } = await import("./system/config-update");
+  registry.register(new ConfigUpdateTool(opts.onConfigUpdate));
 }
 
 // ── Convenience: register ALL tool groups ──────────────────────────────────

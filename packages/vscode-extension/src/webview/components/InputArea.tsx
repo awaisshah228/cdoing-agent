@@ -45,6 +45,54 @@ const LANG_ICONS: Record<string, string> = {
   cpp: "C++", c: "C", ruby: "RB", php: "PHP", swift: "SW",
 };
 
+/** Slash commands available in the input — matches the VS Code extension command handler */
+interface SlashCommand {
+  cmd: string;
+  hint: string;
+  /** Follow-up argument suggestions shown after selecting this command */
+  args?: Array<{ value: string; label: string; hint?: string }>;
+}
+
+const SLASH_COMMANDS: SlashCommand[] = [
+  { cmd: "/model", hint: "View or switch model", args: [
+    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", hint: "recommended" },
+    { value: "claude-opus-4-6", label: "Claude Opus 4.6", hint: "most capable" },
+    { value: "claude-sonnet-4-5", label: "Claude Sonnet 4.5", hint: "balanced" },
+    { value: "claude-opus-4-5", label: "Claude Opus 4.5", hint: "powerful" },
+    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5", hint: "fastest" },
+    { value: "default", label: "default", hint: "reset to provider default" },
+  ]},
+  { cmd: "/provider", hint: "View or switch provider", args: [
+    { value: "anthropic", label: "Anthropic", hint: "Claude models" },
+    { value: "openai", label: "OpenAI", hint: "GPT models" },
+    { value: "google", label: "Google", hint: "Gemini models" },
+    { value: "openai-codex", label: "OpenAI Codex", hint: "Codex models" },
+    { value: "ollama", label: "Ollama", hint: "local models" },
+    { value: "default", label: "default", hint: "reset to anthropic" },
+  ]},
+  { cmd: "/mode", hint: "Set permission mode", args: [
+    { value: "ask", label: "ask", hint: "ask before each action (default)" },
+    { value: "auto-edit", label: "auto-edit", hint: "auto-approve file edits" },
+    { value: "auto", label: "auto", hint: "auto-approve everything" },
+    { value: "plan", label: "plan", hint: "read-only planning mode" },
+  ]},
+  { cmd: "/clear", hint: "Clear conversation" },
+  { cmd: "/new", hint: "New conversation tab" },
+  { cmd: "/compact", hint: "Compress context" },
+  { cmd: "/history", hint: "List saved conversations" },
+  { cmd: "/resume", hint: "Resume a conversation" },
+  { cmd: "/config", hint: "Show configuration" },
+  { cmd: "/usage", hint: "Token usage stats" },
+  { cmd: "/cost", hint: "Cost breakdown" },
+  { cmd: "/permissions", hint: "Manage permissions" },
+  { cmd: "/memory", hint: "View persistent memory" },
+  { cmd: "/hooks", hint: "View configured hooks" },
+  { cmd: "/queue", hint: "View message queue" },
+  { cmd: "/help", hint: "Show available commands" },
+  { cmd: "/settings", hint: "Open settings panel" },
+  { cmd: "/delete", hint: "Delete a conversation" },
+];
+
 export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, onSend, onCancel, onInterruptAndSend, permissionRequest, onPermissionResponse }) => {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<ContextAttachment[]>([]);
@@ -53,8 +101,21 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [atQuery, setAtQuery] = useState("");
   const [pendingMessage, setPendingMessage] = useState<string | null>(null);
+  // Slash command autocomplete
+  const [showSlashMenu, setShowSlashMenu] = useState(false);
+  const [slashFiltered, setSlashFiltered] = useState(SLASH_COMMANDS);
+  const [slashIndex, setSlashIndex] = useState(0);
+  // Arg picker dialog (shown after selecting a command with args like /model)
+  const [argPicker, setArgPicker] = useState<{
+    cmd: string;
+    title: string;
+    args: Array<{ value: string; label: string; hint?: string }>;
+    search: string;
+    index: number;
+  } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const slashRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const vscode = useVsCode();
 
@@ -107,8 +168,95 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
     }
   }, [isProcessing]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Select a slash command ──
+  const selectSlashCommand = useCallback((cmd: string) => {
+    const slashCmd = SLASH_COMMANDS.find((c) => c.cmd === cmd);
+    setShowSlashMenu(false);
+    setSlashIndex(0);
+    setText("");
+    if (textareaRef.current) textareaRef.current.style.height = "auto";
+
+    if (slashCmd?.args) {
+      // Open arg picker dialog
+      setArgPicker({
+        cmd: slashCmd.cmd,
+        title: slashCmd.hint,
+        args: slashCmd.args,
+        search: "",
+        index: 0,
+      });
+    } else {
+      // No args — send the command directly
+      onSend(cmd);
+    }
+  }, [onSend]);
+
+  // ── Arg picker helpers ──
+  const selectArg = useCallback((value: string) => {
+    if (!argPicker) return;
+    const fullCmd = `${argPicker.cmd} ${value}`;
+    setArgPicker(null);
+    onSend(fullCmd);
+  }, [argPicker, onSend]);
+
+  const argPickerFiltered = argPicker
+    ? (argPicker.search
+        ? argPicker.args.filter((a) =>
+            a.value.toLowerCase().includes(argPicker.search.toLowerCase()) ||
+            a.label.toLowerCase().includes(argPicker.search.toLowerCase()))
+        : argPicker.args)
+    : [];
+
   // ── Keydown ──
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    // Arg picker dialog navigation (takes priority)
+    if (argPicker) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setArgPicker((p) => p ? { ...p, index: Math.min(p.index + 1, argPickerFiltered.length - 1) } : p);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setArgPicker((p) => p ? { ...p, index: Math.max(p.index - 1, 0) } : p);
+        return;
+      }
+      if (e.key === "Enter" && argPickerFiltered[argPicker.index]) {
+        e.preventDefault();
+        selectArg(argPickerFiltered[argPicker.index].value);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setArgPicker(null);
+        return;
+      }
+      return; // Block all other keys from reaching textarea while picker is open
+    }
+    // Slash command menu navigation
+    if (showSlashMenu && slashFiltered.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSlashIndex((i) => Math.min(i + 1, slashFiltered.length - 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        selectSlashCommand(slashFiltered[slashIndex].cmd);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setShowSlashMenu(false);
+        return;
+      }
+    }
+    // @ file autocomplete navigation
     if (showDropdown && fileResults.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -142,11 +290,11 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
       onCancel?.();
       return;
     }
-    if (e.key === "Enter" && !e.shiftKey && !showDropdown) {
+    if (e.key === "Enter" && !e.shiftKey && !showDropdown && !showSlashMenu) {
       e.preventDefault();
       handleSend();
     }
-  }, [showDropdown, fileResults, selectedIndex, handleSend, isProcessing, onCancel]);
+  }, [showDropdown, showSlashMenu, slashFiltered, slashIndex, argPicker, argPickerFiltered, selectArg, fileResults, selectedIndex, handleSend, isProcessing, onCancel, selectSlashCommand]);
 
   // ── Select a file from dropdown ──
   const selectFile = useCallback((file: FileResult) => {
@@ -169,7 +317,7 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
     setTimeout(() => textareaRef.current?.focus(), 0);
   }, [text]);
 
-  // ── Text change — detect @ trigger ──
+  // ── Text change — detect @ trigger and / slash commands ──
   const handleTextChange = useCallback((newText: string) => {
     setText(newText);
 
@@ -179,6 +327,21 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
       el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
     }
 
+    // Detect slash commands: text starts with "/" and is a single token (no space yet)
+    if (newText.startsWith("/") && !newText.includes(" ") && !newText.includes("\n")) {
+      const query = newText.toLowerCase();
+      const matches = SLASH_COMMANDS.filter(
+        (c) => c.cmd.startsWith(query) || c.hint.toLowerCase().includes(query.slice(1)),
+      );
+      setSlashFiltered(matches);
+      setShowSlashMenu(matches.length > 0);
+      setSlashIndex(0);
+      setShowDropdown(false);
+      return;
+    }
+    setShowSlashMenu(false);
+
+    // Detect @ file mentions
     const atPos = newText.lastIndexOf("@");
     if (atPos >= 0) {
       const charBefore = atPos > 0 ? newText[atPos - 1] : " ";
@@ -232,6 +395,13 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
       if (selected) selected.scrollIntoView({ block: "nearest" });
     }
   }, [selectedIndex, showDropdown]);
+
+  useEffect(() => {
+    if (showSlashMenu && slashRef.current) {
+      const selected = slashRef.current.querySelector(".slash-item.selected");
+      if (selected) selected.scrollIntoView({ block: "nearest" });
+    }
+  }, [slashIndex, showSlashMenu]);
 
   // ── Image paste (Ctrl+V) ──
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
@@ -303,8 +473,72 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
 
   const placeholder = isProcessing ? "Type to queue a follow-up..." : "Ask Cdoing anything... (@ to attach files)";
 
+  const argPickerRef = useRef<HTMLInputElement>(null);
+
+  // Auto-focus the arg picker search input when it opens
+  useEffect(() => {
+    if (argPicker) setTimeout(() => argPickerRef.current?.focus(), 0);
+  }, [argPicker]);
+
   return (
     <div className="input-area">
+      {/* Arg picker dialog (e.g. /model → pick a model) */}
+      {argPicker && (
+        <div className="arg-picker-overlay">
+          <div className="arg-picker">
+            <div className="arg-picker-header">
+              <span className="arg-picker-cmd">{argPicker.cmd}</span>
+              <span className="arg-picker-title">{argPicker.title}</span>
+              <button className="arg-picker-close" onClick={() => setArgPicker(null)}>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <input
+              ref={argPickerRef}
+              className="arg-picker-search"
+              value={argPicker.search}
+              onChange={(e) => setArgPicker((p) => p ? { ...p, search: e.target.value, index: 0 } : p)}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setArgPicker((p) => p ? { ...p, index: Math.min(p.index + 1, argPickerFiltered.length - 1) } : p);
+                } else if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setArgPicker((p) => p ? { ...p, index: Math.max(p.index - 1, 0) } : p);
+                } else if (e.key === "Enter" && argPickerFiltered[argPicker.index]) {
+                  e.preventDefault();
+                  selectArg(argPickerFiltered[argPicker.index].value);
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  setArgPicker(null);
+                  setTimeout(() => textareaRef.current?.focus(), 0);
+                }
+              }}
+              placeholder="Search..."
+              autoFocus
+            />
+            <div className="arg-picker-list">
+              {argPickerFiltered.map((opt, idx) => (
+                <div
+                  key={opt.value}
+                  className={`arg-picker-option ${idx === argPicker.index ? "highlighted" : ""}`}
+                  onClick={() => selectArg(opt.value)}
+                  onMouseEnter={() => setArgPicker((p) => p ? { ...p, index: idx } : p)}
+                >
+                  <span className="arg-picker-option-label">{opt.label}</span>
+                  {opt.hint && <span className="arg-picker-option-hint">{opt.hint}</span>}
+                </div>
+              ))}
+              {argPickerFiltered.length === 0 && (
+                <div className="arg-picker-empty">No matches</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Permission prompt */}
       {permissionRequest && onPermissionResponse && (
         <div className="permission-prompt">
@@ -446,6 +680,23 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
         {showDropdown && fileResults.length === 0 && atQuery.length > 0 && (
           <div className="at-dropdown">
             <div className="at-dropdown-empty">No files found for "@{atQuery}"</div>
+          </div>
+        )}
+
+        {/* Slash command autocomplete */}
+        {showSlashMenu && slashFiltered.length > 0 && (
+          <div className="slash-dropdown" ref={slashRef}>
+            {slashFiltered.map((item, i) => (
+              <div
+                key={item.cmd}
+                className={`slash-item ${i === slashIndex ? "selected" : ""}`}
+                onClick={() => selectSlashCommand(item.cmd)}
+                onMouseEnter={() => setSlashIndex(i)}
+              >
+                <span className="slash-cmd">{item.cmd}</span>
+                <span className="slash-hint">{item.hint}</span>
+              </div>
+            ))}
           </div>
         )}
 

@@ -392,16 +392,27 @@ export class AgentRunner {
         if (msg.includes("401") || msg.includes("403") || msg.includes("400") || msg.includes("429") || msg.includes("404") || msg.includes("invalid_api_key") || msg.includes("authentication") || msg.includes("credit balance") || msg.includes("rate") || msg.includes("quota")) {
           // Try to extract a cleaner error message from JSON API responses
           const cleaned = AgentRunner.extractApiErrorMessage(lastError.message);
-          // Add hint for image-related 400 errors
+          const errorText = cleaned !== lastError.message ? cleaned : lastError.message;
+          const modelHint = this.modelName || this.provider || "unknown";
+
+          // Add contextual hints based on error type
           const hasImages = allMessages.some((m) => Array.isArray(m.content) && (m.content as any[]).some((c: any) => c.type === "image" || c.type === "image_url"));
           if (msg.includes("400") && hasImages) {
-            const hint = `\n\nHint: This error may be because the model "${this.modelName || this.provider}" does not support image/vision input. Try a vision-capable model (e.g. claude-sonnet-4, gpt-4o).`;
-            throw new Error((cleaned !== lastError.message ? cleaned : lastError.message) + hint);
+            throw new Error(`${errorText}\n\nHint: Model "${modelHint}" may not support image/vision input. Try a vision-capable model (e.g. claude-sonnet-4-6, gpt-4o).`);
           }
-          if (cleaned !== lastError.message) {
-            throw new Error(cleaned);
+          if (msg.includes("404") && msg.includes("model")) {
+            throw new Error(`Model "${modelHint}" was not found. Check the model name and try again.\n\nUse /model to see available models.`);
           }
-          throw lastError;
+          if (msg.includes("401") || msg.includes("403") || msg.includes("authentication") || msg.includes("invalid_api_key")) {
+            throw new Error(`${errorText}\n\nAuthentication failed for model "${modelHint}". Try /login to re-authenticate or /config set api-key to update your API key.`);
+          }
+          if (msg.includes("429") || msg.includes("rate") || msg.includes("quota") || msg.includes("credit balance")) {
+            throw new Error(`${errorText}\n\nRate limit or quota exceeded for "${modelHint}". Wait a moment or switch to a different model with /model.`);
+          }
+          if (msg.includes("400")) {
+            throw new Error(`${errorText}\n\nModel "${modelHint}" rejected the request. This may be a model compatibility issue — try /model to switch models.`);
+          }
+          throw new Error(errorText);
         }
 
         if (attempt < this.maxRetries) {

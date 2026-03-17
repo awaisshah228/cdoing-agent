@@ -17,6 +17,8 @@
 
 import * as crypto from "crypto";
 import * as fs from "fs";
+import * as http from "http";
+import * as net from "net";
 import * as path from "path";
 import * as os from "os";
 import { execSync } from "child_process";
@@ -52,15 +54,20 @@ const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
     id: "anthropic",
     name: "Anthropic (Claude)",
     authUrl: "https://claude.ai/oauth/authorize",
-    tokenUrl: "https://console.anthropic.com/v1/oauth/token",
-    redirectUri: "https://console.anthropic.com/oauth/code/callback",
+    tokenUrl: "https://api.anthropic.com/v1/oauth/token",
+    redirectUri: "http://localhost:54545/callback",
     clientId: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
     scopes: "org:create_api_key user:profile user:inference",
     usePkce: true,
     extraParams: { code: "true" },
-    defaultModel: "claude-haiku-4-5",
+    defaultModel: "claude-sonnet-4-6",
     models: [
-      { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", hint: "fastest · free tier" },
+      // Short aliases — verified working with OAuth billing header
+      { id: "claude-sonnet-4-6",  name: "Claude Sonnet 4.6",  hint: "fast & capable · Pro plan" },
+      { id: "claude-opus-4-6",   name: "Claude Opus 4.6",    hint: "most capable · Max plan" },
+      { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5",  hint: "balanced · Pro plan" },
+      { id: "claude-opus-4-5",   name: "Claude Opus 4.5",    hint: "powerful · Max plan" },
+      { id: "claude-haiku-4-5",  name: "Claude Haiku 4.5",   hint: "fastest · free tier" },
     ],
   },
   "openai-codex": {
@@ -68,19 +75,28 @@ const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
     name: "OpenAI Codex (ChatGPT)",
     authUrl: "https://auth.openai.com/oauth/authorize",
     tokenUrl: "https://auth.openai.com/oauth/token",
-    redirectUri: "https://console.anthropic.com/oauth/code/callback",
+    redirectUri: "http://localhost:1455/auth/callback",
     clientId: "app_EMoamEEZ73f0CkXaXp7hrann",
-    scopes: "openid profile email offline_access",
+    scopes: "openid email profile offline_access",
     usePkce: true,
-    defaultModel: "gpt-5.1-codex",
+    extraParams: {
+      prompt: "login",
+      id_token_add_organizations: "true",
+      codex_cli_simplified_flow: "true",
+    },
+    defaultModel: "gpt-5.3-codex",
     models: [
-      { id: "gpt-5.1-codex", name: "GPT-5.1 Codex", hint: "recommended" },
-      { id: "gpt-5.1-codex-mini", name: "GPT-5.1 Codex Mini", hint: "fast" },
-      { id: "gpt-5.1-codex-max", name: "GPT-5.1 Codex Max", hint: "most capable" },
-      { id: "gpt-5.2-codex", name: "GPT-5.2 Codex", hint: "latest" },
-      { id: "gpt-5.3-codex", name: "GPT-5.3 Codex", hint: "latest" },
-      { id: "gpt-5.2", name: "GPT-5.2", hint: "general" },
-      { id: "gpt-5.4", name: "GPT-5.4", hint: "newest" },
+      { id: "gpt-5.3-codex",       name: "GPT-5.3 Codex",       hint: "latest" },
+      { id: "gpt-5.3-codex-spark", name: "GPT-5.3 Codex Spark", hint: "fast" },
+      { id: "gpt-5.2",             name: "GPT-5.2",             hint: "general" },
+      { id: "gpt-5.2-codex",       name: "GPT-5.2 Codex",       hint: "capable" },
+      { id: "gpt-5.1-codex-mini",  name: "GPT-5.1 Codex Mini",  hint: "compact" },
+      { id: "gpt-5.1-codex-max",   name: "GPT-5.1 Codex Max",   hint: "most capable" },
+      { id: "gpt-4o",              name: "GPT-4o",               hint: "vision" },
+      { id: "gpt-4o-mini",         name: "GPT-4o Mini",          hint: "fast · vision" },
+      { id: "o3",                  name: "o3",                   hint: "reasoning" },
+      { id: "o3-mini",             name: "o3 Mini",              hint: "fast reasoning" },
+      { id: "o4-mini",             name: "o4 Mini",              hint: "latest reasoning" },
     ],
   },
   "github-copilot": {
@@ -90,18 +106,44 @@ const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
     tokenUrl: "https://github.com/login/oauth/access_token",
     redirectUri: "",
     clientId: "Iv1.b507a08c87ecfe98",
-    scopes: "read:user",
+    scopes: "read:user user:email",
     usePkce: false,
-    defaultModel: "claude-sonnet-4",
+    defaultModel: "claude-sonnet-4.6",
     models: [
-      { id: "claude-sonnet-4", name: "Claude Sonnet 4", hint: "Anthropic · recommended" },
-      { id: "claude-sonnet-4.5", name: "Claude Sonnet 4.5", hint: "Anthropic · latest" },
-      { id: "claude-haiku-4.5", name: "Claude Haiku 4.5", hint: "Anthropic · fast" },
-      { id: "gpt-4o", name: "GPT-4o", hint: "OpenAI · vision" },
-      { id: "gpt-4.1", name: "GPT-4.1", hint: "OpenAI · latest" },
-      { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", hint: "Google · capable" },
-      { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", hint: "Google · fast" },
-      { id: "o3-mini", name: "o3 Mini", hint: "OpenAI · reasoning" },
+      { id: "claude-sonnet-4.6",         name: "Claude Sonnet 4.6",       hint: "Anthropic · recommended" },
+      { id: "claude-sonnet-4.5",         name: "Claude Sonnet 4.5",       hint: "Anthropic" },
+      { id: "claude-sonnet-4-5",         name: "Claude Sonnet 4-5",       hint: "Anthropic" },
+      { id: "claude-sonnet-4",           name: "Claude Sonnet 4",         hint: "Anthropic" },
+      { id: "claude-opus-4.6",           name: "Claude Opus 4.6",         hint: "Anthropic · most capable" },
+      { id: "claude-opus-4.5",           name: "Claude Opus 4.5",         hint: "Anthropic" },
+      { id: "claude-opus-4-5",           name: "Claude Opus 4-5",         hint: "Anthropic" },
+      { id: "claude-opus-4",             name: "Claude Opus 4",           hint: "Anthropic" },
+      { id: "claude-haiku-4.5",          name: "Claude Haiku 4.5",        hint: "Anthropic · fast" },
+      { id: "gpt-4o",                    name: "GPT-4o",                  hint: "OpenAI · vision" },
+      { id: "gpt-4o-2024-11-20",         name: "GPT-4o 2024-11-20",      hint: "OpenAI" },
+      { id: "gpt-4o-mini-2024-07-18",    name: "GPT-4o Mini",            hint: "OpenAI · fast" },
+      { id: "gpt-5-mini",               name: "GPT-5 Mini",              hint: "OpenAI · latest" },
+      { id: "o3-mini",                   name: "o3 Mini",                 hint: "OpenAI · reasoning" },
+      { id: "gemini-3.1-pro-preview",    name: "Gemini 3.1 Pro Preview",  hint: "Google · 1M context" },
+      { id: "gemini-3-pro-preview",      name: "Gemini 3 Pro Preview",    hint: "Google" },
+      { id: "gemini-2.5-pro",            name: "Gemini 2.5 Pro",          hint: "Google" },
+      { id: "grok-code-fast-1",          name: "Grok Code Fast 1",        hint: "xAI" },
+    ],
+  },
+  qwen: {
+    id: "qwen",
+    name: "Qwen",
+    authUrl: "https://chat.qwen.ai/api/v1/oauth2/device/code",
+    tokenUrl: "https://chat.qwen.ai/api/v1/oauth2/token",
+    redirectUri: "",
+    clientId: "f0304373b74a44d2b584a3fb70ca9e56",
+    scopes: "openid profile email model.completion",
+    usePkce: true,
+    defaultModel: "qwen-max",
+    models: [
+      { id: "qwen-max",   name: "Qwen Max",   hint: "most capable" },
+      { id: "qwen-plus",  name: "Qwen Plus",  hint: "balanced" },
+      { id: "qwen-turbo", name: "Qwen Turbo", hint: "fastest" },
     ],
   },
   google: {
@@ -116,9 +158,9 @@ const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
     defaultModel: "gemini-2.5-flash",
     models: [
       { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", hint: "recommended · fast" },
-      { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", hint: "most capable" },
+      { id: "gemini-2.5-pro",   name: "Gemini 2.5 Pro",   hint: "most capable" },
       { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash", hint: "stable" },
-      { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", hint: "1M context" },
+      { id: "gemini-1.5-pro",   name: "Gemini 1.5 Pro",   hint: "1M context" },
       { id: "gemini-1.5-flash", name: "Gemini 1.5 Flash", hint: "fast" },
     ],
   },
@@ -487,6 +529,10 @@ export async function exchangeOAuthCode(
   code: string,
   codeVerifier: string,
   provider: string = "anthropic",
+  /** Override redirect_uri — required when using startLocalOAuthServer (localhost callback) */
+  redirectUri?: string,
+  /** OAuth state value — required for Anthropic when using a separate state (not codeVerifier) */
+  state?: string,
 ): Promise<OAuthTokens> {
   const config = OAUTH_PROVIDERS[provider];
   if (!config) throw new Error(`Provider "${provider}" does not support OAuth`);
@@ -496,7 +542,8 @@ export async function exchangeOAuthCode(
     code: splits[0],
     grant_type: "authorization_code",
     client_id: config.clientId,
-    redirect_uri: config.redirectUri,
+    // Use provided redirectUri (localhost) or fall back to provider default
+    redirect_uri: redirectUri || config.redirectUri,
   };
 
   // PKCE providers include code_verifier
@@ -504,9 +551,9 @@ export async function exchangeOAuthCode(
     body.code_verifier = codeVerifier;
   }
 
-  // Anthropic uses state differently
+  // Anthropic requires state in the token exchange body
   if (provider === "anthropic") {
-    body.state = splits[1] || codeVerifier;
+    body.state = state || splits[1] || codeVerifier;
   }
 
   const response = await fetch(config.tokenUrl, {
@@ -559,4 +606,199 @@ export function getAllOAuthStatuses(): Array<{
     const status = getOAuthStatus(config.id);
     return { ...status, name: config.name };
   });
+}
+
+// ── Local OAuth Server (PKCE + localhost redirect) ────────
+//
+// Spins up a temporary HTTP server on a random free port.
+// The OAuth URL uses redirect_uri=http://localhost:PORT/callback so the browser
+// sends the auth code back automatically — no copy-paste needed.
+//
+// Usage (CLI):
+//   const { url, codePromise, close } = await startLocalOAuthServer("anthropic");
+//   openBrowser(url);
+//   const code = await codePromise;  // resolves when browser redirects back
+//
+// Usage (VS Code extension):
+//   const { url, codePromise } = await startLocalOAuthServer("anthropic");
+//   vscode.env.openExternal(vscode.Uri.parse(url));
+//   const code = await codePromise;
+
+export interface LocalOAuthServer {
+  /** Full OAuth authorization URL — open this in a browser */
+  url: string;
+  /** PKCE code verifier — pass to exchangeOAuthCode() after getting the code */
+  codeVerifier: string;
+  /** OAuth state value — used for CSRF protection */
+  state: string;
+  /** Port the local server is listening on */
+  port: number;
+  /**
+   * Resolves with the authorization code when the browser redirects back automatically.
+   * Rejects on timeout, state mismatch, or server error.
+   * If this rejects, fall back to prompting the user to paste the code manually.
+   */
+  codePromise: Promise<string>;
+  /** Shut down the server early (e.g., user cancelled) */
+  close: () => void;
+}
+
+/** Preferred port to try first — matches reference implementations for consistency */
+const PREFERRED_OAUTH_PORT = 54545;
+
+/** Check if a port is free on localhost */
+function isPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.once("error", () => resolve(false));
+    probe.listen(port, "127.0.0.1", () => probe.close(() => resolve(true)));
+  });
+}
+
+/** Find a free TCP port — tries PREFERRED_OAUTH_PORT first, falls back to OS-assigned */
+async function getFreePort(): Promise<number> {
+  if (await isPortFree(PREFERRED_OAUTH_PORT)) return PREFERRED_OAUTH_PORT;
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address() as net.AddressInfo;
+      server.close(() => resolve(addr.port));
+    });
+    server.on("error", reject);
+  });
+}
+
+/** Success redirect URL for Anthropic (matches what the official CLI uses) */
+const ANTHROPIC_SUCCESS_REDIRECT = "https://console.anthropic.com/oauth/code/success?app=claude-code";
+
+const ERROR_HTML = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Authentication failed</title>
+<style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;
+height:100vh;margin:0;background:#fef2f2}.card{background:white;border-radius:12px;padding:40px 48px;
+box-shadow:0 4px 24px rgba(0,0,0,.08);text-align:center}h1{color:#dc2626;margin:0 0 8px;font-size:22px}
+p{color:#666;margin:0;font-size:15px}</style></head>
+<body><div class="card"><h1>Authentication failed</h1>
+<p>No authorization code received. You can close this tab.</p></div></body></html>`;
+
+/**
+ * Start a local HTTP server for the OAuth PKCE callback.
+ *
+ * Two-mode design:
+ *   Mode 1 (auto): Browser redirects to localhost → server captures code → codePromise resolves
+ *   Mode 2 (fallback): If codePromise rejects (server failed, timeout, etc.)
+ *                      → caller prompts user to paste code manually
+ *
+ * Security:
+ *   - state parameter is validated on every callback request (CSRF protection)
+ *   - Server only accepts requests to /callback
+ *   - Auto-closes after timeoutMs (default 5 min) to prevent port leaks
+ *
+ * Compatibility:
+ *   - Tries port 54545 first (consistent with other tools), falls back to random
+ *   - For Anthropic: redirects to console.anthropic.com/oauth/code/success after capture
+ *   - For other providers: returns a success HTML page
+ */
+export async function startLocalOAuthServer(
+  provider: string = "anthropic",
+  timeoutMs: number = 300_000,
+): Promise<LocalOAuthServer> {
+  const config = OAUTH_PROVIDERS[provider];
+  if (!config) throw new Error(`Provider "${provider}" does not support OAuth`);
+
+  const port = await getFreePort();
+  const localRedirectUri = `http://localhost:${port}/callback`;
+
+  // PKCE: code verifier + challenge
+  const codeVerifier = generateCodeVerifier();
+  const codeChallenge = generateCodeChallenge(codeVerifier);
+
+  // Separate state for CSRF protection (distinct from codeVerifier)
+  const state = crypto.randomBytes(16).toString("hex");
+
+  const params = new URLSearchParams({
+    client_id: config.clientId,
+    response_type: "code",
+    redirect_uri: localRedirectUri,
+    scope: config.scopes,
+    ...(config.usePkce !== false ? {
+      code_challenge: codeChallenge,
+      code_challenge_method: "S256",
+    } : {}),
+    state,
+    ...(config.extraParams || {}),
+  });
+
+  const url = `${config.authUrl}?${params.toString()}`;
+
+  let resolveCode!: (code: string) => void;
+  let rejectCode!: (err: Error) => void;
+  const codePromise = new Promise<string>((res, rej) => {
+    resolveCode = res;
+    rejectCode = rej;
+  });
+
+  const server = http.createServer((req, res) => {
+    try {
+      const reqUrl = new URL(req.url || "/", `http://localhost:${port}`);
+
+      if (reqUrl.pathname !== "/callback") {
+        res.writeHead(404).end("Not found");
+        return;
+      }
+
+      // CSRF: validate state parameter
+      const receivedState = reqUrl.searchParams.get("state");
+      if (receivedState !== state) {
+        res.writeHead(400, { "Content-Type": "text/html" }).end(ERROR_HTML);
+        shutdown();
+        rejectCode(new Error("OAuth state mismatch — possible CSRF attack"));
+        return;
+      }
+
+      const error = reqUrl.searchParams.get("error");
+      const code = reqUrl.searchParams.get("code");
+
+      if (error || !code) {
+        res.writeHead(400, { "Content-Type": "text/html" }).end(ERROR_HTML);
+        shutdown();
+        rejectCode(new Error(error || "No authorization code in callback"));
+        return;
+      }
+
+      // Redirect to provider success page (Anthropic) or show success HTML (others)
+      if (provider === "anthropic") {
+        res.writeHead(302, { Location: ANTHROPIC_SUCCESS_REDIRECT }).end();
+      } else {
+        const successHtml = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Authentication complete</title>
+<style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;
+height:100vh;margin:0;background:#f0fdf4}.card{background:white;border-radius:12px;padding:40px 48px;
+box-shadow:0 4px 24px rgba(0,0,0,.08);text-align:center}h1{color:#16a34a;margin:0 0 8px;font-size:22px}
+p{color:#666;margin:0;font-size:15px}</style></head>
+<body><div class="card"><h1>Authentication complete</h1>
+<p>You can close this tab and return to the editor.</p></div></body></html>`;
+        res.writeHead(200, { "Content-Type": "text/html" }).end(successHtml);
+      }
+
+      shutdown();
+      resolveCode(code);
+    } catch {
+      res.writeHead(500).end("Internal error");
+    }
+  });
+
+  server.listen(port, "127.0.0.1");
+
+  const timer = setTimeout(() => {
+    shutdown();
+    rejectCode(new Error(`OAuth login timed out after ${timeoutMs / 1000}s`));
+  }, timeoutMs);
+
+  function shutdown() {
+    clearTimeout(timer);
+    server.close();
+  }
+
+  return { url, codeVerifier, state, port, codePromise, close: shutdown };
 }

@@ -1288,6 +1288,7 @@ pre.tool-io-block {
 
 /* ═══ Input Area ═══ */
 .input-area {
+  position: relative;
   padding: 8px 12px 12px;
   flex-shrink: 0;
   background: var(--bg);
@@ -1493,6 +1494,139 @@ pre.tool-io-block {
   font-size: 11px;
   color: var(--desc-fg);
   font-style: italic;
+}
+
+/* ═══ Arg Picker Dialog (e.g. /model → pick a model) ═══ */
+.arg-picker-overlay {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  z-index: 300;
+  padding-bottom: 4px;
+}
+.arg-picker {
+  background: var(--bg);
+  border: 1px solid var(--subtle-border);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.25);
+  max-height: 300px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: slideUp 0.12s ease;
+}
+@keyframes slideUp { from { transform: translateY(6px); opacity: 0; } }
+.arg-picker-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px 8px;
+  border-bottom: 1px solid var(--subtle-border);
+}
+.arg-picker-cmd {
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  color: var(--accent);
+}
+.arg-picker-title {
+  font-size: 12px;
+  color: var(--desc-fg);
+  flex: 1;
+}
+.arg-picker-close {
+  background: none;
+  border: none;
+  color: var(--desc-fg);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+}
+.arg-picker-close:hover {
+  color: var(--fg);
+  background: var(--accent-soft);
+}
+.arg-picker-search {
+  margin: 8px 10px;
+  padding: 7px 10px;
+  background: var(--input-bg);
+  border: 1px solid var(--subtle-border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--fg);
+  font-size: 12px;
+  outline: none;
+}
+.arg-picker-search:focus {
+  border-color: var(--accent);
+}
+.arg-picker-list {
+  overflow-y: auto;
+  max-height: 260px;
+  padding-bottom: 4px;
+}
+.arg-picker-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--fg);
+  transition: background var(--transition-fast);
+}
+.arg-picker-option:hover,
+.arg-picker-option.highlighted {
+  background: var(--accent-soft);
+}
+.arg-picker-option-label {
+  font-weight: 500;
+}
+.arg-picker-option-hint {
+  font-size: 11px;
+  color: var(--desc-fg);
+}
+.arg-picker-empty {
+  padding: 16px 14px;
+  font-size: 11px;
+  color: var(--desc-fg);
+  text-align: center;
+  font-style: italic;
+}
+
+/* ═══ Slash Command Autocomplete ═══ */
+.slash-dropdown {
+  border-top: 1px solid var(--subtle-border);
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--input-bg);
+}
+.slash-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--fg);
+  transition: background var(--transition-fast);
+}
+.slash-item:hover,
+.slash-item.selected {
+  background: var(--accent-soft);
+}
+.slash-cmd {
+  font-weight: 600;
+  font-family: var(--font-mono, monospace);
+  color: var(--accent);
+  min-width: 100px;
+}
+.slash-hint {
+  color: var(--desc-fg);
+  font-size: 11px;
 }
 
 /* ═══ Tab Bar ═══ */

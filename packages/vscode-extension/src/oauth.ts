@@ -16,8 +16,10 @@ export {
   generateOAuthUrl,
   exchangeOAuthCode,
   getOAuthStatus,
+  getOAuthProvider,
+  startLocalOAuthServer,
 } from "@cdoing/core";
-export type { OAuthTokens } from "@cdoing/core";
+export type { OAuthTokens, LocalOAuthServer } from "@cdoing/core";
 
 import { fullLogout } from "@cdoing/core";
 

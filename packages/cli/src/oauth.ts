@@ -25,47 +25,70 @@ export {
   getOAuthProvider,
   getOAuthProviders,
   supportsOAuth,
+  startLocalOAuthServer,
 } from "@cdoing/core";
-export type { OAuthTokens, OAuthProviderConfig } from "@cdoing/core";
+export type { OAuthTokens, OAuthProviderConfig, LocalOAuthServer } from "@cdoing/core";
 
 import {
-  generateOAuthUrl,
   exchangeOAuthCode,
   clearOAuthTokens,
   loadOAuthTokens,
   isOAuthExpired,
   getAllOAuthStatuses,
   getOAuthProvider,
+  startLocalOAuthServer,
 } from "@cdoing/core";
 import type { OAuthTokens } from "@cdoing/core";
 
 // ── CLI-specific: Interactive login ──────────────────────
 
 export async function oauthLogin(provider: string = "anthropic"): Promise<OAuthTokens> {
-  const readline = await import("readline");
   const providerConfig = getOAuthProvider(provider);
   const providerName = providerConfig?.name || provider;
 
-  const { url, codeVerifier } = generateOAuthUrl(provider);
-
   console.log();
   console.log(chalk.bold.cyan(`  ${providerName} OAuth Login`));
-  console.log(chalk.dim("  Opening browser for authentication...\n"));
+  console.log(chalk.dim("  Starting local server for automatic code capture...\n"));
+
+  const { url, codeVerifier, state, port, codePromise, close } = await startLocalOAuthServer(provider);
+
   console.log(chalk.white("  If the browser doesn't open, visit:"));
   console.log(chalk.dim(`  ${url}\n`));
+  console.log(chalk.dim(`  Listening on http://localhost:${port}/callback ...\n`));
 
   openBrowser(url);
 
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const code = await new Promise<string>((resolve) => {
-    rl.question(chalk.green("  Paste the authorization code here: "), (a) => {
-      rl.close();
-      resolve(a.trim());
+  const localRedirectUri = `http://localhost:${port}/callback`;
+
+  let code: string;
+  let usedLocalRedirect = true;
+  try {
+    // Auto-capture: browser redirects to localhost, server captures code
+    code = await codePromise;
+  } catch {
+    close();
+    usedLocalRedirect = false;
+    // Fallback: local server failed — ask user to paste the code manually
+    const readline = await import("readline");
+    console.log(chalk.yellow("\n  Auto-capture failed. Please paste the authorization code manually."));
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    code = await new Promise<string>((resolve) => {
+      rl.question(chalk.green("  Paste the authorization code here: "), (a) => {
+        rl.close();
+        resolve(a.trim());
+      });
     });
-  });
+  }
 
   if (!code) throw new Error("No authorization code provided");
-  return exchangeOAuthCode(code, codeVerifier, provider);
+  // Pass the localhost redirect URI + state only when the local server was used
+  return exchangeOAuthCode(
+    code,
+    codeVerifier,
+    provider,
+    usedLocalRedirect ? localRedirectUri : undefined,
+    usedLocalRedirect ? state : undefined,
+  );
 }
 
 // ── CLI-specific: Browser opener ─────────────────────────
