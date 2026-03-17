@@ -25,26 +25,146 @@ interface OAuthProviderInfo {
 }
 
 const PROVIDER_OPTIONS: SelectOption[] = [
-  { value: "anthropic", label: "Anthropic (Claude)", hint: "Claude Sonnet, Opus, Haiku" },
-  { value: "openai", label: "OpenAI", hint: "GPT-4o, o3" },
-  { value: "google", label: "Google (Gemini)", hint: "Gemini Flash, Pro" },
-  { value: "custom", label: "Custom Provider", hint: "OpenRouter, Ollama, Groq..." },
+  { value: "anthropic", label: "Anthropic (Claude)", hint: "Sonnet, Opus, Haiku", group: "Cloud Providers" },
+  { value: "openai", label: "OpenAI", hint: "GPT-4o, o3, o4", group: "Cloud Providers" },
+  { value: "google", label: "Google (Gemini)", hint: "Flash, Pro", group: "Cloud Providers" },
+  { value: "custom", label: "Custom / Other", hint: "OpenRouter, Ollama, Groq, Together...", group: "Self-Hosted & Routers" },
 ];
 
 const MODEL_OPTIONS: Record<string, SelectOption[]> = {
   anthropic: [
-    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", hint: "recommended", group: "Claude 4" },
+    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", hint: "recommended · fast & smart", group: "Claude 4" },
     { value: "claude-opus-4-6", label: "Claude Opus 4.6", hint: "most capable", group: "Claude 4" },
-    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5", hint: "fastest", group: "Claude 4" },
+    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5", hint: "fastest · cheapest", group: "Claude 4" },
+    { value: "claude-sonnet-4-20250514", label: "Claude Sonnet 4", hint: "previous gen", group: "Claude 3.5/4" },
+    { value: "claude-3-5-sonnet-20241022", label: "Claude 3.5 Sonnet", hint: "legacy", group: "Claude 3.5/4" },
+    { value: "claude-3-5-haiku-20241022", label: "Claude 3.5 Haiku", hint: "legacy fast", group: "Claude 3.5/4" },
   ],
   openai: [
-    { value: "gpt-4o", label: "GPT-4o", hint: "recommended", group: "GPT" },
-    { value: "gpt-4o-mini", label: "GPT-4o Mini", hint: "fast & cheap", group: "GPT" },
+    { value: "gpt-4o", label: "GPT-4o", hint: "recommended · vision", group: "GPT-4" },
+    { value: "gpt-4o-mini", label: "GPT-4o Mini", hint: "fast & cheap", group: "GPT-4" },
+    { value: "gpt-4-turbo", label: "GPT-4 Turbo", hint: "128K context", group: "GPT-4" },
     { value: "o3-mini", label: "o3 Mini", hint: "reasoning", group: "Reasoning" },
+    { value: "o3", label: "o3", hint: "advanced reasoning", group: "Reasoning" },
+    { value: "o4-mini", label: "o4 Mini", hint: "latest reasoning", group: "Reasoning" },
+    { value: "gpt-4.1", label: "GPT-4.1", hint: "latest", group: "GPT-4" },
+    { value: "gpt-4.1-mini", label: "GPT-4.1 Mini", hint: "latest fast", group: "GPT-4" },
+    { value: "gpt-4.1-nano", label: "GPT-4.1 Nano", hint: "ultra fast", group: "GPT-4" },
   ],
   google: [
-    { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash", hint: "recommended", group: "Gemini" },
-    { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro", hint: "capable", group: "Gemini" },
+    { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash", hint: "recommended · fast", group: "Gemini 2" },
+    { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro", hint: "most capable", group: "Gemini 2" },
+    { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash", hint: "latest fast", group: "Gemini 2" },
+    { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro", hint: "1M context", group: "Gemini 1.5" },
+    { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash", hint: "fast", group: "Gemini 1.5" },
+  ],
+  custom: [
+    // OpenRouter popular models
+    { value: "anthropic/claude-sonnet-4", label: "Claude Sonnet 4", hint: "via OpenRouter", group: "OpenRouter" },
+    { value: "anthropic/claude-haiku-4", label: "Claude Haiku 4", hint: "via OpenRouter", group: "OpenRouter" },
+    { value: "openai/gpt-4o", label: "GPT-4o", hint: "via OpenRouter", group: "OpenRouter" },
+    { value: "google/gemini-2.0-flash", label: "Gemini 2.0 Flash", hint: "via OpenRouter", group: "OpenRouter" },
+    { value: "meta-llama/llama-4-maverick", label: "Llama 4 Maverick", hint: "open source", group: "OpenRouter" },
+    { value: "deepseek/deepseek-r1", label: "DeepSeek R1", hint: "reasoning", group: "OpenRouter" },
+    { value: "mistralai/mistral-large", label: "Mistral Large", hint: "capable", group: "OpenRouter" },
+    // Ollama local models
+    { value: "llama3.1", label: "Llama 3.1", hint: "local", group: "Ollama / Local" },
+    { value: "llama3.1:70b", label: "Llama 3.1 70B", hint: "local · large", group: "Ollama / Local" },
+    { value: "codellama", label: "Code Llama", hint: "local · code", group: "Ollama / Local" },
+    { value: "mistral", label: "Mistral 7B", hint: "local · fast", group: "Ollama / Local" },
+    { value: "deepseek-coder-v2", label: "DeepSeek Coder V2", hint: "local · code", group: "Ollama / Local" },
+    { value: "qwen2.5-coder", label: "Qwen 2.5 Coder", hint: "local · code", group: "Ollama / Local" },
+    // Groq
+    { value: "llama-3.3-70b-versatile", label: "Llama 3.3 70B", hint: "via Groq · fast", group: "Groq" },
+    { value: "mixtral-8x7b-32768", label: "Mixtral 8x7B", hint: "via Groq", group: "Groq" },
+  ],
+};
+
+/** Custom provider presets with pre-filled base URLs */
+const CUSTOM_PROVIDER_OPTIONS: SelectOption[] = [
+  { value: "openrouter", label: "OpenRouter", hint: "openrouter.ai", group: "Routers" },
+  { value: "ollama", label: "Ollama", hint: "localhost:11434", group: "Local" },
+  { value: "lmstudio", label: "LM Studio", hint: "localhost:1234", group: "Local" },
+  { value: "groq", label: "Groq", hint: "groq.com · ultra fast", group: "Cloud" },
+  { value: "together", label: "Together AI", hint: "together.ai", group: "Cloud" },
+  { value: "fireworks", label: "Fireworks AI", hint: "fireworks.ai", group: "Cloud" },
+  { value: "deepseek", label: "DeepSeek", hint: "deepseek.com", group: "Cloud" },
+  { value: "mistral", label: "Mistral AI", hint: "mistral.ai", group: "Cloud" },
+  { value: "xai", label: "xAI (Grok)", hint: "x.ai", group: "Cloud" },
+  { value: "perplexity", label: "Perplexity", hint: "perplexity.ai", group: "Cloud" },
+  { value: "cohere", label: "Cohere", hint: "cohere.com", group: "Cloud" },
+  { value: "anyscale", label: "Anyscale", hint: "anyscale.com", group: "Cloud" },
+];
+
+const CUSTOM_PROVIDER_URLS: Record<string, string> = {
+  openrouter: "https://openrouter.ai/api/v1",
+  ollama: "http://localhost:11434/v1",
+  lmstudio: "http://localhost:1234/v1",
+  groq: "https://api.groq.com/openai/v1",
+  together: "https://api.together.xyz/v1",
+  fireworks: "https://api.fireworks.ai/inference/v1",
+  deepseek: "https://api.deepseek.com/v1",
+  mistral: "https://api.mistral.ai/v1",
+  xai: "https://api.x.ai/v1",
+  perplexity: "https://api.perplexity.ai",
+  cohere: "https://api.cohere.ai/v1",
+  anyscale: "https://api.endpoints.anyscale.com/v1",
+};
+
+/** Models per custom provider (shown when that provider is selected) */
+const CUSTOM_PROVIDER_MODELS: Record<string, SelectOption[]> = {
+  openrouter: [
+    { value: "anthropic/claude-sonnet-4", label: "Claude Sonnet 4", hint: "Anthropic", group: "Popular" },
+    { value: "anthropic/claude-haiku-4", label: "Claude Haiku 4", hint: "Anthropic · fast", group: "Popular" },
+    { value: "openai/gpt-4o", label: "GPT-4o", hint: "OpenAI", group: "Popular" },
+    { value: "google/gemini-2.0-flash", label: "Gemini 2.0 Flash", hint: "Google", group: "Popular" },
+    { value: "meta-llama/llama-4-maverick", label: "Llama 4 Maverick", hint: "open source", group: "Open Source" },
+    { value: "deepseek/deepseek-r1", label: "DeepSeek R1", hint: "reasoning", group: "Open Source" },
+    { value: "mistralai/mistral-large-latest", label: "Mistral Large", hint: "Mistral", group: "Open Source" },
+    { value: "qwen/qwen-2.5-coder-32b", label: "Qwen 2.5 Coder 32B", hint: "code", group: "Open Source" },
+  ],
+  ollama: [
+    { value: "llama3.1", label: "Llama 3.1 8B", hint: "general", group: "General" },
+    { value: "llama3.1:70b", label: "Llama 3.1 70B", hint: "capable", group: "General" },
+    { value: "codellama", label: "Code Llama", hint: "code", group: "Code" },
+    { value: "deepseek-coder-v2", label: "DeepSeek Coder V2", hint: "code", group: "Code" },
+    { value: "qwen2.5-coder", label: "Qwen 2.5 Coder", hint: "code", group: "Code" },
+    { value: "mistral", label: "Mistral 7B", hint: "fast", group: "General" },
+    { value: "mixtral", label: "Mixtral 8x7B", hint: "MoE", group: "General" },
+    { value: "phi3", label: "Phi-3", hint: "small · fast", group: "General" },
+    { value: "gemma2", label: "Gemma 2", hint: "Google", group: "General" },
+  ],
+  lmstudio: [
+    { value: "llama-3.1-8b", label: "Llama 3.1 8B", hint: "general", group: "Models" },
+    { value: "codellama-13b", label: "Code Llama 13B", hint: "code", group: "Models" },
+    { value: "mistral-7b", label: "Mistral 7B", hint: "fast", group: "Models" },
+  ],
+  groq: [
+    { value: "llama-3.3-70b-versatile", label: "Llama 3.3 70B", hint: "fast inference", group: "Models" },
+    { value: "llama-3.1-8b-instant", label: "Llama 3.1 8B", hint: "instant", group: "Models" },
+    { value: "mixtral-8x7b-32768", label: "Mixtral 8x7B", hint: "32K context", group: "Models" },
+    { value: "gemma2-9b-it", label: "Gemma 2 9B", hint: "fast", group: "Models" },
+  ],
+  together: [
+    { value: "meta-llama/Llama-3.1-70B-Instruct", label: "Llama 3.1 70B", hint: "capable", group: "Models" },
+    { value: "meta-llama/Llama-3.1-8B-Instruct", label: "Llama 3.1 8B", hint: "fast", group: "Models" },
+    { value: "deepseek-ai/DeepSeek-R1", label: "DeepSeek R1", hint: "reasoning", group: "Models" },
+    { value: "Qwen/Qwen2.5-Coder-32B-Instruct", label: "Qwen 2.5 Coder 32B", hint: "code", group: "Models" },
+  ],
+  deepseek: [
+    { value: "deepseek-chat", label: "DeepSeek Chat", hint: "general", group: "Models" },
+    { value: "deepseek-coder", label: "DeepSeek Coder", hint: "code", group: "Models" },
+    { value: "deepseek-reasoner", label: "DeepSeek Reasoner", hint: "reasoning (R1)", group: "Models" },
+  ],
+  mistral: [
+    { value: "mistral-large-latest", label: "Mistral Large", hint: "most capable", group: "Models" },
+    { value: "mistral-medium-latest", label: "Mistral Medium", hint: "balanced", group: "Models" },
+    { value: "mistral-small-latest", label: "Mistral Small", hint: "fast", group: "Models" },
+    { value: "codestral-latest", label: "Codestral", hint: "code", group: "Models" },
+  ],
+  xai: [
+    { value: "grok-3", label: "Grok 3", hint: "most capable", group: "Models" },
+    { value: "grok-3-mini", label: "Grok 3 Mini", hint: "fast", group: "Models" },
   ],
 };
 
@@ -154,7 +274,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const currentOAuthProvider = oauthProviders.find((p) => p.id === provider);
   const providerSupportsOAuth = !!currentOAuthProvider;
   const isOAuthActive = providerSupportsOAuth && authMethod === "oauth" && oauthStatus === "active";
-  const modelOptions = MODEL_OPTIONS[provider] || [];
+  // For custom providers, use provider-specific model list if available, else the generic custom list
+  const modelOptions = provider === "custom" && customProviderName && CUSTOM_PROVIDER_MODELS[customProviderName]
+    ? CUSTOM_PROVIDER_MODELS[customProviderName]
+    : MODEL_OPTIONS[provider] || [];
   const apiKeyHint = apiKey
     ? "API key set in VS Code settings"
     : hasConfigFileApiKey
@@ -199,11 +322,19 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
             <div className="settings-group settings-custom-provider">
               <div style={{ marginBottom: 8 }}>
                 <label className="settings-label" style={{ fontSize: "11px" }}>Provider Name</label>
-                <input
-                  className="settings-input"
+                <SearchableSelect
                   value={customProviderName}
-                  onChange={(e) => setCustomProviderName(e.target.value)}
-                  placeholder="e.g., openrouter, ollama, groq"
+                  options={CUSTOM_PROVIDER_OPTIONS}
+                  onChange={(val) => {
+                    setCustomProviderName(val);
+                    // Auto-fill base URL if we have a preset
+                    if (CUSTOM_PROVIDER_URLS[val]) {
+                      setCustomBaseURL(CUSTOM_PROVIDER_URLS[val]);
+                    }
+                  }}
+                  placeholder="Search providers (openrouter, ollama, groq...)"
+                  allowCustom
+                  customLabel="custom provider"
                 />
               </div>
               <div>
@@ -214,6 +345,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   onChange={(e) => setCustomBaseURL(e.target.value)}
                   placeholder="http://localhost:11434/v1"
                 />
+                {customProviderName && CUSTOM_PROVIDER_URLS[customProviderName] && customBaseURL === CUSTOM_PROVIDER_URLS[customProviderName] && (
+                  <span className="settings-hint"><span style={{ color: "var(--success)" }}>●</span> Auto-filled for {customProviderName}</span>
+                )}
               </div>
             </div>
           )}
