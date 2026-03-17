@@ -57,6 +57,7 @@ export { DiscordChannel, discordPlugin } from "./channels/discord";
 export { ConfigManagerTool, type ConfigManagerState } from "./tools/config-manager";
 export { CronTool, type CronToolState } from "./tools/cron-tool";
 export { SkillTool, type SkillToolState } from "./tools/skill-tool";
+export { DelegateToCoder, type DelegateState } from "./tools/delegate-to-coder";
 export { selectToolsForTurn, compactToolDescription, compactToolSchema } from "./tools/smart-selector";
 
 // Session

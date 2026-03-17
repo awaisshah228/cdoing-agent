@@ -54,6 +54,10 @@ export class ConfigManagerTool implements BaseTool {
             "model",
             "provider",
             "api_key",
+            "coding_model",
+            "coding_provider",
+            "coding_api_key",
+            "coding_max_tokens",
             "working_dir",
             "permission_mode",
             "max_turns",
@@ -65,7 +69,7 @@ export class ConfigManagerTool implements BaseTool {
             "channels",
             "sessions",
           ],
-          description: "Configuration key to read or write",
+          description: "Configuration key to read or write. Keys prefixed with coding_ configure the coding agent.",
         },
         value: {
           type: "string",
@@ -117,7 +121,7 @@ export class ConfigManagerTool implements BaseTool {
     const lines = [
       "=== Remote Coding Agent Configuration ===",
       "",
-      "-- Agent --",
+      "-- Personal Assistant --",
       `  provider: ${agentConfig.provider}`,
       `  model: ${agentConfig.model}`,
       `  api_key: ${agentConfig.apiKey ? "***" + agentConfig.apiKey.slice(-4) : "(from env)"}`,
@@ -125,6 +129,12 @@ export class ConfigManagerTool implements BaseTool {
       `  max_tokens: ${agentConfig.maxTokens || "default"}`,
       `  permission_mode: ${agentConfig.permissionMode}`,
       `  system_prompt: ${agentConfig.systemPrompt ? agentConfig.systemPrompt.substring(0, 80) + "..." : "(default)"}`,
+      "",
+      "-- Coding Agent --",
+      `  coding_provider: ${agentConfig.codingProvider || agentConfig.provider}`,
+      `  coding_model: ${agentConfig.codingModel || agentConfig.model}`,
+      `  coding_api_key: ${agentConfig.codingApiKey ? "***" + agentConfig.codingApiKey.slice(-4) : "(from assistant)"}`,
+      `  coding_max_tokens: ${agentConfig.codingMaxTokens || agentConfig.maxTokens || "default"}`,
       "",
       "-- Environment --",
       `  working_dir: ${workingDir}`,
@@ -160,6 +170,14 @@ export class ConfigManagerTool implements BaseTool {
         return { success: true, output: `provider: ${agentConfig.provider}` };
       case "api_key":
         return { success: true, output: `api_key: ${agentConfig.apiKey ? "***" + agentConfig.apiKey.slice(-4) : "(from env)"}` };
+      case "coding_model":
+        return { success: true, output: `coding_model: ${agentConfig.codingModel || agentConfig.model}` };
+      case "coding_provider":
+        return { success: true, output: `coding_provider: ${agentConfig.codingProvider || agentConfig.provider}` };
+      case "coding_api_key":
+        return { success: true, output: `coding_api_key: ${agentConfig.codingApiKey ? "***" + agentConfig.codingApiKey.slice(-4) : "(from assistant)"}` };
+      case "coding_max_tokens":
+        return { success: true, output: `coding_max_tokens: ${agentConfig.codingMaxTokens || agentConfig.maxTokens || "default"}` };
       case "working_dir":
         return { success: true, output: `working_dir: ${workingDir}` };
       case "permission_mode":
@@ -215,6 +233,40 @@ export class ConfigManagerTool implements BaseTool {
         agentConfig.apiKey = value;
         this.state.onConfigChanged("api_key", "***");
         return { success: true, output: "api_key updated (new agents will use it)" };
+      }
+
+      case "coding_model": {
+        const old = agentConfig.codingModel || agentConfig.model;
+        agentConfig.codingModel = value;
+        this.state.onConfigChanged("coding_model", value);
+        return { success: true, output: `coding_model changed: ${old} -> ${value}` };
+      }
+
+      case "coding_provider": {
+        const validProviders = ["anthropic", "openai", "google", "ollama", "custom"];
+        if (!validProviders.includes(value)) {
+          return { success: false, output: "", error: `Invalid provider: ${value}. Valid: ${validProviders.join(", ")}` };
+        }
+        const old = agentConfig.codingProvider || agentConfig.provider;
+        agentConfig.codingProvider = value;
+        this.state.onConfigChanged("coding_provider", value);
+        return { success: true, output: `coding_provider changed: ${old} -> ${value}` };
+      }
+
+      case "coding_api_key": {
+        agentConfig.codingApiKey = value;
+        this.state.onConfigChanged("coding_api_key", "***");
+        return { success: true, output: "coding_api_key updated" };
+      }
+
+      case "coding_max_tokens": {
+        const n = parseInt(value, 10);
+        if (isNaN(n) || n < 1) {
+          return { success: false, output: "", error: "coding_max_tokens must be a positive integer" };
+        }
+        agentConfig.codingMaxTokens = n;
+        this.state.onConfigChanged("coding_max_tokens", value);
+        return { success: true, output: `coding_max_tokens changed to ${n}` };
       }
 
       case "working_dir": {

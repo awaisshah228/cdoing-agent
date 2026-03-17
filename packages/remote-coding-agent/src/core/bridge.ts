@@ -1,15 +1,20 @@
 /**
- * Agent Bridge — Channel-agnostic orchestration layer.
+ * Agent Bridge — Dual-agent orchestration layer.
  *
- * Connects normalized messages from ANY channel to the AgentRunner.
+ * Architecture:
+ *   Every message goes through the PERSONAL ASSISTANT first (fast/cheap model).
+ *   The assistant decides whether to handle directly or delegate to the
+ *   CODING AGENT (powerful model) via the delegate_to_coder tool.
  *
- *   1. Receives an IncomingMessage + the ChannelAdapter that sent it
- *   2. Resolves session (conversation continuity)
- *   3. Handles slash commands (/start, /help, /clear, /dir, /model, /status)
- *   4. Runs the agent with the 8-second timeout pattern:
- *      - Fast response: reply directly
- *      - Slow response: send "Working..." then follow up
- *   5. Sends response back via the channel adapter
+ *   Personal Assistant (Haiku/GPT-4o-mini)
+ *   ├── Chat, Q&A → responds directly
+ *   ├── Config/Cron/Skills → uses management tools
+ *   └── Coding tasks → delegate_to_coder → Coding Agent (Opus/Sonnet)
+ *
+ *   This gives the best of both worlds:
+ *   - Fast, cheap responses for casual interactions
+ *   - Powerful, capable responses for coding tasks
+ *   - The assistant IS the router (no fragile keyword matching)
  */
 
 import { AgentRunner, type AgentCallbacks } from "@cdoing/ai";
@@ -42,6 +47,7 @@ import type {
   AgentConfig,
   SecurityConfig,
   AppConfig,
+  AgentRole,
   EngineEvent,
   EngineEventListener,
 } from "../types";
@@ -49,6 +55,7 @@ import { SessionManager } from "../session/session-manager";
 import { ConfigManagerTool, type ConfigManagerState } from "../tools/config-manager";
 import { CronTool, type CronToolState } from "../tools/cron-tool";
 import { SkillTool, type SkillToolState } from "../tools/skill-tool";
+import { DelegateToCoder, type DelegateState } from "../tools/delegate-to-coder";
 import { selectToolsForTurn } from "../tools/smart-selector";
 import { buildRemoteSystemPrompt } from "./system-prompt";
 import type { CronService } from "../cron/service";
@@ -83,7 +90,7 @@ export class AgentBridge {
   private skillRegistry?: SkillRegistry;
   private logger: Logger;
 
-  /** Active agent runners per session key. */
+  /** Active agent runners per session key + role. */
   private agents = new Map<string, AgentRunner>();
 
   /** Currently processing keys (prevent concurrent runs per user). */
@@ -142,10 +149,10 @@ export class AgentBridge {
     }
 
     this.processing.add(key);
-    this.emit({ type: "agent:start", channel, chatId });
+    this.emit({ type: "agent:start", channel, chatId, role: "assistant" });
 
     try {
-      await this.processWithAgent(message, adapter);
+      await this.processWithAssistant(message, adapter);
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       this.logger.error(`Agent error: ${error.message}`);
@@ -158,27 +165,23 @@ export class AgentBridge {
     }
   }
 
-  // ── Agent Execution (timeout pattern) ──────────────────────────────────
+  // ── Assistant Execution ────────────────────────────────────────────────
+  // Every message goes through the personal assistant first.
+  // The assistant has delegate_to_coder to hand off coding work.
 
-  private async processWithAgent(message: IncomingMessage, adapter: ChannelAdapter): Promise<void> {
+  private async processWithAssistant(message: IncomingMessage, adapter: ChannelAdapter): Promise<void> {
     const { channel, chatId, userId, text } = message;
     const session = this.sessionManager.getOrCreate(channel, chatId, userId, this.workingDir);
 
-    // Smart tool selection: analyze what kind of task this is
-    const fullRegistry = this.createToolRegistry(session.workingDir);
-    const selection = selectToolsForTurn(text, 1, fullRegistry);
+    const assistantRegistry = this.createAssistantToolRegistry(session.workingDir, session.id);
+
+    // Smart selection for assistant tools
+    const selection = selectToolsForTurn(text, 1, assistantRegistry, "assistant");
     if (selection.filtered) {
-      this.logger.debug(`Smart selection: ${selection.count} tools [${selection.matchedCategories.join(", ")}]`);
+      this.logger.debug(`Assistant tools: ${selection.count} [${selection.matchedCategories.join(", ")}]`);
     }
 
-    // Detect if this is a coding task — if so, use the coding model (if configured)
-    const isCodingTask = this.isCodingTask(text, selection.matchedCategories);
-    const useModel = isCodingTask ? "coding" : "assistant";
-    if (isCodingTask && this.agentConfig.codingModel) {
-      this.logger.debug(`Using coding model: ${this.agentConfig.codingProvider || this.agentConfig.provider}/${this.agentConfig.codingModel}`);
-    }
-
-    const agent = this.getOrCreateAgent(session.id, session.workingDir, channel, message.username, useModel);
+    const agent = this.getOrCreateAgent(session.id, session.workingDir, "assistant", channel, message.username);
 
     const toolCalls: ToolCallSummary[] = [];
     let totalIn = 0;
@@ -194,6 +197,9 @@ export class AgentBridge {
       onToolCall: (name, input) => {
         this.logger.debug(`Tool: ${name}`);
         this.emit({ type: "agent:tool_call", channel, chatId, name });
+        if (name === "delegate_to_coder") {
+          this.emit({ type: "agent:delegated", channel, chatId, task: (input as any).task || "" });
+        }
       },
       onToolResult: (name, result, isError) => {
         toolCalls.push({ name, input: {}, output: result.substring(0, 200), isError });
@@ -223,7 +229,7 @@ export class AgentBridge {
       // Fast path
       const reply = buildReply(result as string);
       this.sessionManager.addMessage(session, "assistant", reply.text);
-      this.emit({ type: "agent:complete", channel, chatId, reply });
+      this.emit({ type: "agent:complete", channel, chatId, reply, role: "assistant" });
       await adapter.sendMessage(chatId, reply.text, { replyToMessageId: message.messageId });
     } else {
       // Slow path — send "Working..." then follow up
@@ -239,7 +245,7 @@ export class AgentBridge {
 
         const reply = buildReply(responseText);
         this.sessionManager.addMessage(session, "assistant", reply.text);
-        this.emit({ type: "agent:complete", channel, chatId, reply });
+        this.emit({ type: "agent:complete", channel, chatId, reply, role: "assistant" });
 
         // Try editing the "Working..." message, otherwise send new
         if (reply.text.length <= 4000) {
@@ -261,6 +267,53 @@ export class AgentBridge {
     }
   }
 
+  // ── Coding Agent Execution ─────────────────────────────────────────────
+  // Called by the delegate_to_coder tool. Runs the coding agent with
+  // a powerful model and full tool access.
+
+  async runCodingTask(task: string, sessionId: string): Promise<string> {
+    const session = this.sessionManager.getById(sessionId);
+    const workingDir = session?.workingDir || this.workingDir;
+
+    this.logger.info(`Coding agent started: ${task.substring(0, 100)}`);
+    this.emit({ type: "agent:start", channel: session?.channel || "internal", chatId: session?.chatId || "", role: "coding" });
+
+    const agent = this.getOrCreateAgent(sessionId, workingDir, "coding");
+
+    const toolCalls: string[] = [];
+    let responseText = "";
+
+    const callbacks: AgentCallbacks = {
+      onToken: () => {},
+      onToolCall: (name) => {
+        toolCalls.push(name);
+        this.emit({ type: "agent:tool_call", channel: session?.channel || "internal", chatId: session?.chatId || "", name });
+      },
+      onToolResult: () => {},
+      onComplete: () => {},
+      onError: (err) => this.logger.error(`Coding agent error: ${err.message}`),
+      onUsage: () => {},
+    };
+
+    try {
+      responseText = await agent.run(task, callbacks);
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      responseText = `Coding agent error: ${error.message}`;
+    }
+
+    this.logger.info(`Coding agent done: ${toolCalls.length} tool calls`);
+    this.emit({
+      type: "agent:complete",
+      channel: session?.channel || "internal",
+      chatId: session?.chatId || "",
+      reply: { text: responseText, toolCalls: toolCalls.map((n) => ({ name: n, input: {}, output: "", isError: false })) },
+      role: "coding",
+    });
+
+    return responseText;
+  }
+
   // ── Slash Commands ─────────────────────────────────────────────────────
 
   private async handleCommand(message: IncomingMessage, adapter: ChannelAdapter): Promise<void> {
@@ -272,8 +325,10 @@ export class AgentBridge {
       case "/start":
         await adapter.sendMessage(chatId,
           "Welcome to Remote Coding Agent!\n\n" +
-          "I'm your personal AI coding assistant. Send me any coding task " +
-          "and I'll help — I can read/edit files, run commands, search code, and more.\n\n" +
+          "I'm your personal AI assistant. I handle chat, scheduling, and config directly. " +
+          "For coding tasks, I delegate to a powerful coding agent.\n\n" +
+          `Assistant: ${this.agentConfig.provider}/${this.agentConfig.model}\n` +
+          `Coding: ${this.agentConfig.codingProvider || this.agentConfig.provider}/${this.agentConfig.codingModel || this.agentConfig.model}\n\n` +
           "Use /help to see all commands."
         );
         break;
@@ -284,7 +339,10 @@ export class AgentBridge {
 
       case "/clear":
         this.sessionManager.destroy(channel, chatId, userId);
-        this.agents.delete(`${channel}:${chatId}:${userId}`);
+        // Clear both assistant and coding agents
+        const clearKey = `${channel}:${chatId}:${userId}`;
+        this.agents.delete(`${clearKey}:assistant`);
+        this.agents.delete(`${clearKey}:coding`);
         await adapter.sendMessage(chatId, "Conversation cleared. Starting fresh!");
         break;
 
@@ -293,6 +351,9 @@ export class AgentBridge {
         if (!session) {
           await adapter.sendMessage(chatId, "No active session. Send a message to start.");
         } else {
+          const codingInfo = this.agentConfig.codingModel
+            ? `\nCoding: ${this.agentConfig.codingProvider || this.agentConfig.provider}/${this.agentConfig.codingModel}`
+            : "";
           await adapter.sendMessage(chatId, formatStatus({
             sessionId: session.id,
             channel: session.channel,
@@ -300,7 +361,7 @@ export class AgentBridge {
             historyLength: session.history.length,
             provider: this.agentConfig.provider,
             model: this.agentConfig.model,
-          }));
+          }) + codingInfo);
         }
         break;
       }
@@ -318,7 +379,10 @@ export class AgentBridge {
           } else {
             const session = this.sessionManager.getOrCreate(channel, chatId, userId, arg);
             session.workingDir = arg;
-            this.agents.delete(`${channel}:${chatId}:${userId}`);
+            // Clear cached agents for this session
+            const dirKey = `${channel}:${chatId}:${userId}`;
+            this.agents.delete(`${dirKey}:assistant`);
+            this.agents.delete(`${dirKey}:coding`);
             await adapter.sendMessage(chatId, `Working directory changed to: ${arg}`);
           }
         }
@@ -327,22 +391,41 @@ export class AgentBridge {
 
       case "/model": {
         if (!arg) {
-          await adapter.sendMessage(chatId, `Current model: ${this.agentConfig.model}`);
+          const codingInfo = this.agentConfig.codingModel
+            ? `\nCoding model: ${this.agentConfig.codingModel}`
+            : "";
+          await adapter.sendMessage(chatId,
+            `Assistant model: ${this.agentConfig.model}${codingInfo}\n\n` +
+            `Usage:\n/model <name> — change assistant model\n/model coding <name> — change coding model`
+          );
+        } else if (arg.startsWith("coding ")) {
+          const codingModel = arg.substring(7).trim();
+          this.agentConfig.codingModel = codingModel;
+          this.agents.clear();
+          await adapter.sendMessage(chatId, `Coding model switched to: ${codingModel}`);
         } else {
           this.agentConfig.model = arg;
-          this.agents.delete(`${channel}:${chatId}:${userId}`);
-          await adapter.sendMessage(chatId, `Model switched to: ${arg}`);
+          this.agents.clear();
+          await adapter.sendMessage(chatId, `Assistant model switched to: ${arg}`);
         }
         break;
       }
 
       case "/provider": {
         if (!arg) {
-          await adapter.sendMessage(chatId, `Current provider: ${this.agentConfig.provider}`);
+          const codingInfo = this.agentConfig.codingProvider
+            ? `\nCoding provider: ${this.agentConfig.codingProvider}`
+            : "";
+          await adapter.sendMessage(chatId, `Assistant provider: ${this.agentConfig.provider}${codingInfo}`);
+        } else if (arg.startsWith("coding ")) {
+          const codingProvider = arg.substring(7).trim();
+          this.agentConfig.codingProvider = codingProvider;
+          this.agents.clear();
+          await adapter.sendMessage(chatId, `Coding provider switched to: ${codingProvider}`);
         } else {
           this.agentConfig.provider = arg;
-          this.agents.delete(`${channel}:${chatId}:${userId}`);
-          await adapter.sendMessage(chatId, `Provider switched to: ${arg}`);
+          this.agents.clear();
+          await adapter.sendMessage(chatId, `Assistant provider switched to: ${arg}`);
         }
         break;
       }
@@ -361,44 +444,57 @@ export class AgentBridge {
   // ── Agent Factory ──────────────────────────────────────────────────────
 
   /**
-   * Get or create an AgentRunner for a session.
+   * Get or create an AgentRunner for a session + role.
    *
-   * Supports two model modes:
-   *   - "assistant": uses the main model (for chat, cron, skills, config)
-   *   - "coding": uses the coding model if configured (for file edits, builds, etc.)
-   *
-   * Each mode gets its own cached agent per session so model switching
-   * doesn't recreate agents on every message.
+   * Each role has its own:
+   *   - Tool registry (assistant: management tools, coding: full tools)
+   *   - System prompt (assistant: routing prompt, coding: coding prompt)
+   *   - Model config (assistant: fast model, coding: powerful model)
    */
   private getOrCreateAgent(
     sessionId: string,
     workingDir: string,
+    role: AgentRole,
     channel?: string,
     username?: string,
-    mode: "assistant" | "coding" = "assistant",
   ): AgentRunner {
-    // Cache key includes mode so assistant and coding agents are separate
-    const cacheKey = `${sessionId}:${mode}`;
+    const cacheKey = `${sessionId}:${role}`;
     let agent = this.agents.get(cacheKey);
     if (agent) return agent;
 
-    const toolRegistry = this.createToolRegistry(workingDir);
-    const permissionManager = new PermissionManager(this.agentConfig.permissionMode as any, workingDir);
+    // Resolve model config based on role
+    const useCoding = role === "coding";
+    const provider = useCoding
+      ? (this.agentConfig.codingProvider || this.agentConfig.provider)
+      : this.agentConfig.provider;
+    const model = useCoding
+      ? (this.agentConfig.codingModel || this.agentConfig.model)
+      : this.agentConfig.model;
+    const apiKey = useCoding
+      ? (this.agentConfig.codingApiKey || this.agentConfig.apiKey)
+      : this.agentConfig.apiKey;
+    const maxTokens = useCoding
+      ? (this.agentConfig.codingMaxTokens || this.agentConfig.maxTokens)
+      : this.agentConfig.maxTokens;
 
-    // Resolve model config based on mode
-    const useCoding = mode === "coding" && this.agentConfig.codingModel;
-    const provider = useCoding ? (this.agentConfig.codingProvider || this.agentConfig.provider) : this.agentConfig.provider;
-    const model = useCoding ? this.agentConfig.codingModel! : this.agentConfig.model;
-    const apiKey = useCoding ? (this.agentConfig.codingApiKey || this.agentConfig.apiKey) : this.agentConfig.apiKey;
-    const maxTokens = useCoding ? (this.agentConfig.codingMaxTokens || this.agentConfig.maxTokens) : this.agentConfig.maxTokens;
+    // Create role-appropriate tool registry
+    const toolRegistry = role === "assistant"
+      ? this.createAssistantToolRegistry(workingDir, sessionId)
+      : this.createCodingToolRegistry(workingDir);
 
-    // Build the remote agent system prompt
+    const permissionManager = new PermissionManager(
+      this.agentConfig.permissionMode as any,
+      workingDir,
+    );
+
     const systemPrompt = buildRemoteSystemPrompt({
       workingDir,
+      role,
       channel,
       username,
       provider,
       model,
+      codingModel: useCoding ? undefined : (this.agentConfig.codingModel || undefined),
       customPrompt: this.agentConfig.systemPrompt,
       skillRegistry: this.skillRegistry,
     });
@@ -409,7 +505,7 @@ export class AgentBridge {
       permissionManager,
       undefined,
       {
-        maxTurns: this.agentConfig.maxTurns,
+        maxTurns: role === "coding" ? this.agentConfig.maxTurns : Math.min(this.agentConfig.maxTurns, 5),
         workingDir,
         systemPrompt,
       },
@@ -419,36 +515,72 @@ export class AgentBridge {
     return agent;
   }
 
+  // ── Tool Registries (role-specific) ────────────────────────────────────
+
   /**
-   * Detect whether a user message is a coding task (needs the coding model)
-   * or a management/chat task (uses the assistant model).
-   *
-   * Coding tasks: file edits, search, run, build, test, git, debug, etc.
-   * Non-coding: scheduling, skills, config, general chat, questions.
+   * Assistant tools: read-only + management + delegation.
+   * NO file write/edit/exec — those are for the coding agent.
    */
-  private isCodingTask(text: string, matchedCategories: string[]): boolean {
-    // If no coding model configured, always use assistant model
-    if (!this.agentConfig.codingModel) return false;
-
-    // These categories indicate coding work
-    const codingCategories = new Set(["edit", "search", "run", "diff", "repo"]);
-
-    // Check if any matched category is a coding category
-    for (const cat of matchedCategories) {
-      if (codingCategories.has(cat)) return true;
-    }
-
-    // Keyword-based fallback for messages that didn't match categories
-    return /\b(fix|bug|edit|refactor|implement|write code|debug|build|compile|test|deploy|create file|read file)\b/i.test(text);
-  }
-
-  private createToolRegistry(workingDir: string): ToolRegistry {
+  private createAssistantToolRegistry(workingDir: string, sessionId: string): ToolRegistry {
     const sm = this.securityConfig.allowedDirs.length > 0
       ? new SandboxManager(workingDir, workingDir)
       : undefined;
 
     const registry = new ToolRegistry();
 
+    // Read-only tools (assistant can look but not touch)
+    registry.register(new FileReadTool(workingDir, sm));
+    registry.register(new GlobSearchTool(workingDir));
+    registry.register(new GrepSearchTool(workingDir));
+    registry.register(new ListDirTool(workingDir, sm));
+
+    // Delegation tool — the key mechanism
+    const delegateState: DelegateState = {
+      runCodingAgent: (task) => this.runCodingTask(task, sessionId),
+      sessionId,
+    };
+    registry.register(new DelegateToCoder(delegateState));
+
+    // Config manager — lets the assistant configure itself and the coding agent
+    const configState: ConfigManagerState = {
+      agentConfig: this.agentConfig,
+      securityConfig: this.securityConfig,
+      workingDir: this.workingDir,
+      appConfig: this.appConfig,
+      onConfigChanged: (key, value) => {
+        this.logger.info(`Config changed via chat: ${key} = ${value}`);
+        this.agents.clear();
+      },
+    };
+    registry.register(new ConfigManagerTool(configState));
+
+    // Cron manager
+    if (this.cronService) {
+      const cronState: CronToolState = { cronService: this.cronService };
+      registry.register(new CronTool(cronState));
+    }
+
+    // Skill manager
+    if (this.skillRegistry) {
+      const skillState: SkillToolState = { skillRegistry: this.skillRegistry };
+      registry.register(new SkillTool(skillState));
+    }
+
+    return registry;
+  }
+
+  /**
+   * Coding tools: full file/shell/search access.
+   * NO config/cron/skill/delegate — those are for the assistant.
+   */
+  private createCodingToolRegistry(workingDir: string): ToolRegistry {
+    const sm = this.securityConfig.allowedDirs.length > 0
+      ? new SandboxManager(workingDir, workingDir)
+      : undefined;
+
+    const registry = new ToolRegistry();
+
+    // Full coding tools
     registry.register(new FileReadTool(workingDir, sm));
     registry.register(new FileWriteTool(workingDir, sm));
     registry.register(new FileEditTool(workingDir, sm));
@@ -464,34 +596,6 @@ export class AgentBridge {
     registry.register(new CodeVerifyTool(workingDir));
     registry.register(new WebFetchTool(sm));
     registry.register(new WebSearchTool());
-
-    // ── Remote Agent Tools (personal assistant capabilities) ──
-
-    // Config manager — lets the LLM change config via chat
-    const configState: ConfigManagerState = {
-      agentConfig: this.agentConfig,
-      securityConfig: this.securityConfig,
-      workingDir: this.workingDir,
-      appConfig: this.appConfig,
-      onConfigChanged: (key, value) => {
-        this.logger.info(`Config changed via chat: ${key} = ${value}`);
-        // Invalidate all cached agents so they pick up new config
-        this.agents.clear();
-      },
-    };
-    registry.register(new ConfigManagerTool(configState));
-
-    // Cron manager — lets the LLM create/manage scheduled tasks
-    if (this.cronService) {
-      const cronState: CronToolState = { cronService: this.cronService };
-      registry.register(new CronTool(cronState));
-    }
-
-    // Skill manager — lets the LLM invoke reusable skill recipes
-    if (this.skillRegistry) {
-      const skillState: SkillToolState = { skillRegistry: this.skillRegistry };
-      registry.register(new SkillTool(skillState));
-    }
 
     return registry;
   }
@@ -520,5 +624,16 @@ export class AgentBridge {
 
   get activeCount(): number {
     return this.agents.size;
+  }
+
+  /** Get stats about active agents by role. */
+  getAgentStats(): { assistant: number; coding: number } {
+    let assistant = 0;
+    let coding = 0;
+    for (const key of this.agents.keys()) {
+      if (key.endsWith(":assistant")) assistant++;
+      else if (key.endsWith(":coding")) coding++;
+    }
+    return { assistant, coding };
   }
 }

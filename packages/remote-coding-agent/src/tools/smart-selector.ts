@@ -31,18 +31,30 @@
  */
 
 import type { ToolRegistry } from "@cdoing/core";
+import type { AgentRole } from "../types";
 
 // ── Tool Categories ─────────────────────────────────────────────────────
 
 /**
- * Core tools included in EVERY request (minimal set for basic operation).
- * These cover the most common needs and are cheap to include.
+ * Core tools for the CODING agent (always included).
  */
-const CORE_TOOLS = new Set([
-  "file_read",      // Almost every task needs file reading
-  "shell_exec",     // Running commands is fundamental
-  "list_dir",       // Directory exploration
-  "glob_search",    // Finding files by pattern
+const CODING_CORE_TOOLS = new Set([
+  "file_read",
+  "shell_exec",
+  "list_dir",
+  "glob_search",
+]);
+
+/**
+ * Core tools for the ASSISTANT agent (always included).
+ * Read-only + management tools. No file write/edit/exec.
+ */
+const ASSISTANT_CORE_TOOLS = new Set([
+  "file_read",
+  "glob_search",
+  "list_dir",
+  "delegate_to_coder",
+  "config_manager",
 ]);
 
 /**
@@ -123,19 +135,25 @@ export interface ToolSelectionResult {
  * @param message      - The user's message text
  * @param turnNumber   - Current turn (1 = first, 2+ = subsequent)
  * @param registry     - Full tool registry (to validate tool names exist)
+ * @param role         - Agent role ("assistant" or "coding")
  * @returns            - Set of tool names to include
  *
  * Rules:
  *   - Turn 1: analyze message keywords → select relevant tools
  *   - Turn 2+: return all tools (agent may chain anything in multi-turn)
  *   - No matches: return all tools (ambiguous request)
+ *   - Assistant role: only management + read-only + delegate tools
+ *   - Coding role: only coding tools (no config/cron/delegate)
  */
 export function selectToolsForTurn(
   message: string,
   turnNumber: number,
   registry: ToolRegistry,
+  role: AgentRole = "coding",
 ): ToolSelectionResult {
-  // After turn 1, always send all tools (agent needs freedom to chain)
+  const coreTools = role === "assistant" ? ASSISTANT_CORE_TOOLS : CODING_CORE_TOOLS;
+
+  // After turn 1, send all tools registered for this role
   if (turnNumber > 1) {
     return {
       selectedTools: new Set(),
@@ -145,23 +163,31 @@ export function selectToolsForTurn(
     };
   }
 
-  const selected = new Set(CORE_TOOLS);
+  const selected = new Set(coreTools);
   const matchedCategories: string[] = ["core"];
   let signalMatched = false;
 
-  for (const signal of TOOL_SIGNALS) {
+  // For assistant: only match management-related signals
+  const signals = role === "assistant"
+    ? TOOL_SIGNALS.filter((s) => {
+        const cat = s.keywords.source.split("|")[0].replace(/[\\(]/g, "");
+        // Assistant gets: scheduling, skills, config, search (read-only), web
+        return ["remind", "skill", "config", "search", "web", "repo"].includes(cat);
+      })
+    : TOOL_SIGNALS;
+
+  for (const signal of signals) {
     if (signal.keywords.test(message)) {
       for (const tool of signal.tools) {
         selected.add(tool);
       }
-      // Extract category name from the first keyword for debugging
       const category = signal.keywords.source.split("|")[0].replace(/[\\(]/g, "");
       matchedCategories.push(category);
       signalMatched = true;
     }
   }
 
-  // No specific signals → include everything (ambiguous request)
+  // No specific signals → include everything in the registry
   if (!signalMatched) {
     return {
       selectedTools: new Set(),
@@ -171,7 +197,7 @@ export function selectToolsForTurn(
     };
   }
 
-  // Validate that selected tools actually exist in the registry
+  // Validate against registry
   const available = new Set(registry.getAll().map((t) => t.definition.name));
   const validated = new Set<string>();
   for (const tool of selected) {

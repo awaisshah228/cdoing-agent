@@ -76,6 +76,11 @@ export class SessionManager {
     return session;
   }
 
+  /** Get a session by its full ID (channel:chatId:userId). */
+  getById(sessionId: string): Session | null {
+    return this.sessions.get(sessionId) || null;
+  }
+
   destroy(channel: string, chatId: string, userId: string): boolean {
     return this.sessions.delete(this.key(channel, chatId, userId));
   }

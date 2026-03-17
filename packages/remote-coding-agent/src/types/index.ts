@@ -257,6 +257,9 @@ export interface SecurityConfig {
 
 // ── Events ─────────────────────────────────────────────────────────────────
 
+/** Which agent role is handling a message. */
+export type AgentRole = "assistant" | "coding";
+
 /** Events emitted by the engine for TUI/monitoring. */
 export type EngineEvent =
   | { type: "engine:start" }
@@ -265,11 +268,12 @@ export type EngineEvent =
   | { type: "channel:disconnected"; channel: string }
   | { type: "channel:error"; channel: string; error: Error }
   | { type: "message:received"; channel: string; chatId: string; userId: string; text: string }
-  | { type: "agent:start"; channel: string; chatId: string }
+  | { type: "agent:start"; channel: string; chatId: string; role: AgentRole }
   | { type: "agent:token"; channel: string; chatId: string; token: string }
   | { type: "agent:tool_call"; channel: string; chatId: string; name: string }
-  | { type: "agent:complete"; channel: string; chatId: string; reply: AgentReply }
+  | { type: "agent:complete"; channel: string; chatId: string; reply: AgentReply; role: AgentRole }
   | { type: "agent:error"; channel: string; chatId: string; error: Error }
+  | { type: "agent:delegated"; channel: string; chatId: string; task: string }
   | { type: "session:created"; sessionId: string }
   | { type: "session:expired"; sessionId: string };
 
