@@ -735,7 +735,28 @@ export function SessionView(props: {
         const config = loadStoredConfig();
         const lines: string[] = ["Authentication Status:", ""];
 
+        // OAuth status
+        try {
+          const { getAllOAuthStatuses } = require("@cdoing/core");
+          const oauthStatuses = getAllOAuthStatuses();
+          lines.push("OAuth:");
+          let hasOAuth = false;
+          for (const s of oauthStatuses) {
+            if (s.status === "none") continue;
+            hasOAuth = true;
+            const icon = s.status === "active" ? "✓" : "✗";
+            const label = s.status === "active" ? "active" : "expired";
+            const expires = s.expiresAt ? new Date(s.expiresAt).toLocaleString() : "unknown";
+            lines.push(`  ${icon} ${s.name}: ${label}`);
+            if (s.expiresAt) lines.push(`    Expires: ${expires}`);
+          }
+          if (!hasOAuth) lines.push("  None");
+        } catch {
+          lines.push("OAuth: unavailable");
+        }
+
         // API keys
+        lines.push("");
         lines.push("Stored API keys:");
         if (config.apiKeys && Object.keys(config.apiKeys).length > 0) {
           for (const [prov, key] of Object.entries(config.apiKeys)) {
@@ -772,7 +793,14 @@ export function SessionView(props: {
         const checks: string[] = ["System health check:"];
         const config = loadStoredConfig();
         const envKey = process.env[`${sdk.provider.toUpperCase()}_API_KEY`];
-        checks.push(`  Provider: ${sdk.provider} ${config.apiKeys?.[sdk.provider] || envKey ? "✓ API key found" : "✗ No API key"}`);
+        let hasAuth = !!(config.apiKeys?.[sdk.provider] || envKey);
+        if (!hasAuth) {
+          try {
+            const { getOAuthStatus } = require("@cdoing/core");
+            hasAuth = getOAuthStatus(sdk.provider).status === "active";
+          } catch {}
+        }
+        checks.push(`  Provider: ${sdk.provider} ${hasAuth ? "✓ Authenticated" : "✗ No API key or OAuth token"}`);
         checks.push(`  Model: ${sdk.model}`);
         checks.push(`  Working dir: ${sdk.workingDir} ${fs.existsSync(sdk.workingDir) ? "✓" : "✗"}`);
         const hasCdoing = fs.existsSync(path.join(sdk.workingDir, ".cdoing"));
