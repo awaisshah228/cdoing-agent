@@ -69,7 +69,7 @@ export function StatusBar(props: StatusBarProps) {
       <box flexDirection="row">
         <text fg={t.textDim}>{shortDir}</text>
         <text fg={t.textDim}>{" │ "}</text>
-        <text fg={t.textMuted}>{"^N:New ^P:Model ^C:Quit"}</text>
+        <text fg={t.textMuted}>{"^P:Commands  ^O:Model  ^C:Quit"}</text>
       </box>
     </box>
   );

@@ -98,15 +98,34 @@ export function Sidebar(props: SidebarProps) {
     sep();
   }
 
+  // ── LSP ──
+  header("LSP");
+  row("", "LSPs will activate as files are read");
+  sep();
+
   // ── Shortcuts ──
   header("Shortcuts");
-  shortcut("Ctrl+B", "Sidebar");
-  shortcut("Ctrl+N", "New session");
-  shortcut("Ctrl+P", "Model");
+  shortcut("Ctrl+P", "Commands");
+  shortcut("Ctrl+O", "Model");
   shortcut("Ctrl+T", "Theme");
+  shortcut("Ctrl+N", "New session");
   shortcut("Ctrl+S", "Sessions");
-  shortcut("Ctrl+X", "Commands");
+  shortcut("Ctrl+B", "Sidebar");
   shortcut("F1", "Help");
+
+  // ── Getting started card ──
+  const cardW = W - 2;
+  const cardLines: Array<{ text: string; fg: any; bold?: boolean }> = [];
+  cardLines.push({ text: `  ◆ Getting started`, fg: t.primary, bold: true });
+  cardLines.push({ text: ``, fg: t.textDim });
+  cardLines.push({ text: `  Cdoing includes free models`, fg: t.textMuted });
+  cardLines.push({ text: `  so you can start immediately.`, fg: t.textMuted });
+  cardLines.push({ text: ``, fg: t.textDim });
+  cardLines.push({ text: `  Connect from 75+ providers to`, fg: t.textMuted });
+  cardLines.push({ text: `  use other models, including`, fg: t.textMuted });
+  cardLines.push({ text: `  Claude, GPT, Gemini etc`, fg: t.textMuted });
+  cardLines.push({ text: ``, fg: t.textDim });
+  cardLines.push({ text: `  Connect provider      /setup`, fg: t.text, bold: true });
 
   return (
     <box width={W + 2} flexDirection="column" backgroundColor={t.bgSubtle}>
@@ -121,9 +140,42 @@ export function Sidebar(props: SidebarProps) {
             </text>
           </box>
         ))}
-        {/* Fill remaining space with border */}
+        {/* Fill remaining space */}
         <box flexGrow={1}>
           <text fg={t.border}>{"│"}</text>
+        </box>
+        {/* Getting started card at bottom */}
+        <box flexDirection="column" paddingX={1}>
+          <box height={1}>
+            <text fg={t.border}>{"┌" + "─".repeat(cardW) + "┐"}</text>
+          </box>
+          {cardLines.map((cl, i) => (
+            <box key={`card-${i}`} height={1}>
+              <text fg={t.border}>{"│"}</text>
+              <text fg={cl.fg} attributes={cl.bold ? TextAttributes.BOLD : undefined}>
+                {cl.text.padEnd(cardW)}
+              </text>
+              <text fg={t.border}>{"│"}</text>
+            </box>
+          ))}
+          <box height={1}>
+            <text fg={t.border}>{"└" + "─".repeat(cardW) + "┘"}</text>
+          </box>
+        </box>
+        {/* Working dir + version footer */}
+        <box height={1} paddingX={1}>
+          <text fg={t.textDim}>
+            {trunc((() => {
+              const home = process.env.HOME || "";
+              return home && props.workingDir.startsWith(home)
+                ? "~" + props.workingDir.slice(home.length) : props.workingDir;
+            })(), W - 2)}
+          </text>
+        </box>
+        <box height={1} paddingX={1}>
+          <text fg={t.success}>{"● "}</text>
+          <text fg={t.text} attributes={TextAttributes.BOLD}>{"Cdoing"}</text>
+          <text fg={t.textDim}>{" Agent"}</text>
         </box>
       </box>
     </box>

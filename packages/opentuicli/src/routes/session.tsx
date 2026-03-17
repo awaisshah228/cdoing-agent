@@ -23,7 +23,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { MessageList, type Message } from "../components/message-list";
-import { InputArea } from "../components/input-area";
+import { InputArea, type AgentMode } from "../components/input-area";
 import { PermissionPrompt } from "../components/permission-prompt";
 import { LoadingSpinner } from "../components/loading-spinner";
 import { useSDK } from "../context/sdk";
@@ -152,6 +152,13 @@ export function SessionView(props: {
   const streamingTextRef = useRef(streamingText);
   streamingTextRef.current = streamingText;
   const [isStreaming, setIsStreaming] = useState(false);
+  const [agentMode, setAgentMode] = useState<AgentMode>("build");
+
+  // Wire mode change to permission manager's agentType
+  const handleModeChange = (mode: AgentMode) => {
+    setAgentMode(mode);
+    sdk.permissionManager.setAgentType(mode);
+  };
   const [activeTool, setActiveTool] = useState<string | undefined>();
   const [pendingPermission, setPendingPermission] = useState<{
     toolName: string;
@@ -901,10 +908,12 @@ export function SessionView(props: {
           "  Ctrl+V    Paste text or image",
           "  Ctrl+U    Clear input line",
           "  Ctrl+W    Delete last word",
+          "  Ctrl+P    Command palette",
+          "  Ctrl+O    Model picker",
           "  Ctrl+N    New session",
-          "  Ctrl+P    Model picker",
           "  Ctrl+S    Session browser",
-          "  Tab/→     Accept autocomplete",
+          "  Tab       Switch mode (Build/Plan)",
+          "  →         Accept autocomplete",
           "  ↑/↓       Navigate suggestions",
           "  Escape    Close dropdown",
           "",
@@ -1209,6 +1218,9 @@ export function SessionView(props: {
           suppressInput={props.dialogOpen}
           placeholder={isStreaming ? "Type to interrupt or queue..." : undefined}
           workingDir={sdk.workingDir}
+          mode={agentMode}
+          onModeChange={handleModeChange}
+          modelLabel={sdk.model}
         />
       </box>
     </box>

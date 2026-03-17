@@ -1,7 +1,8 @@
 /**
- * DialogCommand — command palette dialog (Ctrl+X)
+ * DialogCommand — command palette (Ctrl+P)
  *
- * Uses OpenTUI <select> for the command list with fuzzy search.
+ * Full command palette with categories, fuzzy search, shortcuts,
+ * and keyboard navigation. Inspired by OpenCode's command palette.
  */
 
 import { TextAttributes } from "@opentui/core";
@@ -17,29 +18,36 @@ export interface Command {
   label: string;
   shortcut?: string;
   category: string;
+  icon?: string;
 }
 
 const COMMANDS: Command[] = [
   // Session
-  { id: "session:new", label: "New Session", shortcut: "Ctrl+N", category: "Session" },
-  { id: "session:browse", label: "Browse Sessions", shortcut: "Ctrl+S", category: "Session" },
-  { id: "session:clear", label: "Clear History", shortcut: "", category: "Session" },
+  { id: "session:new", label: "New Session", shortcut: "Ctrl+N", category: "Session", icon: "+" },
+  { id: "session:browse", label: "Browse Sessions", shortcut: "Ctrl+S", category: "Session", icon: "◦" },
+  { id: "session:clear", label: "Clear History", shortcut: "", category: "Session", icon: "✕" },
 
   // Model & Provider
-  { id: "model:switch", label: "Switch Model", shortcut: "Ctrl+P", category: "Model" },
+  { id: "model:switch", label: "Switch Model", shortcut: "Ctrl+O", category: "Model", icon: "◆" },
+  { id: "model:provider", label: "Switch Provider", shortcut: "", category: "Model", icon: "◆" },
 
   // Theme & Appearance
-  { id: "theme:picker", label: "Browse Themes", shortcut: "Ctrl+T", category: "Appearance" },
-  { id: "theme:dark", label: "Dark Mode", shortcut: "", category: "Appearance" },
-  { id: "theme:light", label: "Light Mode", shortcut: "", category: "Appearance" },
-  { id: "display:sidebar", label: "Toggle Sidebar", shortcut: "Ctrl+B", category: "Appearance" },
+  { id: "theme:picker", label: "Browse Themes", shortcut: "Ctrl+T", category: "Appearance", icon: "◈" },
+  { id: "theme:dark", label: "Dark Mode", shortcut: "", category: "Appearance", icon: "●" },
+  { id: "theme:light", label: "Light Mode", shortcut: "", category: "Appearance", icon: "○" },
+  { id: "display:sidebar", label: "Toggle Sidebar", shortcut: "Ctrl+B", category: "Appearance", icon: "▐" },
+
+  // Tools
+  { id: "tool:shell", label: "Run Shell Command", shortcut: "", category: "Tools", icon: "$" },
+  { id: "tool:search", label: "Search Codebase", shortcut: "", category: "Tools", icon: "?" },
+  { id: "tool:tree", label: "File Tree", shortcut: "", category: "Tools", icon: "├" },
 
   // System
-  { id: "system:status", label: "System Status", shortcut: "", category: "System" },
-  { id: "system:help", label: "Help", shortcut: "F1", category: "System" },
-  { id: "system:doctor", label: "Doctor", shortcut: "", category: "System" },
-  { id: "system:setup", label: "Setup Wizard", shortcut: "", category: "System" },
-  { id: "system:exit", label: "Exit", shortcut: "Ctrl+C", category: "System" },
+  { id: "system:status", label: "System Status", shortcut: "", category: "System", icon: "i" },
+  { id: "system:help", label: "Help", shortcut: "F1", category: "System", icon: "?" },
+  { id: "system:doctor", label: "Doctor (Diagnostics)", shortcut: "", category: "System", icon: "+" },
+  { id: "system:setup", label: "Setup Wizard (Connect Provider)", shortcut: "", category: "System", icon: "⚙" },
+  { id: "system:exit", label: "Exit", shortcut: "Ctrl+C", category: "System", icon: "⏻" },
 ];
 
 // ── Fuzzy Match ──────────────────────────────────────────
@@ -66,27 +74,39 @@ export function DialogCommand(props: {
   const dims = useTerminalDimensions();
   const [query, setQuery] = useState("");
 
-  const dialogWidth = Math.min(60, (dims.width || 80) - 4);
-  const maxVisible = Math.max(5, Math.floor((dims.height || 24) / 2));
+  const dialogWidth = Math.min(64, (dims.width || 80) - 4);
+  const maxVisible = Math.max(8, Math.floor((dims.height || 24) * 0.6));
 
-  // Filter commands by fuzzy search across label and category
+  // Filter commands by fuzzy search across label, category, and id
   const filtered = useMemo(() => {
     return COMMANDS.filter(
-      (cmd) => fuzzyMatch(query, cmd.label) || fuzzyMatch(query, cmd.category)
+      (cmd) =>
+        fuzzyMatch(query, cmd.label) ||
+        fuzzyMatch(query, cmd.category) ||
+        fuzzyMatch(query, cmd.id)
     );
   }, [query]);
 
-  // Convert to SelectOption format
+  // Group by category for display (with separators)
   const selectOptions: SelectOption[] = useMemo(() => {
-    return filtered.map((cmd) => ({
-      name: cmd.label,
-      description: [cmd.category, cmd.shortcut].filter(Boolean).join("  "),
-      value: cmd.id,
-    }));
+    const opts: SelectOption[] = [];
+    let lastCategory = "";
+    for (const cmd of filtered) {
+      if (cmd.category !== lastCategory) {
+        lastCategory = cmd.category;
+      }
+      const shortcutStr = cmd.shortcut || "";
+      opts.push({
+        name: `${cmd.icon || " "} ${cmd.label}`,
+        description: [cmd.category, shortcutStr].filter(Boolean).join("  "),
+        value: cmd.id,
+      });
+    }
+    return opts;
   }, [filtered]);
 
   useKeyboard((key: any) => {
-    if (key.name === "escape") {
+    if (key.name === "escape" || (key.ctrl && key.name === "p")) {
       props.onClose();
       return;
     }
@@ -97,6 +117,12 @@ export function DialogCommand(props: {
     // Backspace — search
     if (key.name === "backspace") {
       setQuery((q) => q.slice(0, -1));
+      return;
+    }
+
+    // Ctrl+U — clear search
+    if (key.ctrl && key.name === "u") {
+      setQuery("");
       return;
     }
 
@@ -112,29 +138,33 @@ export function DialogCommand(props: {
       borderColor={t.primary}
       backgroundColor={customBg || t.bg}
       paddingX={1}
-      paddingY={1}
+      paddingY={0}
       flexDirection="column"
       position="absolute"
-      top={Math.max(2, Math.floor((dims.height || 24) * 0.15))}
+      top={Math.max(1, Math.floor((dims.height || 24) * 0.1))}
       left={Math.max(1, Math.floor(((dims.width || 80) - dialogWidth) / 2))}
       width={dialogWidth}
     >
       {/* Title bar */}
-      <box flexDirection="row" flexShrink={0}>
+      <box flexDirection="row" flexShrink={0} height={1}>
         <text fg={t.primary} attributes={TextAttributes.BOLD} flexGrow={1}>
-          {"  Command Palette"}
+          {" Commands"}
         </text>
-        <text fg={t.textDim}>{"esc"}</text>
+        <text fg={t.textDim}>{"Ctrl+P "}</text>
       </box>
-      <text>{""}</text>
 
       {/* Search input */}
-      <box flexDirection="row" flexShrink={0}>
-        <text fg={t.textMuted}>{"  > "}</text>
-        <text fg={t.text}>{query || ""}</text>
-        <text fg={t.primary} attributes={TextAttributes.BOLD}>{"_"}</text>
+      <box height={1} flexShrink={0}>
+        <text fg={t.border}>{"─".repeat(dialogWidth - 4)}</text>
       </box>
-      <text flexShrink={0}>{""}</text>
+      <box flexDirection="row" flexShrink={0} height={1}>
+        <text fg={t.textMuted}>{" > "}</text>
+        <text fg={t.text}>{query || ""}</text>
+        <text fg={t.primary} attributes={TextAttributes.BOLD}>{"█"}</text>
+      </box>
+      <box height={1} flexShrink={0}>
+        <text fg={t.border}>{"─".repeat(dialogWidth - 4)}</text>
+      </box>
 
       {/* Command list */}
       {selectOptions.length > 0 ? (
@@ -157,12 +187,21 @@ export function DialogCommand(props: {
           }}
         />
       ) : (
-        <text fg={t.textDim}>{"  No matching commands"}</text>
+        <box height={1}>
+          <text fg={t.textDim}>{"  No matching commands"}</text>
+        </box>
       )}
 
       {/* Footer */}
-      <text flexShrink={0}>{""}</text>
-      <text fg={t.textDim} flexShrink={0}>{"  ↑↓ Navigate  Enter Select  Type to filter  Esc Close"}</text>
+      <box height={1} flexShrink={0}>
+        <text fg={t.border}>{"─".repeat(dialogWidth - 4)}</text>
+      </box>
+      <box flexDirection="row" height={1} flexShrink={0}>
+        <text fg={t.textDim}>{" ↑↓ navigate  "}</text>
+        <text fg={t.textDim}>{"enter select  "}</text>
+        <text fg={t.textDim}>{"type to filter  "}</text>
+        <text fg={t.textDim}>{"esc close"}</text>
+      </box>
     </box>
   );
 }

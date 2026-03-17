@@ -20,6 +20,8 @@ import { useTheme } from "../context/theme";
 import { getCompletions, getGhostText } from "../lib/autocomplete";
 import type { ImageAttachment } from "@cdoing/ai";
 
+export type AgentMode = "build" | "plan";
+
 export interface InputAreaProps {
   onSubmit: (text: string, images?: ImageAttachment[]) => void;
   placeholder?: string;
@@ -27,6 +29,12 @@ export interface InputAreaProps {
   /** When true, all keyboard input is suppressed (e.g. dialog is open) */
   suppressInput?: boolean;
   workingDir: string;
+  /** Current agent mode (build/plan). If provided, shows mode tabs. */
+  mode?: AgentMode;
+  /** Callback when mode changes via Tab key */
+  onModeChange?: (mode: AgentMode) => void;
+  /** Model name to display in the tab bar */
+  modelLabel?: string;
 }
 
 function readClipboard(): string {
@@ -93,6 +101,12 @@ export function InputArea(props: InputAreaProps) {
 
     // Allow typing even when disabled (streaming) — submit handler decides what to do
 
+    // ── Tab — always switch mode (build ↔ plan) ──
+    if (key.name === "tab" && props.onModeChange && props.mode) {
+      props.onModeChange(props.mode === "build" ? "plan" : "build");
+      return;
+    }
+
     // ── Dropdown navigation ──
     if (showDropdown) {
       if (key.name === "up") {
@@ -108,7 +122,6 @@ export function InputArea(props: InputAreaProps) {
         if (s) {
           const text = s.text.trim();
           if (text) {
-            // Execute the command directly
             props.onSubmit(text, pendingImages.length > 0 ? [...pendingImages] : undefined);
             setValue("");
             setPendingImages([]);
@@ -122,7 +135,8 @@ export function InputArea(props: InputAreaProps) {
         setDropdownOpen(false);
         return;
       }
-      if (key.name === "tab") {
+      // Arrow right — accept selected autocomplete suggestion
+      if (key.name === "right") {
         const s = suggestions[selectedIdx];
         if (s) {
           setValue(s.text + " ");
@@ -133,8 +147,8 @@ export function InputArea(props: InputAreaProps) {
       }
     }
 
-    // ── Ghost text accept ──
-    if (ghost && (key.name === "tab" || key.name === "right")) {
+    // ── Ghost text accept (arrow right) ──
+    if (ghost && key.name === "right") {
       setValue((v) => v + ghost);
       return;
     }
@@ -317,10 +331,50 @@ export function InputArea(props: InputAreaProps) {
           </>
         ) : (
           <text fg={t.textDim}>
-            {props.placeholder || "Type a message... (^V paste, / commands, @ context, Tab accept)"}
+            {props.placeholder || "Type a message... (^V paste, / commands, @ context, → accept)"}
           </text>
         )}
       </box>
+
+      {/* Mode tab bar (Build / Plan) + model label + shortcuts */}
+      {props.mode && (
+        <box height={1} flexDirection="row" backgroundColor={bgColor} paddingX={1}>
+          {/* Build tab */}
+          <box backgroundColor={props.mode === "build" ? t.primary : undefined}>
+            <text
+              fg={props.mode === "build" ? t.bg : t.textMuted}
+              attributes={props.mode === "build" ? TextAttributes.BOLD : undefined}
+            >
+              {" Build "}
+            </text>
+          </box>
+          <text fg={t.textDim}>{" "}</text>
+          {/* Plan tab */}
+          <box backgroundColor={props.mode === "plan" ? t.secondary : undefined}>
+            <text
+              fg={props.mode === "plan" ? t.bg : t.textMuted}
+              attributes={props.mode === "plan" ? TextAttributes.BOLD : undefined}
+            >
+              {" Plan "}
+            </text>
+          </box>
+
+          {/* Model label */}
+          {props.modelLabel && (
+            <>
+              <text fg={t.textDim}>{" "}</text>
+              <text fg={t.textMuted} attributes={TextAttributes.ITALIC}>
+                {props.modelLabel}
+              </text>
+            </>
+          )}
+
+          {/* Right-aligned shortcut hints */}
+          <box flexGrow={1} />
+          <text fg={t.textDim}>{"tab mode  "}</text>
+          <text fg={t.textDim}>{"ctrl+p commands"}</text>
+        </box>
+      )}
     </box>
   );
 }

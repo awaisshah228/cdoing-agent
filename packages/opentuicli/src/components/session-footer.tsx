@@ -18,7 +18,7 @@ export function SessionFooter(props: SessionFooterProps) {
     ? "~" + props.workingDir.slice(home.length)
     : props.workingDir;
 
-  const shortcuts = "^N:New  ^P:Model  ^T:Theme  ^S:Sessions  ^B:Sidebar";
+  const shortcuts = "^P:Commands  ^O:Model  ^T:Theme  ^S:Sessions  ^B:Sidebar";
 
   return (
     <box height={1} flexDirection="row" backgroundColor={t.bgSubtle}>

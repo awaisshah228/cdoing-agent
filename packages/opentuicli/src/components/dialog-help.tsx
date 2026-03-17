@@ -16,15 +16,16 @@ interface HelpEntry {
 }
 
 const KEYBOARD_SHORTCUTS: HelpEntry[] = [
+  { key: "Ctrl+P", description: "Command palette" },
+  { key: "Ctrl+O", description: "Switch model" },
   { key: "Ctrl+N", description: "New session" },
-  { key: "Ctrl+P", description: "Switch model" },
   { key: "Ctrl+S", description: "Browse sessions" },
-  { key: "Ctrl+X", description: "Command palette" },
   { key: "F1", description: "Show this help" },
   { key: "Ctrl+V", description: "Paste text or image" },
   { key: "Ctrl+U", description: "Clear input line" },
   { key: "Ctrl+W", description: "Delete last word" },
-  { key: "Tab / ->", description: "Accept autocomplete" },
+  { key: "Tab", description: "Switch mode (Build / Plan)" },
+  { key: "→ (Right)", description: "Accept autocomplete" },
   { key: "Up / Down", description: "Navigate suggestions" },
   { key: "Escape", description: "Close dialog / dropdown" },
   { key: "Ctrl+C", description: "Quit" },

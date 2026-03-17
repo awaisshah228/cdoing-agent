@@ -1,5 +1,5 @@
 /**
- * DialogModel — model picker dialog (Ctrl+P)
+ * DialogModel — model picker dialog (Ctrl+O)
  *
  * Uses OpenTUI <select> for the model list with proper
  * highlight styling and keyboard navigation.

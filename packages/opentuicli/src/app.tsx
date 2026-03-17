@@ -8,7 +8,7 @@
  *   - Session browser overlay (Ctrl+S)
  *   - Setup wizard overlay (/setup)
  *   - Keyboard-driven navigation
- *   - Model picker dialog (Ctrl+P)
+ *   - Command palette (Ctrl+P)
  *   - Theme support (dark/light/auto)
  *   - Status bar with token counts and context %
  */
@@ -227,9 +227,9 @@ function AppShell(props: {
       setRoute("session");
       setStatus("Ready");
     }
-    // Ctrl+P — model picker
+    // Ctrl+P — command palette
     if (key.ctrl && key.name === "p") {
-      setDialog((d) => (d === "model" ? "none" : "model"));
+      setDialog((d) => (d === "command" ? "none" : "command"));
     }
     // Ctrl+S — session browser
     if (key.ctrl && key.name === "s") {
@@ -243,9 +243,9 @@ function AppShell(props: {
     if (key.ctrl && key.name === "t") {
       setDialog((d) => (d === "theme" ? "none" : "theme"));
     }
-    // Ctrl+X — command palette
-    if (key.ctrl && key.name === "x") {
-      setDialog((d) => (d === "command" ? "none" : "command"));
+    // Ctrl+O — model picker (Ctrl+M = Enter in terminals)
+    if (key.ctrl && key.name === "o") {
+      setDialog((d) => (d === "model" ? "none" : "model"));
     }
     // F1 — help dialog
     if (key.name === "f1") {
@@ -349,6 +349,13 @@ function AppShell(props: {
           </box>
         </SDKProvider>
 
+        {/* Vertical border between content and sidebar */}
+        {showSidebar && (
+          <box width={1} flexShrink={0}>
+            <text fg={t.border}>{"│\n".repeat(Math.max(dims.height - 4, 1))}</text>
+          </box>
+        )}
+
         {/* Sidebar (right panel) */}
         {showSidebar && (
           <Sidebar
@@ -421,6 +428,7 @@ function AppShell(props: {
                 break;
               // Model
               case "model:switch":
+              case "model:provider":
                 setDialog("model");
                 break;
               // Theme
@@ -437,9 +445,11 @@ function AppShell(props: {
               case "display:sidebar":
                 setSidebarMode(sidebarMode === "hide" ? "show" : sidebarMode === "show" ? "hide" : showSidebar ? "hide" : "show");
                 break;
-              case "display:timestamps":
-              case "display:thinking":
-                // Display toggles — extend as needed
+              // Tools (dispatch as slash commands into session)
+              case "tool:shell":
+              case "tool:search":
+              case "tool:tree":
+                setRoute("session");
                 break;
               // System
               case "system:status":

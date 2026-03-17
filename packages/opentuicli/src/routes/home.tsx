@@ -72,11 +72,11 @@ export function Home(props: {
   // Quick actions
   const actions = [
     { key: "Enter", label: "Send message / start session", id: "start" },
-    { key: "Ctrl+P", label: "Switch model", id: "model" },
+    { key: "Ctrl+P", label: "Command palette", id: "commands" },
+    { key: "Ctrl+O", label: "Switch model", id: "model" },
     { key: "Ctrl+T", label: "Change theme", id: "theme" },
     { key: "Ctrl+N", label: "New session", id: "new" },
     { key: "Ctrl+S", label: "Browse sessions", id: "sessions" },
-    { key: "Ctrl+X", label: "Command palette", id: "commands" },
     { key: "/setup", label: "Setup wizard", id: "setup" },
     { key: "Ctrl+C", label: "Quit", id: "quit" },
   ];
