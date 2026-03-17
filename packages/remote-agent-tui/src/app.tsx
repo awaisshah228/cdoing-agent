@@ -59,52 +59,6 @@ function formatUptime(seconds: number): string {
 
 // ── Intro Screen (shown when not configured) ─────────────
 
-function IntroScreen(props: { onSetup: () => void }) {
-  const { theme: t } = useTheme();
-
-  return (
-    <box flexDirection="column" paddingX={2} paddingY={1} flexGrow={1}>
-      <box height={1} />
-      <text fg={t.primary} attributes={TextAttributes.BOLD}>
-        {"Welcome to Remote Coding Agent"}
-      </text>
-      <box height={1} />
-      <text fg={t.text}>
-        {"Your personal AI assistant accessible via Telegram, Discord, and web."}
-      </text>
-      <text fg={t.text}>
-        {"It handles chat, scheduling, skills, and delegates coding tasks to a powerful model."}
-      </text>
-      <box height={2} />
-
-      <text fg={t.warning} attributes={TextAttributes.BOLD}>{"⚠ Not configured yet"}</text>
-      <box height={1} />
-      <text fg={t.text}>{"To get started, you need to:"}</text>
-      <text fg={t.textMuted}>{"  1. Select an AI provider and authenticate (OAuth or API key)"}</text>
-      <text fg={t.textMuted}>{"  2. Choose models for assistant and coding agent"}</text>
-      <text fg={t.textMuted}>{"  3. Enable skills (coding agent, math, weather, etc.)"}</text>
-      <text fg={t.textMuted}>{"  4. Connect a channel (Telegram bot token)"}</text>
-      <box height={2} />
-
-      <box flexDirection="row" gap={2}>
-        <text fg={t.primary} attributes={TextAttributes.BOLD}>{"Press  s  to start setup"}</text>
-        <text fg={t.border}>{"\u2502"}</text>
-        <text fg={t.textMuted}>{"c  chat"}</text>
-        <text fg={t.border}>{"\u2502"}</text>
-        <text fg={t.textMuted}>{"1  dashboard"}</text>
-        <text fg={t.border}>{"\u2502"}</text>
-        <text fg={t.textMuted}>{"Ctrl+P  palette"}</text>
-        <text fg={t.border}>{"\u2502"}</text>
-        <text fg={t.textMuted}>{"q  quit"}</text>
-      </box>
-      <box height={2} />
-
-      <text fg={t.textDim}>{"Or run:  remote-agent-tui setup"}</text>
-      <text fg={t.textDim}>{"Config:  ~/.cdoing/remote/"}</text>
-    </box>
-  );
-}
-
 // ── Config Status Badge ──────────────────────────────────
 
 function ConfigStatusBadge(props: { configured: boolean }) {
@@ -132,17 +86,14 @@ function AppShell(props: { engine: Engine }) {
 
   const closeDialog = useCallback(() => setDialog(null), []);
 
-  // Detect if configured: has API key, OAuth, or env var
+  // Detect if configured
   const config = props.engine.getConfig();
-  const hasApiKey = !!config.agent.apiKey;
-  const hasChannels = Object.values(config.channels).some((c: any) => c.enabled);
-  const isConfigured = hasApiKey || hasChannels || state.channels.length > 0;
+  const hasApiKey = !!config.agent.apiKey || !!(process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY);
+  const isConfigured = hasApiKey;
 
-  // If not configured and on chat/dashboard, show intro screen
-  const showIntro = !isConfigured && (route === "chat" || route === "dashboard");
-
-  const wide = dims.width > 120;
-  const showSidebar = sidebarVisible && wide && !showIntro && route !== "chat";
+  const wide = dims.width > 100;
+  // Sidebar visible on all routes (including chat) when wide enough
+  const showSidebar = sidebarVisible && wide;
 
   // ── Global Keyboard ──────────────────────────────────
 
@@ -162,8 +113,8 @@ function AppShell(props: { engine: Engine }) {
     if (key.ctrl && key.name === "b") toggleSidebar();
     if (key.name === "f1") setDialog((d) => (d === "help" ? null : "help"));
 
-    // Route switching (don't capture when in chat input)
-    if (route === "chat") return; // Chat handles its own keyboard
+    // Route switching (don't capture when in active chat — but allow when showing welcome)
+    if (route === "chat" && isConfigured) return; // Chat handles its own keyboard
     if (key.sequence === "c" && !key.ctrl && !key.meta) setRoute("chat");
     if (key.name === "1") setRoute("dashboard");
     if (key.name === "2") setRoute("skills");
@@ -229,9 +180,8 @@ function AppShell(props: { engine: Engine }) {
       {/* Main content */}
       <box flexDirection="row" flexGrow={1}>
         <box flexGrow={1} flexDirection="column">
-          {showIntro && <IntroScreen onSetup={() => setRoute("setup")} />}
-          {!showIntro && route === "chat" && <Chat />}
-          {!showIntro && route === "dashboard" && <Dashboard />}
+          {route === "chat" && <Chat />}
+          {route === "dashboard" && <Dashboard />}
           {route === "setup" && <Setup onComplete={() => setRoute("chat")} />}
           {route === "skills" && <Skills />}
           {route === "config" && <Config />}

@@ -13,13 +13,15 @@ export interface StatusBarProps {
 }
 
 const ROUTE_HINTS: Record<Route, string> = {
-  dashboard: "1 Dashboard  2 Skills  3 Config  s Setup  q Quit",
+  chat: "esc Back  Ctrl+N New session  /help Commands  q Quit",
+  dashboard: "c Chat  1 Dashboard  2 Skills  3 Config  s Setup  q Quit",
   setup: "esc Back  1 Dashboard  q Quit",
-  skills: "1 Dashboard  2 Skills  3 Config  q Quit",
-  config: "1 Dashboard  2 Skills  3 Config  q Quit",
+  skills: "c Chat  1 Dashboard  2 Skills  3 Config  q Quit",
+  config: "c Chat  1 Dashboard  2 Skills  3 Config  q Quit",
 };
 
 const ROUTE_LABELS: Record<Route, string> = {
+  chat: "Chat",
   dashboard: "Dashboard",
   setup: "Setup",
   skills: "Skills",

@@ -53,10 +53,22 @@ addCommonOptions(
 )
   .action(async (opts) => {
     try {
-      const { Engine, loadConfig } = await import("@cdoing/remote-coding-agent");
+      const { Engine, loadConfig, CredentialManager } = await import("@cdoing/remote-coding-agent");
       const { startTUI } = await import("./app");
 
       const config = loadConfig(buildConfig(opts));
+
+      // Resolve credentials from the remote agent's own store
+      const creds = new CredentialManager();
+      if (!config.agent.apiKey) {
+        const key = await creds.resolveApiKey(config.agent.provider, "assistant");
+        if (key) config.agent.apiKey = key;
+      }
+      if (config.agent.codingProvider && !config.agent.codingApiKey) {
+        const key = await creds.resolveApiKey(config.agent.codingProvider, "coding");
+        if (key) config.agent.codingApiKey = key;
+      }
+
       const engine = new Engine(config);
       await engine.start();
 

@@ -2,6 +2,7 @@
  * Chat Route — talk to the personal assistant directly from the TUI.
  *
  * Features:
+ *   - Welcome screen when AI is not configured (guides user to setup)
  *   - Multiple sessions (Ctrl+N new, Ctrl+Tab switch)
  *   - Message history stored via engine's session manager
  *   - Streaming responses with typing indicator
@@ -34,6 +35,115 @@ interface ChatSession {
   sessionKey: string; // key in session manager: tui:{chatId}:tui-user
 }
 
+// ── Chat Welcome Screen ─────────────────────────────────
+
+function ChatWelcome() {
+  const { theme: t } = useTheme();
+  const engine = useEngine();
+  const config = engine.getConfig();
+
+  const hasApiKey = !!config.agent.apiKey;
+  const hasChannels = Object.values(config.channels).some((c: any) => c.enabled);
+  const hasCodingModel = !!config.agent.codingModel;
+  const skills = engine.getSkillRegistry();
+  const skillCount = skills.getAll().length;
+
+  return (
+    <box flexDirection="column" paddingX={2} paddingY={1} flexGrow={1}>
+      <box height={1} />
+      <text fg={t.primary} attributes={TextAttributes.BOLD}>
+        {"Personal Assistant Chat"}
+      </text>
+      <box height={1} />
+      <text fg={t.text}>
+        {"Chat with your AI assistant directly. It can help with coding, math, weather, and more."}
+      </text>
+      <box height={2} />
+
+      {/* Status overview */}
+      <text fg={t.text} attributes={TextAttributes.BOLD}>{"Status"}</text>
+      <box height={1} />
+
+      <box flexDirection="row">
+        <text fg={hasApiKey ? t.success : t.error}>
+          {hasApiKey ? " \u2713 " : " \u2717 "}
+        </text>
+        <text fg={t.text}>{"AI Provider  "}</text>
+        <text fg={hasApiKey ? t.textMuted : t.error}>
+          {hasApiKey ? `${config.agent.provider}/${config.agent.model}` : "Not configured — API key required"}
+        </text>
+      </box>
+
+      <box flexDirection="row">
+        <text fg={hasCodingModel ? t.success : t.textDim}>
+          {hasCodingModel ? " \u2713 " : " - "}
+        </text>
+        <text fg={t.text}>{"Coding Agent "}</text>
+        <text fg={t.textMuted}>
+          {hasCodingModel
+            ? `${config.agent.codingProvider || config.agent.provider}/${config.agent.codingModel}`
+            : "Uses assistant model (optional)"}
+        </text>
+      </box>
+
+      <box flexDirection="row">
+        <text fg={hasChannels ? t.success : t.textDim}>
+          {hasChannels ? " \u2713 " : " - "}
+        </text>
+        <text fg={t.text}>{"Channels     "}</text>
+        <text fg={t.textMuted}>
+          {hasChannels
+            ? Object.entries(config.channels)
+                .filter(([, c]: [string, any]) => c.enabled)
+                .map(([id]) => id)
+                .join(", ")
+            : "None enabled (optional)"}
+        </text>
+      </box>
+
+      <box flexDirection="row">
+        <text fg={skillCount > 0 ? t.success : t.textDim}>
+          {skillCount > 0 ? " \u2713 " : " - "}
+        </text>
+        <text fg={t.text}>{"Skills       "}</text>
+        <text fg={t.textMuted}>{`${skillCount} loaded`}</text>
+      </box>
+
+      <box height={2} />
+
+      {!hasApiKey && (
+        <box flexDirection="column">
+          <text fg={t.warning} attributes={TextAttributes.BOLD}>
+            {"To start chatting, set up your AI provider:"}
+          </text>
+          <box height={1} />
+          <text fg={t.textMuted}>{"  1. Press  s  to open the setup wizard"}</text>
+          <text fg={t.textMuted}>{"  2. Select a provider (Anthropic, OpenAI, Google, etc.)"}</text>
+          <text fg={t.textMuted}>{"  3. Enter your API key or authenticate via OAuth"}</text>
+          <text fg={t.textMuted}>{"  4. Choose your assistant model"}</text>
+          <box height={2} />
+        </box>
+      )}
+
+      <box flexDirection="row" gap={2}>
+        {!hasApiKey && (
+          <>
+            <text fg={t.primary} attributes={TextAttributes.BOLD}>{"Press  s  to start setup"}</text>
+            <text fg={t.border}>{"\u2502"}</text>
+          </>
+        )}
+        <text fg={t.textMuted}>{"1  dashboard"}</text>
+        <text fg={t.border}>{"\u2502"}</text>
+        <text fg={t.textMuted}>{"2  skills"}</text>
+        <text fg={t.border}>{"\u2502"}</text>
+        <text fg={t.textMuted}>{"3  config"}</text>
+        <text fg={t.border}>{"\u2502"}</text>
+        <text fg={t.textMuted}>{"q  quit"}</text>
+      </box>
+    </box>
+  );
+}
+
 // ── Chat Route ───────────────────────────────────────────
 
 let globalSessionCounter = 0;
@@ -44,6 +154,9 @@ export function Chat() {
   const config = engine.getConfig();
   const msgIdRef = useRef(0);
   const nextId = () => `msg-${++msgIdRef.current}`;
+
+  // Check if AI is configured (has API key)
+  const hasApiKey = !!config.agent.apiKey;
 
   // ── Multi-session state ────────────────────────────────
 
@@ -56,7 +169,7 @@ export function Chat() {
       messages: [{
         id: "welcome",
         role: "system",
-        content: `Personal Assistant ready — ${config.agent.provider}/${config.agent.model}\nType a message or /help for commands. Ctrl+N new session.`,
+        content: `Personal Assistant ready \u2014 ${config.agent.provider}/${config.agent.model}\nType a message or /help for commands. Ctrl+N new session.`,
         timestamp: Date.now(),
       }],
     }];
@@ -90,7 +203,7 @@ export function Chat() {
       sessionKey: `tui:${id}:tui-user`,
       messages: [{
         id: nextId(), role: "system",
-        content: `New session — ${config.agent.provider}/${config.agent.model}`,
+        content: `New session \u2014 ${config.agent.provider}/${config.agent.model}`,
         timestamp: Date.now(),
       }],
     };
@@ -119,6 +232,16 @@ export function Chat() {
     if (trimmed.startsWith("/")) {
       const handled = handleSlashCommand(trimmed);
       if (handled) return;
+    }
+
+    // Block sending if no API key
+    if (!hasApiKey) {
+      addMessage({
+        id: nextId(), role: "system", timestamp: Date.now(), isError: true,
+        content: "No API key configured. Press Esc then s to run setup, or use /config set api-key.",
+      });
+      setInput("");
+      return;
     }
 
     // Add user message
@@ -162,16 +285,21 @@ export function Chat() {
         toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       });
     } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      // Show auth errors with guidance
+      const isAuthError = errMsg.includes("invalid") && (errMsg.includes("api") || errMsg.includes("key") || errMsg.includes("auth"));
       addMessage({
         id: nextId(), role: "system",
-        content: `Error: ${err instanceof Error ? err.message : String(err)}`,
+        content: isAuthError
+          ? `Authentication failed for ${config.agent.provider}/${config.agent.model}. Try /login to re-authenticate or press Esc then s for setup.`
+          : `Error: ${errMsg}`,
         timestamp: Date.now(), isError: true,
       });
     } finally {
       setIsProcessing(false);
       setStreamingText("");
     }
-  }, [engine, config, isProcessing, activeSession, addMessage]);
+  }, [engine, config, isProcessing, hasApiKey, activeSession, addMessage]);
 
   // ── Slash commands ─────────────────────────────────────
 
@@ -193,7 +321,7 @@ export function Chat() {
         addMessage({
           id: nextId(), role: "system", timestamp: Date.now(),
           content: sessions.map((s, i) =>
-            `${i === activeSessionIdx ? "▶" : " "} ${s.name} — ${s.messages.filter((m) => m.role === "user").length} messages`
+            `${i === activeSessionIdx ? "\u25B6" : " "} ${s.name} \u2014 ${s.messages.filter((m) => m.role === "user").length} messages`
           ).join("\n") || "No sessions",
         });
         setInput("");
@@ -204,12 +332,12 @@ export function Chat() {
           id: nextId(), role: "system", timestamp: Date.now(),
           content: [
             "Chat Commands:",
-            "  /clear      — Clear this session",
-            "  /new        — Create new session",
-            "  /sessions   — List all sessions",
-            "  /model [m]  — Show/change model",
-            "  /status     — Agent status",
-            "  /help       — Show this help",
+            "  /clear      \u2014 Clear this session",
+            "  /new        \u2014 Create new session",
+            "  /sessions   \u2014 List all sessions",
+            "  /model [m]  \u2014 Show/change model",
+            "  /status     \u2014 Agent status",
+            "  /help       \u2014 Show this help",
             "",
             "Shortcuts:",
             "  Ctrl+N  New session   Ctrl+Tab  Next session",
@@ -223,7 +351,7 @@ export function Chat() {
       case "/model":
         if (arg) {
           config.agent.model = arg;
-          addMessage({ id: nextId(), role: "system", content: `Model → ${arg}`, timestamp: Date.now() });
+          addMessage({ id: nextId(), role: "system", content: `Model \u2192 ${arg}`, timestamp: Date.now() });
         } else {
           const coding = config.agent.codingModel ? `\nCoding: ${config.agent.codingProvider || config.agent.provider}/${config.agent.codingModel}` : "";
           addMessage({ id: nextId(), role: "system", content: `Assistant: ${config.agent.provider}/${config.agent.model}${coding}`, timestamp: Date.now() });
@@ -251,6 +379,9 @@ export function Chat() {
   // ── Keyboard ───────────────────────────────────────────
 
   useKeyboard((key: any) => {
+    // If showing welcome screen, let parent handle all keys
+    if (!hasApiKey) return;
+
     // Ctrl shortcuts (always active)
     if (key.ctrl && key.name === "n") { createNewSession(); return; }
     if (key.ctrl && key.name === "tab") { switchSession(1); return; }
@@ -278,7 +409,13 @@ export function Chat() {
     }
   }, {});
 
-  // ── Render ─────────────────────────────────────────────
+  // ── Render: Welcome screen if not configured ──────────
+
+  if (!hasApiKey) {
+    return <ChatWelcome />;
+  }
+
+  // ── Render: Chat interface ────────────────────────────
 
   const visibleMessages = activeSession.messages.slice(-30);
 
@@ -309,14 +446,14 @@ export function Chat() {
           <box key={msg.id} flexDirection="column">
             {msg.role === "user" && (
               <box>
-                <text fg={t.primary} attributes={TextAttributes.BOLD}>{"❯ "}</text>
+                <text fg={t.primary} attributes={TextAttributes.BOLD}>{"\u276F "}</text>
                 <text fg={t.text}>{msg.content}</text>
               </box>
             )}
             {msg.role === "assistant" && (
               <box flexDirection="column">
                 <box>
-                  <text fg={t.success} attributes={TextAttributes.BOLD}>{"◆ "}</text>
+                  <text fg={t.success} attributes={TextAttributes.BOLD}>{"\u25C6 "}</text>
                   {msg.toolCalls && <text fg={t.textDim}>{`[${msg.toolCalls.join(", ")}] `}</text>}
                 </box>
                 {/* Show up to 500 chars — long responses get truncated */}
@@ -327,7 +464,7 @@ export function Chat() {
             )}
             {msg.role === "system" && (
               <text fg={msg.isError ? t.error : t.textMuted}>
-                {msg.isError ? `✗ ${msg.content}` : `● ${msg.content}`}
+                {msg.isError ? `\u2717 ${msg.content}` : `\u25CF ${msg.content}`}
               </text>
             )}
           </box>
@@ -336,7 +473,7 @@ export function Chat() {
         {/* Streaming */}
         {isProcessing && (
           <box flexDirection="column">
-            <text fg={t.success} attributes={TextAttributes.BOLD}>{"◆ "}</text>
+            <text fg={t.success} attributes={TextAttributes.BOLD}>{"\u25C6 "}</text>
             <text fg={t.text} paddingLeft={2}>{streamingText || "thinking..."}</text>
           </box>
         )}
@@ -350,10 +487,10 @@ export function Chat() {
       {/* Input area */}
       <box height={1} flexShrink={0} paddingX={1} backgroundColor={t.bgSubtle}>
         <text fg={isProcessing ? t.warning : t.primary} attributes={TextAttributes.BOLD}>
-          {isProcessing ? "⟳ " : "❯ "}
+          {isProcessing ? "\u27F3 " : "\u276F "}
         </text>
         <text fg={t.text}>{input}</text>
-        {!isProcessing && <text fg={t.primary}>{"█"}</text>}
+        {!isProcessing && <text fg={t.primary}>{"\u2588"}</text>}
         <box flexGrow={1} />
         <text fg={t.textDim}>{activeSession.name}</text>
       </box>
