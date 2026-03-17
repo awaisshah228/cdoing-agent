@@ -12,7 +12,14 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
-    "start": "node dist/cli.js"
+    "start": "node dist/cli.js start",
+    "setup": "node dist/cli.js setup",
+    "tui": "node dist/cli.js tui",
+    "dashboard": "node dist/cli.js dashboard",
+    "status": "node dist/cli.js status",
+    "skills": "node dist/cli.js skills",
+    "login": "node dist/cli.js login --oauth",
+    "login:status": "node dist/cli.js login --status"
   },
   "dependencies": {
     "@cdoing/core": "*",

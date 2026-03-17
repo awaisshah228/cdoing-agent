@@ -10,7 +10,13 @@
     "build": "turbo run build",
     "dev": "turbo run dev",
     "start": "yarn workspace @cdoing/core build && yarn workspace @cdoing/ai build && yarn workspace @cdoing/cli dev",
-    "clean": "turbo run clean"
+    "clean": "turbo run clean",
+    "remote": "yarn build && yarn workspace @cdoing/remote-coding-agent start",
+    "remote:setup": "yarn build && yarn workspace @cdoing/remote-coding-agent setup",
+    "remote:tui": "yarn build && yarn workspace @cdoing/remote-coding-agent tui",
+    "remote:dashboard": "yarn build && yarn workspace @cdoing/remote-coding-agent dashboard",
+    "remote:status": "yarn build && yarn workspace @cdoing/remote-coding-agent status",
+    "remote:skills": "yarn build && yarn workspace @cdoing/remote-coding-agent skills"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
