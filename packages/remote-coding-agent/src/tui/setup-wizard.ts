@@ -192,6 +192,8 @@ export interface SetupResult {
   port: number;
   permissionMode: string;
   logLevel: string;
+  /** Skills enabled during setup */
+  enabledSkills: string[];
 }
 
 /**
@@ -313,14 +315,36 @@ export async function runSetupWizard(): Promise<SetupResult> {
   let codingModel: string | undefined;
   let codingApiKey: string | undefined;
 
-  console.log(`${YELLOW}${BOLD}Step 4: Coding Agent Model${RESET}`);
-  console.log(`  ${DIM}The coding agent handles file edits, builds, debugging, etc.${RESET}`);
-  console.log(`  ${DIM}Use a powerful model (e.g., Sonnet, Opus, GPT-4o).${RESET}`);
+  console.log(`${YELLOW}${BOLD}Step 4: Skills${RESET}`);
+  console.log(`  ${DIM}Skills extend your agent's capabilities. Enable what you need.${RESET}`);
   console.log();
 
-  const wantCodingModel = await confirm("Use a separate (more powerful) model for coding tasks?", true);
+  // Show available skills as a checklist
+  const skillOptions = [
+    { id: "coding-agent", name: "Coding Agent", desc: "Delegate coding tasks to a powerful model", default: true },
+    { id: "math",         name: "Math",         desc: "Evaluate expressions and calculations", default: true },
+    { id: "weather",      name: "Weather",      desc: "Fetch weather via wttr.in", default: true },
+    { id: "commit",       name: "Git Commit",   desc: "Structured git commits", default: true },
+    { id: "review",       name: "Code Review",  desc: "Review code changes", default: true },
+    { id: "test",         name: "Test Runner",   desc: "Run and analyze tests", default: true },
+    { id: "explain",      name: "Explain Code", desc: "Explain code in plain language", default: true },
+    { id: "deploy-check", name: "Deploy Check", desc: "Pre-deployment validation", default: false },
+    { id: "summarize",    name: "Summarize",    desc: "Summarize changes or code", default: false },
+  ];
 
-  if (wantCodingModel) {
+  const enabledSkills: string[] = [];
+  for (const skill of skillOptions) {
+    const enabled = await confirm(`  ${skill.name} — ${skill.desc}`, skill.default);
+    if (enabled) enabledSkills.push(skill.id);
+  }
+  console.log(`  ${DIM}Enabled: ${enabledSkills.join(", ")}${RESET}\n`);
+
+  // If coding-agent skill is enabled, configure the coding model
+  if (enabledSkills.includes("coding-agent")) {
+    console.log(`${YELLOW}${BOLD}Step 4b: Coding Agent Setup${RESET}`);
+    console.log(`  ${DIM}Configure a more powerful model for coding tasks.${RESET}`);
+    console.log(`  ${DIM}The assistant delegates to this model for file edits, builds, etc.${RESET}\n`);
+
     hasCodingModel = true;
 
     const useSameProvider = await confirm(`Use ${provider.name} for coding too?`, true);
@@ -340,12 +364,12 @@ export async function runSetupWizard(): Promise<SetupResult> {
 
     const defaultCodingIdx = codingProviderDef.modelIds.indexOf(codingProviderDef.defaultCodingModel);
     const codingModelIdx = await selectMenu(
-      "Select coding model:",
+      "Select coding model (use a powerful one):",
       codingProviderDef.models,
       defaultCodingIdx >= 0 ? defaultCodingIdx : 0,
     );
     codingModel = codingProviderDef.modelIds[codingModelIdx];
-    console.log(`  ${DIM}Coding: ${codingProviderDef.name} / ${codingModel}${RESET}`);
+    console.log(`  ${DIM}Coding agent: ${codingProviderDef.name} / ${codingModel}${RESET}`);
 
     // Auth for coding model (only if different provider)
     if (codingProvider !== provider.id) {
@@ -390,7 +414,8 @@ export async function runSetupWizard(): Promise<SetupResult> {
   console.log();
 
   // ── Step 5: Channels ──
-  console.log(`${YELLOW}${BOLD}Step 5: Channels${RESET}`);
+  console.log(`${YELLOW}${BOLD}Step 5: Channel${RESET}`);
+  console.log(`  ${DIM}Select how you'll talk to your agent.${RESET}\n`);
 
   const telegramEnabled = await confirm("Enable Telegram channel?");
   let telegramToken: string | undefined;
@@ -470,6 +495,7 @@ export async function runSetupWizard(): Promise<SetupResult> {
     port,
     permissionMode,
     logLevel,
+    enabledSkills,
   };
 }
 
@@ -515,6 +541,9 @@ export function writeSetupConfig(result: SetupResult, outputPath?: string): stri
     },
     workingDir: result.workingDir,
     logLevel: result.logLevel,
+    skills: {
+      enabled: result.enabledSkills,
+    },
   };
 
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
@@ -546,6 +575,7 @@ export function printSetupSummary(result: SetupResult, configPath: string): void
   if (result.telegramEnabled) channels.push("Telegram");
   if (result.discordEnabled) channels.push("Discord");
   console.log(`    Channels:    ${channels.length > 0 ? channels.join(", ") : "none"}`);
+  console.log(`    Skills:      ${result.enabledSkills.join(", ")}`);
   console.log();
 
   console.log(`  ${BOLD}${RED}Important — Save your auth token:${RESET}`);

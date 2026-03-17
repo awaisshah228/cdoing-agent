@@ -8,6 +8,80 @@
 import type { Skill } from "./types";
 
 export const builtinSkills: Skill[] = [
+  // ── Core Skills (coding agent, math, weather) ────────────────────────
+  {
+    id: "coding-agent",
+    name: "coding-agent",
+    description: "Dedicated coding agent — delegates complex coding tasks to a powerful model with full file/shell access",
+    userInvocable: true,
+    always: false,
+    location: "builtin",
+    metadata: { category: "agent", requiresSetup: true },
+    content: `The coding agent skill enables delegation of complex coding tasks to a dedicated, more powerful model.
+
+When this skill is active, the personal assistant will automatically delegate tasks involving:
+- File editing, creation, or deletion
+- Running shell commands (build, test, install, git)
+- Debugging and fixing bugs
+- Refactoring or implementing features
+- Code search and analysis
+
+The coding agent uses the delegate_to_coder tool. Configure the coding model with:
+- config_manager({ action: "set", key: "coding_model", value: "claude-sonnet-4-6" })
+- config_manager({ action: "set", key: "coding_provider", value: "anthropic" })
+
+If no coding model is configured, the assistant's own model is used for coding tasks.`,
+  },
+  {
+    id: "math",
+    name: "math",
+    description: "Evaluate mathematical expressions and perform calculations",
+    userInvocable: true,
+    always: false,
+    location: "builtin",
+    metadata: { category: "utility" },
+    content: `When the user asks you to calculate something or evaluate a math expression:
+
+1. Use shell_exec to evaluate with Node.js: shell_exec({ command: "node -e \\"console.log(EXPRESSION)\\"" })
+2. For complex math, you can use JavaScript's Math object:
+   - Math.sqrt(), Math.pow(), Math.PI, Math.E
+   - Math.sin(), Math.cos(), Math.tan() (radians)
+   - Math.log(), Math.log2(), Math.log10()
+   - Math.round(), Math.floor(), Math.ceil()
+   - parseInt(), parseFloat(), Number()
+3. For unit conversions, calculate directly.
+4. Present the result clearly with the formula used.
+
+Examples:
+- "what is 15% of 340?" → node -e "console.log(340 * 0.15)"
+- "convert 72°F to Celsius" → node -e "console.log((72 - 32) * 5/9)"
+- "square root of 144" → node -e "console.log(Math.sqrt(144))"
+- "compound interest: $1000 at 5% for 10 years" → node -e "console.log(1000 * Math.pow(1.05, 10))"`,
+  },
+  {
+    id: "weather",
+    name: "weather",
+    description: "Fetch current weather for a location using wttr.in",
+    userInvocable: true,
+    always: false,
+    location: "builtin",
+    metadata: { category: "utility" },
+    content: `When the user asks about weather:
+
+1. Use web_fetch to get weather from wttr.in (no API key needed):
+   web_fetch({ url: "https://wttr.in/CITY?format=j1" })
+2. Parse the JSON response and extract:
+   - Current temperature (°C and °F)
+   - Weather description
+   - Humidity, wind speed
+   - Feels like temperature
+3. Present it concisely:
+   "London: 15°C (59°F), Partly cloudy, Humidity 72%, Wind 12 km/h"
+4. If the user asks for a forecast, the JSON includes 3-day forecast in the "weather" array.
+
+For a simple one-line format:
+   web_fetch({ url: "https://wttr.in/CITY?format=%l:+%C+%t+(%f)+💨+%w+💧+%h" })`,
+  },
   {
     id: "commit",
     name: "commit",
