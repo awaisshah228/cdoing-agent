@@ -1187,6 +1187,26 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         totalTokens += usage.totalTokens;
         if (usage.cost !== undefined) totalCost += usage.cost;
       },
+      onCompactStart: (contextPercent) => {
+        try {
+          this.postTabMessage(tabId, {
+            type: "toolCall",
+            name: "compact",
+            input: "",
+            description: `Compacting context (${contextPercent}% used)...`,
+          });
+        } catch {}
+      },
+      onCompactEnd: (savedTokens, newPercent) => {
+        try {
+          this.postTabMessage(tabId, {
+            type: "toolResult",
+            name: "compact",
+            result: `Context compacted — saved ${savedTokens.toLocaleString()} tokens (now ${newPercent}%)`,
+            isError: false,
+          });
+        } catch {}
+      },
     };
 
     try {

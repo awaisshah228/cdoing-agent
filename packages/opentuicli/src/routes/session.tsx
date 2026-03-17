@@ -1116,13 +1116,25 @@ export function SessionView(props: {
         props.onActiveTool(undefined);
       },
 
+      onCompactStart: (contextPercent) => {
+        try {
+          addMessage("system", `⟳ Compacting context (${contextPercent}% used)...`);
+        } catch {}
+      },
+
+      onCompactEnd: (savedTokens, newPercent) => {
+        try {
+          addMessage("system", `✓ Context compacted — saved ${savedTokens.toLocaleString()} tokens (now ${newPercent}%)`);
+        } catch {}
+      },
+
       onComplete: () => {
         const current = streamingTextRef.current.trim();
         if (current) {
           addMessage("assistant", current);
           setStreamingText("");
         }
-        
+
         setIsStreaming(false);
         props.onStatus("Ready");
         setActiveTool(undefined);

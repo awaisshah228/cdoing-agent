@@ -48,6 +48,10 @@ export interface AgentCallbacks {
   onUsage?: (usage: TurnUsage) => void;
   /** Emitted for each diff chunk during file edit/write operations, enabling real-time diff rendering */
   onDiffChunk?: (chunk: DiffChunk) => void;
+  /** Emitted when context compaction starts (messages being compressed to stay within limits) */
+  onCompactStart?: (contextPercent: number) => void;
+  /** Emitted when context compaction finishes */
+  onCompactEnd?: (savedTokens: number, newPercent: number) => void;
 }
 
 export interface AgentRunnerOptions {
@@ -498,10 +502,27 @@ export class AgentRunner {
           break;
         }
         // Compress context if needed
+        const preCompressTokens = this.contextManager.estimateMessages(this.messages);
+        const maxTokens = this.contextManager.getMaxContextTokens();
+        const contextPercent = Math.round((preCompressTokens / maxTokens) * 100);
+        const needsCompact = contextPercent >= 70;
+        try {
+          if (needsCompact && callbacks.onCompactStart) {
+            callbacks.onCompactStart(contextPercent);
+          }
+        } catch {}
         this.messages = this.contextManager.compressIfNeeded(
           this.messages,
           this.systemPrompt,
         );
+        try {
+          if (needsCompact && callbacks.onCompactEnd) {
+            const postTokens = this.contextManager.estimateMessages(this.messages);
+            const saved = preCompressTokens - postTokens;
+            const newPercent = Math.round((postTokens / maxTokens) * 100);
+            callbacks.onCompactEnd(saved, newPercent);
+          }
+        } catch {}
 
         const allMessages: BaseMessage[] = [
           new SystemMessage(this.systemPrompt),

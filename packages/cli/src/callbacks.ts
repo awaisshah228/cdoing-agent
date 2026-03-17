@@ -207,6 +207,19 @@ export function createInteractiveCallbacks(spinner: Ora): AgentCallbacks {
       const formatted = formatUsage(usage);
       console.log(chalk.hex("#546E7A")(`  ╭─ `) + formatted + chalk.hex("#546E7A")(` ─╮`));
     },
+    onCompactStart: (contextPercent) => {
+      try {
+        spinner.stop();
+        console.log(chalk.hex("#FFA726")(`\n  ⟳ Compacting context (${contextPercent}% used)...`));
+        spinner.start("Compacting...");
+      } catch {}
+    },
+    onCompactEnd: (savedTokens, newPercent) => {
+      try {
+        spinner.stop();
+        console.log(chalk.hex("#81C784")(`  ✓ Context compacted — saved ${savedTokens.toLocaleString()} tokens (now ${newPercent}%)\n`));
+      } catch {}
+    },
   };
 }
 

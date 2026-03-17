@@ -514,6 +514,16 @@ export function useChat(opts: UseChatOptions) {
             }
           }
         },
+        onCompactStart: (contextPercent: number) => {
+          try {
+            addSystemMessage(`⟳ Compacting context (${contextPercent}% used)...`);
+          } catch {}
+        },
+        onCompactEnd: (savedTokens: number, newPercent: number) => {
+          try {
+            addSystemMessage(`✓ Context compacted — saved ${savedTokens.toLocaleString()} tokens (now ${newPercent}%)`);
+          } catch {}
+        },
       }, images);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
