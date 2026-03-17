@@ -210,6 +210,7 @@ export async function runSetupWizard(): Promise<SetupResult> {
 
   // Load providers from the centralized catalog (not hardcoded)
   const PROVIDERS = buildProviderList();
+  const creds = new CredentialManager();
 
   // ── Step 1: AI Provider ──
   console.log(`${YELLOW}${BOLD}Step 1: AI Provider${RESET}`);
@@ -220,55 +221,44 @@ export async function runSetupWizard(): Promise<SetupResult> {
   const provider = PROVIDERS[providerIdx];
   console.log(`  ${DIM}Selected: ${provider.name}${RESET}\n`);
 
-  // ── Step 2: Assistant Model ──
-  console.log(`${YELLOW}${BOLD}Step 2: Personal Assistant Model${RESET}`);
-  console.log(`  ${DIM}This model handles chat, config, scheduling, and routing.${RESET}`);
-  console.log(`  ${DIM}Use a fast/cheap model here (e.g., Haiku, GPT-4o-mini).${RESET}\n`);
-  const defaultModelIdx = provider.modelIds.indexOf(provider.defaultModel);
-  const modelIdx = await selectMenu(
-    "Select assistant model:",
-    provider.models,
-    defaultModelIdx >= 0 ? defaultModelIdx : 0,
-  );
-  const model = provider.modelIds[modelIdx];
-  console.log(`  ${DIM}Selected: ${model}${RESET}\n`);
-
-  // ── Step 3: Authentication ──
+  // ── Step 2: Authentication (BEFORE model selection) ──
   let apiKey: string | undefined;
   let usedOAuth = false;
-  const creds = new CredentialManager();
 
-  console.log(`${YELLOW}${BOLD}Step 3: Authentication${RESET}`);
+  console.log(`${YELLOW}${BOLD}Step 2: Authentication${RESET}`);
+  console.log(`  ${DIM}Credentials are stored in ~/.cdoing/remote/ (separate from CLI).${RESET}\n`);
 
   if (provider.supportsOAuth) {
-    // Provider supports OAuth + API key
     const authMethodIdx = await selectMenu("How do you want to authenticate?", [
-      "Claude OAuth (opens browser — recommended)",
+      "OAuth (opens browser — recommended, no API key needed)",
       "API Key (paste manually)",
       "Environment variable (already set)",
       "Skip (configure later)",
     ]);
 
     if (authMethodIdx === 0) {
-      // OAuth flow
       try {
-        const result = await creds.oauthLogin();
+        const result = await creds.oauthLogin(provider.id);
         usedOAuth = true;
-        console.log(`  ${GREEN}✓${RESET} Claude OAuth login successful!`);
+        console.log(`  ${GREEN}✓${RESET} OAuth login successful!`);
         if (result.expiresAt) {
           console.log(`  ${DIM}Expires: ${new Date(result.expiresAt).toLocaleString()}${RESET}`);
         }
-        console.log(`  ${DIM}The agent will use this token automatically.${RESET}`);
+        console.log(`  ${DIM}Stored in ~/.cdoing/remote/ (not shared with CLI).${RESET}`);
       } catch (err) {
         console.log(`  ${RED}✗${RESET} OAuth failed: ${err instanceof Error ? err.message : err}`);
-        console.log(`  ${DIM}You can try again later with: remote-coding-agent login --oauth${RESET}`);
+        console.log(`  ${DIM}You can try again later with: yarn login${RESET}`);
         apiKey = await ask("Enter API key instead (or press Enter to skip)");
+        if (apiKey) {
+          creds.saveApiKey(provider.id, apiKey, "assistant");
+          console.log(`  ${GREEN}✓${RESET} API key saved`);
+        }
       }
     } else if (authMethodIdx === 1) {
-      apiKey = await ask("Enter your Anthropic API key");
+      apiKey = await ask(`Enter your ${provider.name} API key`);
       if (apiKey) {
-        creds.saveApiKey("anthropic", apiKey, "assistant");
-        console.log(`  ${GREEN}✓${RESET} API key saved to credential store`);
+        creds.saveApiKey(provider.id, apiKey, "assistant");
+        console.log(`  ${GREEN}✓${RESET} API key saved to ~/.cdoing/remote/`);
       }
     } else if (authMethodIdx === 2) {
       const envValue = process.env[provider.envKey];
@@ -278,38 +268,54 @@ export async function runSetupWizard(): Promise<SetupResult> {
         console.log(`  ${YELLOW}⚠${RESET} ${provider.envKey} not found. Set it before starting.`);
       }
     }
-    // authMethodIdx === 3: skip
   } else if (provider.envKey) {
-    // Non-Anthropic: API key or env var
     const envValue = process.env[provider.envKey];
     if (envValue) {
       console.log(`  ${GREEN}✓${RESET} Found ${provider.envKey} in environment`);
       const useEnv = await confirm("Use the environment variable?");
       if (!useEnv) {
         apiKey = await ask(`Enter your ${provider.name} API key`);
-        if (apiKey) creds.saveApiKey(provider.id, apiKey, "assistant");
+        if (apiKey) {
+          creds.saveApiKey(provider.id, apiKey, "assistant");
+          console.log(`  ${GREEN}✓${RESET} API key saved`);
+        }
       }
     } else {
       apiKey = await ask(`Enter your ${provider.name} API key`);
       if (apiKey) {
         creds.saveApiKey(provider.id, apiKey, "assistant");
-        console.log(`  ${GREEN}✓${RESET} API key saved to credential store`);
+        console.log(`  ${GREEN}✓${RESET} API key saved`);
       } else {
         console.log(`  ${YELLOW}⚠${RESET} No API key set. Set ${provider.envKey} env var before starting.`);
       }
     }
+  } else {
+    console.log(`  ${DIM}${provider.name} doesn't require an API key.${RESET}`);
   }
   console.log();
 
-  // ── Step 3b: Separate Coding Model ──
+  // ── Step 3: Personal Assistant Model ──
+  console.log(`${YELLOW}${BOLD}Step 3: Personal Assistant Model${RESET}`);
+  console.log(`  ${DIM}This model handles chat, config, scheduling, and routing.${RESET}`);
+  console.log(`  ${DIM}Use a fast/cheap model (e.g., Haiku, GPT-4o-mini).${RESET}\n`);
+  const defaultModelIdx = provider.modelIds.indexOf(provider.defaultModel);
+  const modelIdx = await selectMenu(
+    "Select assistant model:",
+    provider.models,
+    defaultModelIdx >= 0 ? defaultModelIdx : 0,
+  );
+  const model = provider.modelIds[modelIdx];
+  console.log(`  ${DIM}Selected: ${model}${RESET}\n`);
+
+  // ── Step 4: Coding Agent Model ──
   let hasCodingModel = false;
   let codingProvider: string | undefined;
   let codingModel: string | undefined;
   let codingApiKey: string | undefined;
 
-  console.log(`${YELLOW}${BOLD}Step 3b: Coding Agent Model${RESET}`);
+  console.log(`${YELLOW}${BOLD}Step 4: Coding Agent Model${RESET}`);
   console.log(`  ${DIM}The coding agent handles file edits, builds, debugging, etc.${RESET}`);
-  console.log(`  ${DIM}Use a powerful model here (e.g., Sonnet, Opus, GPT-4o).${RESET}`);
+  console.log(`  ${DIM}Use a powerful model (e.g., Sonnet, Opus, GPT-4o).${RESET}`);
   console.log();
 
   const wantCodingModel = await confirm("Use a separate (more powerful) model for coding tasks?", true);
@@ -317,13 +323,20 @@ export async function runSetupWizard(): Promise<SetupResult> {
   if (wantCodingModel) {
     hasCodingModel = true;
 
-    const codingProviderIdx = await selectMenu(
-      "Select coding model provider:",
-      PROVIDERS.map((p) => p.name),
-      PROVIDERS.findIndex((p) => p.id === provider.id),
-    );
-    const codingProviderDef = PROVIDERS[codingProviderIdx];
-    codingProvider = codingProviderDef.id;
+    const useSameProvider = await confirm(`Use ${provider.name} for coding too?`, true);
+
+    let codingProviderDef;
+    if (useSameProvider) {
+      codingProviderDef = provider;
+      codingProvider = provider.id;
+    } else {
+      const codingProviderIdx = await selectMenu(
+        "Select coding model provider:",
+        PROVIDERS.map((p) => p.name),
+      );
+      codingProviderDef = PROVIDERS[codingProviderIdx];
+      codingProvider = codingProviderDef.id;
+    }
 
     const defaultCodingIdx = codingProviderDef.modelIds.indexOf(codingProviderDef.defaultCodingModel);
     const codingModelIdx = await selectMenu(
@@ -334,33 +347,50 @@ export async function runSetupWizard(): Promise<SetupResult> {
     codingModel = codingProviderDef.modelIds[codingModelIdx];
     console.log(`  ${DIM}Coding: ${codingProviderDef.name} / ${codingModel}${RESET}`);
 
-    // Auth for coding model
+    // Auth for coding model (only if different provider)
     if (codingProvider !== provider.id) {
-      // Different provider — need separate auth
-      if (codingProviderDef.supportsOAuth && provider.supportsOAuth) {
-        console.log(`  ${DIM}Coding agent will use the same OAuth token as assistant.${RESET}`);
+      if (codingProviderDef.supportsOAuth) {
+        const codingAuthIdx = await selectMenu(`Authenticate for ${codingProviderDef.name}:`, [
+          "OAuth (opens browser)",
+          "API Key",
+          "Environment variable",
+          "Skip",
+        ]);
+        if (codingAuthIdx === 0) {
+          try {
+            await creds.oauthLogin(codingProvider);
+            console.log(`  ${GREEN}✓${RESET} Coding OAuth login successful!`);
+          } catch (err) {
+            console.log(`  ${RED}✗${RESET} OAuth failed: ${err instanceof Error ? err.message : err}`);
+          }
+        } else if (codingAuthIdx === 1) {
+          codingApiKey = await ask(`Enter ${codingProviderDef.name} API key`);
+          if (codingApiKey) {
+            creds.saveApiKey(codingProvider, codingApiKey, "coding");
+            console.log(`  ${GREEN}✓${RESET} Coding API key saved`);
+          }
+        }
       } else {
         const codingEnvKey = codingProviderDef.envKey;
         const codingEnvVal = codingEnvKey ? process.env[codingEnvKey] : undefined;
-
         if (codingEnvVal) {
-          console.log(`  ${GREEN}✓${RESET} Found ${codingEnvKey} in environment for coding model`);
+          console.log(`  ${GREEN}✓${RESET} Found ${codingEnvKey} in environment`);
         } else if (codingEnvKey) {
-          codingApiKey = await ask(`Enter ${codingProviderDef.name} API key for coding model`);
+          codingApiKey = await ask(`Enter ${codingProviderDef.name} API key for coding`);
           if (codingApiKey) {
             creds.saveApiKey(codingProvider, codingApiKey, "coding");
-            console.log(`  ${GREEN}✓${RESET} Coding API key saved to credential store`);
+            console.log(`  ${GREEN}✓${RESET} Coding API key saved`);
           }
         }
       }
     } else {
-      console.log(`  ${DIM}Coding agent will use the same auth as assistant.${RESET}`);
+      console.log(`  ${DIM}Same provider — uses the same auth as assistant.${RESET}`);
     }
   }
   console.log();
 
-  // ── Step 4: Channels ──
-  console.log(`${YELLOW}${BOLD}Step 4: Channels${RESET}`);
+  // ── Step 5: Channels ──
+  console.log(`${YELLOW}${BOLD}Step 5: Channels${RESET}`);
 
   const telegramEnabled = await confirm("Enable Telegram channel?");
   let telegramToken: string | undefined;
@@ -385,8 +415,8 @@ export async function runSetupWizard(): Promise<SetupResult> {
   }
   console.log();
 
-  // ── Step 5: Security ──
-  console.log(`${YELLOW}${BOLD}Step 5: Security${RESET}`);
+  // ── Step 6: Security ──
+  console.log(`${YELLOW}${BOLD}Step 6: Security${RESET}`);
 
   // Generate auth token
   const authToken = generateSecretKey();
@@ -405,18 +435,18 @@ export async function runSetupWizard(): Promise<SetupResult> {
   const permissionMode = PERMISSION_MODES[modeIdx].id;
   console.log();
 
-  // ── Step 6: Working Directory ──
-  console.log(`${YELLOW}${BOLD}Step 6: Working Directory${RESET}`);
+  // ── Step 7: Working Directory ──
+  console.log(`${YELLOW}${BOLD}Step 7: Working Directory${RESET}`);
   const workingDir = await ask("Working directory for coding operations", process.cwd());
   console.log();
 
-  // ── Step 7: Gateway ──
-  console.log(`${YELLOW}${BOLD}Step 7: Gateway${RESET}`);
+  // ── Step 8: Gateway ──
+  console.log(`${YELLOW}${BOLD}Step 8: Gateway${RESET}`);
   const portStr = await ask("Gateway port", "4567");
   const port = parseInt(portStr, 10) || 4567;
   console.log();
 
-  // ── Step 8: Log Level ──
+  // ── Step 9: Log Level ──
   const logIdx = await selectMenu("Log level:", ["info", "debug", "warn", "error"], 0);
   const logLevel = ["info", "debug", "warn", "error"][logIdx];
   console.log();
