@@ -1,14 +1,15 @@
 /**
  * SettingsPanel.tsx — In-Panel Model & Config Settings
  *
- * Local state initializes ONCE from fresh config (stale config is cleared on open).
- * OAuth status is read from Zustand store. Config-file API key detection included.
+ * Flow: Provider (searchable select) → Auth Method (tabs) → Model (searchable select with presets)
+ * OAuth providers come from core (single source of truth).
  */
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import type { ExtensionConfig } from "../types";
 import { useVsCode } from "../hooks/useVsCode";
 import { useChatStore } from "../store/chatStore";
+import { SearchableSelect, type SelectOption } from "./SearchableSelect";
 
 interface SettingsPanelProps {
   config: ExtensionConfig | null;
@@ -17,26 +18,49 @@ interface SettingsPanelProps {
   onClose: () => void;
 }
 
-const PROVIDERS = [
-  { value: "anthropic", label: "Anthropic (Claude)" },
-  { value: "openai", label: "OpenAI (GPT)" },
-  { value: "google", label: "Google (Gemini)" },
-  { value: "custom", label: "Custom Provider" },
+interface OAuthProviderInfo {
+  id: string;
+  name: string;
+  defaultModel?: string;
+}
+
+const PROVIDER_OPTIONS: SelectOption[] = [
+  { value: "anthropic", label: "Anthropic (Claude)", hint: "Claude Sonnet, Opus, Haiku" },
+  { value: "openai", label: "OpenAI", hint: "GPT-4o, o3" },
+  { value: "google", label: "Google (Gemini)", hint: "Gemini Flash, Pro" },
+  { value: "custom", label: "Custom Provider", hint: "OpenRouter, Ollama, Groq..." },
 ];
 
+const MODEL_OPTIONS: Record<string, SelectOption[]> = {
+  anthropic: [
+    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", hint: "recommended", group: "Claude 4" },
+    { value: "claude-opus-4-6", label: "Claude Opus 4.6", hint: "most capable", group: "Claude 4" },
+    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5", hint: "fastest", group: "Claude 4" },
+  ],
+  openai: [
+    { value: "gpt-4o", label: "GPT-4o", hint: "recommended", group: "GPT" },
+    { value: "gpt-4o-mini", label: "GPT-4o Mini", hint: "fast & cheap", group: "GPT" },
+    { value: "o3-mini", label: "o3 Mini", hint: "reasoning", group: "Reasoning" },
+  ],
+  google: [
+    { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash", hint: "recommended", group: "Gemini" },
+    { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro", hint: "capable", group: "Gemini" },
+  ],
+};
+
 const DEFAULT_MODELS: Record<string, string> = {
-  anthropic: "claude-sonnet-4-20250514",
+  anthropic: "claude-sonnet-4-6",
   openai: "gpt-4o",
   google: "gemini-2.0-flash",
   custom: "",
 };
 
 const PERMISSION_MODES = [
-  { value: "default",            label: "Default",         desc: "Prompt on first use of each tool" },
-  { value: "acceptEdits",        label: "Accept Edits",    desc: "Auto-approve file edits, ask for shell" },
-  { value: "plan",               label: "Plan",            desc: "Read-only: block all write and exec tools" },
-  { value: "dontAsk",            label: "Don't Ask",       desc: "Deny all tools unless explicitly allowed" },
-  { value: "bypassPermissions",  label: "Bypass",          desc: "Skip all permission checks (unsafe)" },
+  { value: "default", label: "Default", desc: "Prompt on first use of each tool" },
+  { value: "acceptEdits", label: "Accept Edits", desc: "Auto-approve file edits, ask for shell" },
+  { value: "plan", label: "Plan", desc: "Read-only: block all write and exec tools" },
+  { value: "dontAsk", label: "Don't Ask", desc: "Deny all tools unless explicitly allowed" },
+  { value: "bypassPermissions", label: "Bypass", desc: "Skip all permission checks (unsafe)" },
 ];
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -46,12 +70,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onClose,
 }) => {
   const vscode = useVsCode();
-
-  // OAuth status from store
   const oauthStatus = useChatStore((s) => s.oauthStatus);
   const oauthExpiresAt = useChatStore((s) => s.oauthExpiresAt);
 
-  // Local form state — starts with defaults, populated from fresh config
+  // Form state
   const [provider, setProvider] = useState("anthropic");
   const [model, setModel] = useState("");
   const [customProviderName, setCustomProviderName] = useState("");
@@ -68,11 +90,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [indexerEmbeddingBaseUrl, setIndexerEmbeddingBaseUrl] = useState("");
   const [indexerAutoIndex, setIndexerAutoIndex] = useState(true);
   const [hasConfigFileApiKey, setHasConfigFileApiKey] = useState(false);
+  const [oauthProviders, setOauthProviders] = useState<OAuthProviderInfo[]>([]);
 
   const initializedRef = useRef(false);
 
-  // Initialize once from fresh config
-  // Initialize form from fresh config (once)
   useEffect(() => {
     if (config && !initializedRef.current) {
       initializedRef.current = true;
@@ -82,14 +103,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       setCustomBaseURL(config.customBaseURL || "");
       setApiKey(config.apiKey || "");
       setHasConfigFileApiKey(!!(config as any).hasConfigFileApiKey);
-      // Auth method: prefer whatever is actually active
-      if (oauthStatus === "active") {
-        setAuthMethod("oauth");
-      } else if (config.authMethod === "oauth") {
-        setAuthMethod("oauth");
-      } else {
-        setAuthMethod("apiKey");
-      }
+      setOauthProviders((config as any).oauthProviders || []);
+      if (oauthStatus === "active") setAuthMethod("oauth");
+      else if (config.authMethod === "oauth") setAuthMethod("oauth");
+      else setAuthMethod("apiKey");
       setTemperature(config.temperature ?? 0);
       setMaxTokens(config.maxTokens ?? 8096);
       setPermissionMode(config.permissionMode || "ask");
@@ -102,12 +119,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     }
   }, [config]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // If oauthStatus arrives late (after config init), auto-switch to OAuth tab
   const prevOauthRef = useRef(oauthStatus);
   useEffect(() => {
-    if (oauthStatus === "active" && prevOauthRef.current !== "active") {
-      setAuthMethod("oauth");
-    }
+    if (oauthStatus === "active" && prevOauthRef.current !== "active") setAuthMethod("oauth");
     prevOauthRef.current = oauthStatus;
   }, [oauthStatus]);
 
@@ -120,10 +134,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   }, [vscode]);
 
   const handleFullLogout = useCallback(() => {
-    // Clear API key from local state
     setApiKey("");
     setHasConfigFileApiKey(false);
-    // Clear OAuth tokens + API keys on the extension host
     vscode.postMessage({ type: "oauthLogout" } as any);
     vscode.postMessage({ type: "updateConfig", config: { apiKey: "" } } as any);
     setAuthMethod("apiKey");
@@ -131,44 +143,33 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
   const handleSave = () => {
     onSave({
-      provider,
-      model,
-      customProviderName,
-      customBaseURL,
-      apiKey,
-      authMethod,
-      temperature,
-      maxTokens,
-      permissionMode,
-      sandboxEnabled,
-      sandboxMode,
-      indexerEmbeddingModel,
-      indexerEmbeddingProvider,
-      indexerEmbeddingBaseUrl,
-      indexerAutoIndex,
+      provider, model, customProviderName, customBaseURL, apiKey, authMethod,
+      temperature, maxTokens, permissionMode, sandboxEnabled, sandboxMode,
+      indexerEmbeddingModel, indexerEmbeddingProvider, indexerEmbeddingBaseUrl, indexerAutoIndex,
     });
     onClose();
   };
 
-  // Determine API key status text for the hint
+  // Derived
+  const currentOAuthProvider = oauthProviders.find((p) => p.id === provider);
+  const providerSupportsOAuth = !!currentOAuthProvider;
+  const isOAuthActive = providerSupportsOAuth && authMethod === "oauth" && oauthStatus === "active";
+  const modelOptions = MODEL_OPTIONS[provider] || [];
   const apiKeyHint = apiKey
     ? "API key set in VS Code settings"
     : hasConfigFileApiKey
     ? "Using API key from ~/.cdoing/config.json"
-    : "No API key found. Set one here or in ~/.cdoing/config.json";
+    : "No API key set";
 
   return (
     <div className="settings-overlay">
       <div className="settings-panel">
+        {/* ── Header ── */}
         <div className="settings-header">
           <span className="settings-title">Settings</span>
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
             {(apiKey || hasConfigFileApiKey || oauthStatus === "active") && (
-              <button
-                className="settings-logout-btn"
-                onClick={handleFullLogout}
-                title="Clear all API keys and OAuth tokens"
-              >
+              <button className="settings-logout-btn" onClick={handleFullLogout} title="Clear all credentials">
                 Logout
               </button>
             )}
@@ -177,36 +178,36 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
         </div>
 
         <div className="settings-body">
-          {/* Provider */}
+          {/* ═══ Provider ═══ */}
           <div className="settings-group">
             <label className="settings-label">Provider</label>
-            <div className="settings-provider-grid">
-              {PROVIDERS.map((p) => (
-                <button
-                  key={p.value}
-                  className={`settings-provider-btn ${provider === p.value ? "active" : ""}`}
-                  onClick={() => setProvider(p.value)}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
+            <SearchableSelect
+              value={provider}
+              options={PROVIDER_OPTIONS}
+              onChange={(val) => {
+                setProvider(val);
+                const newOAuth = oauthProviders.find((p) => p.id === val);
+                if (!newOAuth) setAuthMethod("apiKey");
+              }}
+              placeholder="Search providers..."
+              allowCustom={false}
+            />
           </div>
 
           {/* Custom provider fields */}
           {provider === "custom" && (
-            <>
-              <div className="settings-group">
-                <label className="settings-label">Provider Name</label>
+            <div className="settings-group settings-custom-provider">
+              <div style={{ marginBottom: 8 }}>
+                <label className="settings-label" style={{ fontSize: "11px" }}>Provider Name</label>
                 <input
                   className="settings-input"
                   value={customProviderName}
                   onChange={(e) => setCustomProviderName(e.target.value)}
-                  placeholder="e.g., ollama, together, groq"
+                  placeholder="e.g., openrouter, ollama, groq"
                 />
               </div>
-              <div className="settings-group">
-                <label className="settings-label">Base URL</label>
+              <div>
+                <label className="settings-label" style={{ fontSize: "11px" }}>Base URL</label>
                 <input
                   className="settings-input"
                   value={customBaseURL}
@@ -214,79 +215,37 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   placeholder="http://localhost:11434/v1"
                 />
               </div>
-            </>
+            </div>
           )}
 
-          {/* Model */}
+          {/* ═══ Authentication ═══ */}
           <div className="settings-group">
-            <label className="settings-label">Model</label>
-            {provider === "anthropic" && authMethod === "oauth" && oauthStatus === "active" ? (
-              <>
-                <input
-                  className="settings-input"
-                  value={model}
-                  disabled
-                  style={{ opacity: 0.6 }}
-                />
-                <span className="settings-hint">
-                  Model is set by OAuth provider. Change auth method to API Key to use a different model.
-                </span>
-              </>
-            ) : (
-              <>
-                <input
-                  className="settings-input"
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder={DEFAULT_MODELS[provider] || "model-name"}
-                />
-                <span className="settings-hint">
-                  Leave empty for default: {DEFAULT_MODELS[provider] || "—"}
-                </span>
-              </>
-            )}
-          </div>
-
-          {/* Authentication */}
-          {provider === "anthropic" ? (
-            <div className="settings-group">
-              <label className="settings-label">Authentication</label>
-              <div className="settings-provider-grid">
+            <label className="settings-label">Authentication</label>
+            {providerSupportsOAuth ? (
+              <div className="settings-auth-tabs">
                 <button
-                  className={`settings-provider-btn ${authMethod === "apiKey" ? "active" : ""}`}
+                  className={`settings-auth-tab ${authMethod === "apiKey" ? "active" : ""}`}
                   onClick={() => setAuthMethod("apiKey")}
                 >
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4, verticalAlign: -2 }}>
+                    <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
+                  </svg>
                   API Key
                 </button>
                 <button
-                  className={`settings-provider-btn ${authMethod === "oauth" ? "active" : ""}`}
+                  className={`settings-auth-tab ${authMethod === "oauth" ? "active" : ""}`}
                   onClick={() => setAuthMethod("oauth")}
                 >
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 4, verticalAlign: -2 }}>
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                  </svg>
                   OAuth (Free)
                 </button>
               </div>
+            ) : null}
 
-              {authMethod === "apiKey" ? (
-                <>
-                  <input
-                    className="settings-input"
-                    type="password"
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    placeholder={hasConfigFileApiKey ? "Using key from ~/.cdoing/config.json" : "Enter API key or leave empty for env variable"}
-                    style={{ marginTop: 8 }}
-                  />
-                  <span className="settings-hint">
-                    {hasConfigFileApiKey && !apiKey ? (
-                      <><span style={{ color: "var(--success)" }}>Active</span> — {apiKeyHint}</>
-                    ) : apiKey ? (
-                      <><span style={{ color: "var(--success)" }}>Active</span> — {apiKeyHint}</>
-                    ) : (
-                      apiKeyHint
-                    )}
-                  </span>
-                </>
-              ) : (
+            <div className="settings-auth-content">
+              {authMethod === "oauth" && providerSupportsOAuth ? (
                 <div className="oauth-section">
                   <div className="oauth-status">
                     <span className={`oauth-status-dot oauth-status-${oauthStatus}`} />
@@ -303,44 +262,72 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   </div>
                   <div className="oauth-actions">
                     {oauthStatus === "active" ? (
-                      <button className="oauth-btn oauth-btn-logout" onClick={handleOAuthLogout}>
-                        Logout
-                      </button>
+                      <button className="oauth-btn oauth-btn-logout" onClick={handleOAuthLogout}>Logout</button>
                     ) : (
                       <button className="oauth-btn oauth-btn-login" onClick={handleStartOAuth}>
-                        Login with Claude
+                        Login with {currentOAuthProvider?.name || provider}
                       </button>
                     )}
                   </div>
-                  <span className="settings-hint">
-                    Sign in with your Claude account. The model is determined by the OAuth provider.
-                  </span>
                 </div>
+              ) : (
+                <>
+                  <input
+                    className="settings-input"
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    placeholder={hasConfigFileApiKey ? "Using key from config file" : "Enter API key"}
+                  />
+                  <span className="settings-hint">
+                    {apiKey || hasConfigFileApiKey ? (
+                      <><span style={{ color: "var(--success)" }}>●</span> {apiKeyHint}</>
+                    ) : (
+                      <><span style={{ color: "var(--desc-fg)" }}>○</span> {apiKeyHint}. Set one here or via env variable.</>
+                    )}
+                  </span>
+                </>
               )}
             </div>
-          ) : (
-            <div className="settings-group">
-              <label className="settings-label">API Key</label>
-              <input
-                className="settings-input"
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder={hasConfigFileApiKey ? "Using key from ~/.cdoing/config.json" : "Enter API key or leave empty for env variable"}
-              />
-              <span className="settings-hint">
-                {hasConfigFileApiKey && !apiKey ? (
-                  <><span style={{ color: "var(--success)" }}>Active</span> — Using API key from ~/.cdoing/config.json</>
-                ) : apiKey ? (
-                  <><span style={{ color: "var(--success)" }}>Active</span> — API key set in VS Code settings</>
-                ) : (
-                  "No API key found. Set one here or in ~/.cdoing/config.json"
-                )}
-              </span>
-            </div>
-          )}
+          </div>
 
-          {/* Permission Mode */}
+          {/* ═══ Model ═══ */}
+          <div className="settings-group">
+            <label className="settings-label">Model</label>
+            {isOAuthActive ? (
+              <>
+                <div className="settings-model-fixed">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6, verticalAlign: -2, opacity: 0.5 }}>
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                  </svg>
+                  {currentOAuthProvider?.defaultModel || model || "—"}
+                </div>
+                <span className="settings-hint">
+                  Model is determined by OAuth. Switch to API Key to choose freely.
+                </span>
+              </>
+            ) : (
+              <>
+                <SearchableSelect
+                  value={model}
+                  options={modelOptions}
+                  onChange={setModel}
+                  placeholder={`Search models... (default: ${DEFAULT_MODELS[provider] || "auto"})`}
+                  allowCustom
+                  customLabel="custom model"
+                />
+                <span className="settings-hint">
+                  {model
+                    ? modelOptions.find((m) => m.value === model)
+                      ? `Using ${model}`
+                      : `Custom model: ${model}`
+                    : `Default: ${DEFAULT_MODELS[provider] || "provider default"}`}
+                </span>
+              </>
+            )}
+          </div>
+
+          {/* ═══ Permission Mode ═══ */}
           <div className="settings-group">
             <label className="settings-label">Permission Mode</label>
             <div className="settings-mode-grid">
@@ -362,68 +349,36 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
           <div className="settings-group">
             <label className="settings-label">Sandbox</label>
             <div className="settings-row" style={{ alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <input
-                type="checkbox"
-                id="sandbox-toggle"
-                checked={sandboxEnabled}
-                onChange={(e) => setSandboxEnabled(e.target.checked)}
-              />
-              <label htmlFor="sandbox-toggle" style={{ cursor: "pointer" }}>
-                Enable Sandbox
-              </label>
+              <input type="checkbox" id="sandbox-toggle" checked={sandboxEnabled} onChange={(e) => setSandboxEnabled(e.target.checked)} />
+              <label htmlFor="sandbox-toggle" style={{ cursor: "pointer" }}>Enable Sandbox</label>
             </div>
             {sandboxEnabled && (
               <div className="settings-mode-grid">
-                <button
-                  className={`settings-mode-btn ${sandboxMode === "auto-allow" ? "active" : ""}`}
-                  onClick={() => setSandboxMode("auto-allow")}
-                  title="Auto-approve sandboxed commands without permission prompts"
-                >
+                <button className={`settings-mode-btn ${sandboxMode === "auto-allow" ? "active" : ""}`} onClick={() => setSandboxMode("auto-allow")}>
                   <span className="settings-mode-label">Auto-allow</span>
                   <span className="settings-mode-desc">Auto-approve sandboxed commands</span>
                 </button>
-                <button
-                  className={`settings-mode-btn ${sandboxMode === "regular" ? "active" : ""}`}
-                  onClick={() => setSandboxMode("regular")}
-                  title="Sandbox enforces restrictions but still prompts for permission"
-                >
+                <button className={`settings-mode-btn ${sandboxMode === "regular" ? "active" : ""}`} onClick={() => setSandboxMode("regular")}>
                   <span className="settings-mode-label">Regular</span>
                   <span className="settings-mode-desc">Enforce restrictions, still prompt</span>
                 </button>
               </div>
             )}
-            <span className="settings-hint">
-              Restricts file and network access. Configure paths and domains in .claude/settings.json.
-            </span>
+            <span className="settings-hint">Restricts file and network access.</span>
           </div>
 
           {/* Codebase Indexer */}
           <div className="settings-group">
             <label className="settings-label">Codebase Indexer</label>
             <div className="settings-row" style={{ alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-              <input
-                type="checkbox"
-                id="indexer-auto"
-                checked={indexerAutoIndex}
-                onChange={(e) => setIndexerAutoIndex(e.target.checked)}
-              />
-              <label htmlFor="indexer-auto" style={{ cursor: "pointer" }}>
-                Auto-index on startup
-              </label>
+              <input type="checkbox" id="indexer-auto" checked={indexerAutoIndex} onChange={(e) => setIndexerAutoIndex(e.target.checked)} />
+              <label htmlFor="indexer-auto" style={{ cursor: "pointer" }}>Auto-index on startup</label>
             </div>
             <div className="settings-group" style={{ marginBottom: "8px" }}>
               <label className="settings-label" style={{ fontSize: "11px" }}>Embedding Provider</label>
               <div className="settings-provider-grid">
-                {[
-                  { value: "none", label: "None (FTS only)" },
-                  { value: "openai", label: "OpenAI" },
-                  { value: "ollama", label: "Ollama" },
-                ].map((p) => (
-                  <button
-                    key={p.value}
-                    className={`settings-provider-btn ${indexerEmbeddingProvider === p.value ? "active" : ""}`}
-                    onClick={() => setIndexerEmbeddingProvider(p.value)}
-                  >
+                {[{ value: "none", label: "None (FTS)" }, { value: "openai", label: "OpenAI" }, { value: "ollama", label: "Ollama" }].map((p) => (
+                  <button key={p.value} className={`settings-provider-btn ${indexerEmbeddingProvider === p.value ? "active" : ""}`} onClick={() => setIndexerEmbeddingProvider(p.value)}>
                     {p.label}
                   </button>
                 ))}
@@ -433,67 +388,35 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
               <>
                 <div className="settings-group" style={{ marginBottom: "8px" }}>
                   <label className="settings-label" style={{ fontSize: "11px" }}>Embedding Model</label>
-                  <input
-                    className="settings-input"
-                    value={indexerEmbeddingModel}
-                    onChange={(e) => setIndexerEmbeddingModel(e.target.value)}
-                    placeholder={indexerEmbeddingProvider === "openai" ? "text-embedding-3-small" : "nomic-embed-text"}
-                  />
+                  <input className="settings-input" value={indexerEmbeddingModel} onChange={(e) => setIndexerEmbeddingModel(e.target.value)} placeholder={indexerEmbeddingProvider === "openai" ? "text-embedding-3-small" : "nomic-embed-text"} />
                 </div>
                 {indexerEmbeddingProvider === "ollama" && (
                   <div className="settings-group" style={{ marginBottom: "8px" }}>
                     <label className="settings-label" style={{ fontSize: "11px" }}>Ollama Base URL</label>
-                    <input
-                      className="settings-input"
-                      value={indexerEmbeddingBaseUrl}
-                      onChange={(e) => setIndexerEmbeddingBaseUrl(e.target.value)}
-                      placeholder="http://localhost:11434"
-                    />
+                    <input className="settings-input" value={indexerEmbeddingBaseUrl} onChange={(e) => setIndexerEmbeddingBaseUrl(e.target.value)} placeholder="http://localhost:11434" />
                   </div>
                 )}
               </>
             )}
-            <span className="settings-hint">
-              {indexerEmbeddingProvider === "none"
-                ? "Uses full-text search (BM25) only. Fast, no external dependencies."
-                : "Adds semantic search via embeddings. Requires embedding model API access."}
-            </span>
+            <span className="settings-hint">{indexerEmbeddingProvider === "none" ? "Full-text search only." : "Adds semantic search via embeddings."}</span>
           </div>
 
-          {/* Temperature */}
+          {/* Temperature & Max Tokens */}
           <div className="settings-group settings-row">
             <div className="settings-row-item">
               <label className="settings-label">Temperature</label>
-              <input
-                className="settings-input settings-input-small"
-                type="number"
-                min={0}
-                max={2}
-                step={0.1}
-                value={temperature}
-                onChange={(e) => setTemperature(parseFloat(e.target.value) || 0)}
-              />
+              <input className="settings-input settings-input-small" type="number" min={0} max={2} step={0.1} value={temperature} onChange={(e) => setTemperature(parseFloat(e.target.value) || 0)} />
             </div>
             <div className="settings-row-item">
               <label className="settings-label">Max Tokens</label>
-              <input
-                className="settings-input settings-input-small"
-                type="number"
-                min={100}
-                max={200000}
-                step={100}
-                value={maxTokens}
-                onChange={(e) => setMaxTokens(parseInt(e.target.value) || 8096)}
-              />
+              <input className="settings-input settings-input-small" type="number" min={100} max={200000} step={100} value={maxTokens} onChange={(e) => setMaxTokens(parseInt(e.target.value) || 8096)} />
             </div>
           </div>
         </div>
 
         {/* Footer */}
         <div className="settings-footer">
-          <button className="settings-vscode-btn" onClick={onOpenVscodeSettings}>
-            Open VS Code Settings
-          </button>
+          <button className="settings-vscode-btn" onClick={onOpenVscodeSettings}>VS Code Settings</button>
           <div className="settings-footer-right">
             <button className="settings-cancel-btn" onClick={onClose}>Cancel</button>
             <button className="settings-save-btn" onClick={handleSave}>Save</button>

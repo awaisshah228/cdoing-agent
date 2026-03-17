@@ -15,6 +15,7 @@ import {
   SandboxManager,
   loadProjectConfig,
   registerToolCategories,
+  getOAuthProviders,
 } from "@cdoing/core";
 import type { ToolCategory } from "@cdoing/core";
 import {
@@ -979,6 +980,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         permissionMode: vsConfig.get<string>("permissionMode") || "ask",
         // Extra info for settings panel to show correct status
         hasConfigFileApiKey: !!configApiKey,
+        // OAuth-capable providers (from core, single source of truth)
+        oauthProviders: getOAuthProviders().map(p => ({ id: p.id, name: p.name, defaultModel: p.defaultModel })),
       },
     });
     // Also send OAuth status
