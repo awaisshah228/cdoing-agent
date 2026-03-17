@@ -40,6 +40,11 @@ const HEADER_MODEL_OPTIONS: Record<string, Array<{ value: string; label: string;
     { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro", hint: "capable" },
     { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash", hint: "stable" },
   ],
+  "openai-codex": [
+    { value: "gpt-5.1-codex", label: "GPT-5.1 Codex", hint: "recommended" },
+    { value: "gpt-5.1-codex-max", label: "GPT-5.1 Codex Max", hint: "most capable" },
+    { value: "gpt-5.2-codex", label: "GPT-5.2 Codex", hint: "latest" },
+  ],
 };
 
 export const ChatPanel: React.FC = () => {

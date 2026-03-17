@@ -34,6 +34,7 @@ interface OAuthProviderInfo {
 const PROVIDER_OPTIONS: SelectOption[] = [
   { value: "anthropic", label: "Anthropic (Claude)", hint: "Sonnet, Opus, Haiku", group: "Cloud Providers" },
   { value: "openai", label: "OpenAI", hint: "GPT-4o, o3, o4", group: "Cloud Providers" },
+  { value: "openai-codex", label: "OpenAI Codex", hint: "Free via ChatGPT login", group: "Cloud Providers" },
   { value: "google", label: "Google (Gemini)", hint: "Flash, Pro", group: "Cloud Providers" },
   { value: "custom", label: "Custom / Other", hint: "OpenRouter, Ollama, Groq, Together...", group: "Self-Hosted & Routers" },
 ];
@@ -64,6 +65,15 @@ const MODEL_OPTIONS: Record<string, SelectOption[]> = {
     { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash", hint: "latest fast", group: "Gemini 2" },
     { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro", hint: "1M context", group: "Gemini 1.5" },
     { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash", hint: "fast", group: "Gemini 1.5" },
+  ],
+  "openai-codex": [
+    { value: "gpt-5.1-codex", label: "GPT-5.1 Codex", hint: "recommended", group: "Codex" },
+    { value: "gpt-5.1-codex-mini", label: "GPT-5.1 Codex Mini", hint: "fast", group: "Codex" },
+    { value: "gpt-5.1-codex-max", label: "GPT-5.1 Codex Max", hint: "most capable", group: "Codex" },
+    { value: "gpt-5.2-codex", label: "GPT-5.2 Codex", hint: "latest", group: "Codex" },
+    { value: "gpt-5.3-codex", label: "GPT-5.3 Codex", hint: "latest", group: "Codex" },
+    { value: "gpt-5.2", label: "GPT-5.2", hint: "general", group: "GPT-5" },
+    { value: "gpt-5.4", label: "GPT-5.4", hint: "newest", group: "GPT-5" },
   ],
   custom: [
     // OpenRouter popular models
@@ -178,6 +188,7 @@ const CUSTOM_PROVIDER_MODELS: Record<string, SelectOption[]> = {
 const DEFAULT_MODELS: Record<string, string> = {
   anthropic: "claude-sonnet-4-6",
   openai: "gpt-4o",
+  "openai-codex": "gpt-5.1-codex",
   google: "gemini-2.0-flash",
   custom: "",
 };
