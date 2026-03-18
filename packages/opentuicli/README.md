@@ -5,12 +5,20 @@
 
 Lightweight terminal interface for [Cdoing Agent](https://github.com/awaisshah228/cdoing-agent) — built on the OpenTUI framework. An open-source, multi-provider AI coding assistant.
 
+## Requirements
+
+**[Bun](https://bun.sh) is required.** This package uses the OpenTUI framework which relies on Bun-native terminal rendering APIs and does not work with Node.js.
+
+If you need Node.js compatibility, use [`@cdoing/cli`](https://www.npmjs.com/package/@cdoing/cli) instead (same agent, Ink-based UI).
+
 ## Installation
 
 ```bash
-npm install -g @cdoing/opentuicli
-# or
-yarn global add @cdoing/opentuicli
+# Bun (required)
+bun install -g @cdoing/opentuicli
+
+# Install Bun if you don't have it
+curl -fsSL https://bun.sh/install | bash
 ```
 
 ## Quick Start
@@ -32,6 +40,7 @@ This is the **lightweight alternative** to `@cdoing/cli`. While the main CLI use
 
 | | `@cdoing/cli` | `@cdoing/opentuicli` |
 |---|---|---|
+| **Runtime** | Node.js (npm/yarn/pnpm) | **Bun only** |
 | **UI Framework** | Ink + React | OpenTUI |
 | **Bundle size** | Larger | Smaller |
 | **Startup time** | ~1s | ~0.5s |
