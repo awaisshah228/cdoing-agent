@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 
-const childProcess = require("child_process")
-const fs = require("fs")
-const path = require("path")
-const os = require("os")
+import { spawnSync } from "node:child_process"
+import { existsSync, realpathSync, symlinkSync } from "node:fs"
+import { dirname, join } from "node:path"
+import { platform as osPlatform, arch as osArch } from "node:os"
+import { fileURLToPath } from "node:url"
 
 function run(target) {
-  const result = childProcess.spawnSync(target, process.argv.slice(2), {
+  const result = spawnSync(target, process.argv.slice(2), {
     stdio: "inherit",
   })
   if (result.error) {
@@ -22,12 +23,12 @@ if (envPath) {
   run(envPath)
 }
 
-const scriptPath = fs.realpathSync(__filename)
-const scriptDir = path.dirname(scriptPath)
+const scriptPath = realpathSync(fileURLToPath(import.meta.url))
+const scriptDir = dirname(scriptPath)
 
 // Cached binary path for fast subsequent launches
-const cached = path.join(scriptDir, ".cdoing-tui")
-if (fs.existsSync(cached)) {
+const cached = join(scriptDir, ".cdoing-tui")
+if (existsSync(cached)) {
   run(cached)
 }
 
@@ -41,13 +42,13 @@ const archMap = {
   arm64: "arm64",
 }
 
-let platform = platformMap[os.platform()]
+let platform = platformMap[osPlatform()]
 if (!platform) {
-  platform = os.platform()
+  platform = osPlatform()
 }
-let arch = archMap[os.arch()]
+let arch = archMap[osArch()]
 if (!arch) {
-  arch = os.arch()
+  arch = osArch()
 }
 
 const base = "@cdoing/opentuicli-" + platform + "-" + arch
@@ -58,14 +59,14 @@ const names = [base]
 function findBinary(startDir) {
   let current = startDir
   for (;;) {
-    const modules = path.join(current, "node_modules")
-    if (fs.existsSync(modules)) {
+    const modules = join(current, "node_modules")
+    if (existsSync(modules)) {
       for (const name of names) {
-        const candidate = path.join(modules, name, "bin", binary)
-        if (fs.existsSync(candidate)) return candidate
+        const candidate = join(modules, name, "bin", binary)
+        if (existsSync(candidate)) return candidate
       }
     }
-    const parent = path.dirname(current)
+    const parent = dirname(current)
     if (parent === current) {
       return
     }
@@ -76,7 +77,7 @@ function findBinary(startDir) {
 const resolved = findBinary(scriptDir)
 if (!resolved) {
   console.error(
-    "No pre-built binary found for your platform (" + os.platform() + "-" + os.arch() + ").\n" +
+    "No pre-built binary found for your platform (" + osPlatform() + "-" + osArch() + ").\n" +
       "Try manually installing " +
       names.map((n) => '"' + n + '"').join(" or ") +
       " package"
@@ -86,7 +87,7 @@ if (!resolved) {
 
 // Cache for fast subsequent launches
 try {
-  fs.symlinkSync(resolved, cached)
+  symlinkSync(resolved, cached)
 } catch {
   // ignore — cache is optional
 }
