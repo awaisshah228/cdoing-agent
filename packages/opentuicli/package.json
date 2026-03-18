@@ -1,13 +1,13 @@
 {
   "name": "@cdoing/opentuicli",
-  "version": "0.1.35",
+  "version": "0.1.36",
   "description": "OpenTUI-based terminal interface for cdoing agent (inspired by opencode's TUI)",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "cdoing-tui": "bin/cdoing-tui.cjs",
-    "opentuicli": "bin/cdoing-tui.cjs"
+    "opentuicli": "bin/cdoing-tui.cjs",
+    "cdoing-tui": "bin/cdoing-tui.cjs"
   },
   "files": [
     "bin/",

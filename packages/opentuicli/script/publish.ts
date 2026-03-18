@@ -73,8 +73,8 @@ const mainPkgJson = {
   version,
   description: pkg.description,
   bin: {
-    "cdoing-tui": "./bin/cdoing-tui.cjs",
     "opentuicli": "./bin/cdoing-tui.cjs",
+    "cdoing-tui": "./bin/cdoing-tui.cjs",
   },
   scripts: {
     postinstall: "node ./postinstall.mjs",
