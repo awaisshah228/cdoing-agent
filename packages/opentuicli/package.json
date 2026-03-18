@@ -1,6 +1,6 @@
 {
   "name": "@cdoing/opentuicli",
-  "version": "0.1.24",
+  "version": "0.1.25",
   "description": "OpenTUI-based terminal interface for cdoing agent (inspired by opencode's TUI)",
   "type": "module",
   "main": "dist/index.js",
@@ -19,14 +19,6 @@
     "dev": "bun --watch src/index.ts",
     "start": "./dist/cdoing-tui-current/bin/cdoing-tui",
     "clean": "rm -rf dist"
-  },
-  "optionalDependencies": {
-    "@cdoing/opentuicli-darwin-arm64": "0.1.24",
-    "@cdoing/opentuicli-darwin-x64": "0.1.24",
-    "@cdoing/opentuicli-linux-arm64": "0.1.24",
-    "@cdoing/opentuicli-linux-x64": "0.1.24",
-    "@cdoing/opentuicli-windows-arm64": "0.1.24",
-    "@cdoing/opentuicli-windows-x64": "0.1.24"
   },
   "devDependencies": {
     "@cdoing/ai": "*",

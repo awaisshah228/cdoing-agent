@@ -66,7 +66,7 @@ jobs:
           check_pkg "@cdoing/opentuicli" "packages/opentuicli" "opentui"
 
       - name: Install dependencies
-        run: yarn install --ignore-engines
+        run: yarn install --ignore-engines --ignore-optional
 
       - name: Build all packages
         run: yarn build
@@ -96,7 +96,7 @@ jobs:
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
-      - run: yarn install --ignore-engines
+      - run: yarn install --ignore-engines --ignore-optional
       - uses: actions/download-artifact@v4
         with:
           name: dist
@@ -130,7 +130,7 @@ jobs:
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
-      - run: yarn install --ignore-engines
+      - run: yarn install --ignore-engines --ignore-optional
       - uses: actions/download-artifact@v4
         with:
           name: dist
@@ -164,7 +164,7 @@ jobs:
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
-      - run: yarn install --ignore-engines
+      - run: yarn install --ignore-engines --ignore-optional
       - uses: actions/download-artifact@v4
         with:
           name: dist
@@ -198,7 +198,7 @@ jobs:
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
-      - run: yarn install --ignore-engines
+      - run: yarn install --ignore-engines --ignore-optional
       - uses: actions/download-artifact@v4
         with:
           name: dist
