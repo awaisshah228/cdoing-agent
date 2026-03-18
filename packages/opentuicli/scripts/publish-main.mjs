@@ -28,13 +28,19 @@ const version = pkg.version
 // Inject optionalDependencies
 pkg.optionalDependencies = {
   "@cdoing/opentuicli-darwin-arm64": version,
+  "@cdoing/opentuicli-darwin-x64": version,
   "@cdoing/opentuicli-linux-arm64": version,
   "@cdoing/opentuicli-linux-x64": version,
   "@cdoing/opentuicli-windows-x64": version,
 }
 
+// Main package should be lightweight — binaries come from platform packages.
+// Only ship the bin script (which finds and runs the platform binary).
+pkg.files = ["bin/"]
+
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n")
 console.log(`Injected optionalDependencies for v${version}`)
+console.log(`Set files to: ${JSON.stringify(pkg.files)}`)
 
 try {
   const cmd = dryRun
