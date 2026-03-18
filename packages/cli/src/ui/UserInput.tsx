@@ -971,7 +971,7 @@ export const UserInput: React.FC<UserInputProps> = ({
         {/* Input line */}
         <Box>
           <Text color={t.accent}>{"● "}</Text>
-          {input.length > 0 ? <Text>{input}</Text> : null}
+          {input.length > 0 ? <Text color={t.text}>{input}</Text> : null}
           <Text color={t.cursor}>{"▊"}</Text>
           {input.length === 0 ? (
             <Text color={t.placeholder} dimColor={t.useDim}>{"Ask anything, @ for context, / for commands, ! for shell"}</Text>

@@ -203,11 +203,11 @@ export interface ThemeColors {
 const darkTheme: ThemeColors = {
   text: "white",
   textBold: "white",
-  textDim: "gray",
+  textDim: "#6b7280",
 
   prompt: "green",
   cursor: "green",
-  placeholder: "gray",
+  placeholder: "#9ca3af",
 
   accent: "cyan",
   accentSecondary: "blueBright",
@@ -217,8 +217,8 @@ const darkTheme: ThemeColors = {
   error: "red",
   info: "yellow",
 
-  border: "gray",
-  separator: "gray",
+  border: "#4b5563",
+  separator: "#4b5563",
   selected: "white",
   selectedBg: "cyan",
 
@@ -230,8 +230,8 @@ const darkTheme: ThemeColors = {
   heading2: "cyan",
   bullet: "red",
   listNumber: "magenta",
-  codeBlock: "gray",
-  horizontalRule: "gray",
+  codeBlock: "#9ca3af",
+  horizontalRule: "#6b7280",
 
   suggestionFile: "magenta",
   suggestionProvider: "yellow",
@@ -241,14 +241,14 @@ const darkTheme: ThemeColors = {
   toolRunning: "yellow",
   toolDone: "green",
   toolError: "red",
-  toolPreview: "gray",
+  toolPreview: "#9ca3af",
 
   spinner: "yellow",
-  elapsed: "gray",
+  elapsed: "#6b7280",
 
   sessionTitle: "white",
   sessionDate: "yellow",
-  sessionMeta: "gray",
+  sessionMeta: "#9ca3af",
 
   bgJobs: "magenta",
 
