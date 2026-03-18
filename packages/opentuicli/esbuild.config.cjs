@@ -7,6 +7,7 @@ const build = {
   entryPoints: [path.resolve(__dirname, "src/index.ts")],
   bundle: true,
   outfile: path.resolve(__dirname, "dist/index.js"),
+  banner: { js: "#!/usr/bin/env node" },
   format: "esm",
   platform: "node",
   target: "esnext",
