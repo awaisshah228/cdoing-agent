@@ -55,6 +55,30 @@ const workspacePlugin: BunPlugin = {
   },
 }
 
+// Stub native @opentui/core-{platform}-{arch} imports for non-host targets.
+// Bun's compiler tries to resolve ALL dynamic imports even when cross-compiling,
+// but the .ts source files aren't available — only the compiled .js in npm packages.
+const nativeStubPlugin: BunPlugin = {
+  name: "native-stub",
+  setup(build) {
+    // Match @opentui/core-{platform}-{arch} imports
+    build.onResolve({ filter: /^@opentui\/core-[a-z0-9]+-[a-z0-9]+/ }, (args) => {
+      // Check if the module can be resolved normally
+      try {
+        const resolved = require.resolve(args.path)
+        return { path: resolved }
+      } catch {
+        // Can't resolve — stub it with an empty module
+        return { path: args.path, namespace: "native-stub" }
+      }
+    })
+    build.onLoad({ filter: /.*/, namespace: "native-stub" }, () => ({
+      contents: "export default {}; export const createTerminal = () => { throw new Error('unsupported platform'); };",
+      loader: "js",
+    }))
+  },
+}
+
 const dedupeReactPlugin: BunPlugin = {
   name: "dedupe-react",
   setup(build) {
@@ -103,7 +127,7 @@ for (const item of targets) {
 
   const result = await Bun.build({
     entrypoints: [path.join(dir, "src/index.ts")],
-    plugins: [workspacePlugin, dedupeReactPlugin],
+    plugins: [workspacePlugin, nativeStubPlugin, dedupeReactPlugin],
     tsconfig: path.join(dir, "tsconfig.json"),
     compile: {
       autoloadBunfig: false,
