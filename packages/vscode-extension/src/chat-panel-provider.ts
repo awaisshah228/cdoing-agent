@@ -1308,15 +1308,25 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           t.isProcessing = false;
           this._onDidChangeState.fire();
           let errMsg = error.message;
+          const lower = errMsg.toLowerCase();
           // Detect image-related errors
           if (images.length > 0) {
-            const lower = errMsg.toLowerCase();
             if (lower.includes("400") || lower.includes("invalid") || lower.includes("image") ||
                 lower.includes("multimodal") || lower.includes("vision") || lower.includes("content type") ||
                 lower.includes("unsupported") || lower.includes("does not support")) {
               const resolved = resolveModelInfo(this.getConfig().modelConfig);
               errMsg = `This model (${resolved.model}) does not support image/vision input.\n\n${errMsg}\n\nSwitch to a vision-capable model: Claude Sonnet/Haiku, GPT-4o, or Gemini.`;
             }
+          }
+          // Categorize common errors with actionable hints
+          if (lower.includes("401") || lower.includes("403") || lower.includes("authentication") || lower.includes("invalid_api_key")) {
+            errMsg += "\n\nAuthentication failed — check your API key in the extension settings.";
+          } else if (lower.includes("429") || lower.includes("rate") || lower.includes("quota") || lower.includes("credit balance")) {
+            errMsg += "\n\nRate limit or quota exceeded — wait a moment and retry, or switch models.";
+          } else if (lower.includes("econnrefused") || lower.includes("enotfound") || lower.includes("etimedout") || lower.includes("fetch failed")) {
+            errMsg += "\n\nNetwork error — check your internet connection and try again.";
+          } else if (lower.includes("empty response")) {
+            errMsg += "\n\nThe model returned no output — try again or switch models.";
           }
           this.postTabMessage(tabId, { type: "error", text: errMsg });
           this.processTabQueue(tabId);

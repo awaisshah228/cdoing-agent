@@ -246,8 +246,10 @@ function formatToolPreview(name: string, input: Record<string, unknown>): string
 }
 
 /** One-shot mode: colorful minimal output */
-export function createOneShotCallbacks(): AgentCallbacks {
+export function createOneShotCallbacks(): AgentCallbacks & { hasError: boolean } {
+  const state = { hasError: false };
   return {
+    get hasError() { return state.hasError; },
     onToken: (token) => process.stdout.write(token),
     onToolCall: (name) => {
       const style = getToolStyle(name);
@@ -262,7 +264,39 @@ export function createOneShotCallbacks(): AgentCallbacks {
       }
     },
     onComplete: () => console.log(),
-    onError: (err) => console.error(chalk.hex("#EF5350")(`❌ Error: `) + chalk.hex("#FFCDD2")(err.message)),
+    onError: (err) => {
+      state.hasError = true;
+      const msg = err.message;
+      console.error("");
+      // Categorize the error for clearer CLI output
+      if (msg.includes("401") || msg.includes("403") || msg.includes("authentication") || msg.includes("invalid_api_key") || msg.includes("Authentication")) {
+        console.error(chalk.hex("#EF5350")(`❌ Authentication Error`));
+        console.error(chalk.hex("#FFCDD2")(`   ${msg}`));
+        console.error(chalk.hex("#90A4AE")(`\n   Fix: Run "cdoing --login" or set your API key with --api-key`));
+      } else if (msg.includes("429") || msg.includes("rate") || msg.includes("quota") || msg.includes("credit balance")) {
+        console.error(chalk.hex("#EF5350")(`❌ Rate Limit / Quota Error`));
+        console.error(chalk.hex("#FFCDD2")(`   ${msg}`));
+        console.error(chalk.hex("#90A4AE")(`\n   Fix: Wait a moment and retry, or switch models with --model`));
+      } else if (msg.includes("404") || msg.includes("not found") || msg.includes("not_found")) {
+        console.error(chalk.hex("#EF5350")(`❌ Model Not Found`));
+        console.error(chalk.hex("#FFCDD2")(`   ${msg}`));
+        console.error(chalk.hex("#90A4AE")(`\n   Fix: Check the model name and try again with --model`));
+      } else if (msg.includes("ECONNREFUSED") || msg.includes("ENOTFOUND") || msg.includes("ETIMEDOUT") || msg.includes("fetch failed") || msg.includes("network") || msg.includes("socket")) {
+        console.error(chalk.hex("#EF5350")(`❌ Network Error`));
+        console.error(chalk.hex("#FFCDD2")(`   ${msg}`));
+        console.error(chalk.hex("#90A4AE")(`\n   Fix: Check your internet connection and try again`));
+      } else if (msg.includes("400") || msg.includes("invalid")) {
+        console.error(chalk.hex("#EF5350")(`❌ Invalid Request`));
+        console.error(chalk.hex("#FFCDD2")(`   ${msg}`));
+        console.error(chalk.hex("#90A4AE")(`\n   Fix: The model rejected the request — try a different model with --model`));
+      } else if (msg.includes("Empty response")) {
+        console.error(chalk.hex("#EF5350")(`❌ Empty Response`));
+        console.error(chalk.hex("#FFCDD2")(`   The model returned no output.`));
+        console.error(chalk.hex("#90A4AE")(`\n   Fix: Try again or switch to a different model with --model`));
+      } else {
+        console.error(chalk.hex("#EF5350")(`❌ Error: `) + chalk.hex("#FFCDD2")(msg));
+      }
+    },
     onUsage: (usage) => {
       console.error(chalk.hex("#546E7A")(`╭─ `) + formatUsage(usage) + chalk.hex("#546E7A")(` ─╮`));
     },
@@ -270,38 +304,44 @@ export function createOneShotCallbacks(): AgentCallbacks {
 }
 
 /** Print mode: simple text output (for --print flag) */
-export function createPrintCallbacks(): AgentCallbacks {
+export function createPrintCallbacks(): AgentCallbacks & { hasError: boolean } {
+  const state = { hasError: false };
   return {
+    get hasError() { return state.hasError; },
     onToken: (token) => process.stdout.write(token),
     onToolCall: () => {},
     onToolResult: () => {},
     onComplete: () => console.log(),
-    onError: (e) => console.error(e.message),
+    onError: (e) => { state.hasError = true; console.error(e.message); },
   };
 }
 
 /** JSON mode: structured JSON output (for --output-format json) */
-export function createJsonCallbacks(): AgentCallbacks {
+export function createJsonCallbacks(): AgentCallbacks & { hasError: boolean } {
   const result: { response: string; tools: Array<{ name: string; input: Record<string, unknown> }> } = {
     response: "",
     tools: [],
   };
+  const state = { hasError: false };
   return {
+    get hasError() { return state.hasError; },
     onToken: (token) => { result.response += token; },
     onToolCall: (name, input) => { result.tools.push({ name, input }); },
     onToolResult: () => {},
     onComplete: () => console.log(JSON.stringify(result, null, 2)),
-    onError: (e) => console.error(JSON.stringify({ error: e.message })),
+    onError: (e) => { state.hasError = true; console.error(JSON.stringify({ error: e.message })); },
   };
 }
 
 /** Stream JSON mode: line-delimited JSON events (for --output-format stream-json) */
-export function createStreamJsonCallbacks(): AgentCallbacks {
+export function createStreamJsonCallbacks(): AgentCallbacks & { hasError: boolean } {
+  const state = { hasError: false };
   return {
+    get hasError() { return state.hasError; },
     onToken: (token) => console.log(JSON.stringify({ type: "token", data: token })),
     onToolCall: (name, input) => console.log(JSON.stringify({ type: "tool_call", name, input })),
     onToolResult: (name, result) => console.log(JSON.stringify({ type: "tool_result", name, result })),
     onComplete: () => console.log(JSON.stringify({ type: "complete" })),
-    onError: (e) => console.log(JSON.stringify({ type: "error", message: e.message })),
+    onError: (e) => { state.hasError = true; console.log(JSON.stringify({ type: "error", message: e.message })); },
   };
 }

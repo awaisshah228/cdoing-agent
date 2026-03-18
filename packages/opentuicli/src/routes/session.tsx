@@ -1217,8 +1217,24 @@ export function SessionView(props: {
           addMessage("assistant", current);
           setStreamingText("");
         }
-        addMessage("system", `Error: ${error.message}`);
-        toast("error", error.message);
+        const msg = error.message;
+        const lower = msg.toLowerCase();
+        let display: string;
+        if (lower.includes("401") || lower.includes("403") || lower.includes("authentication") || lower.includes("invalid_api_key")) {
+          display = `Authentication Error: ${msg}\n\nRun /setup or /login to re-authenticate.`;
+        } else if (lower.includes("429") || lower.includes("rate") || lower.includes("quota") || lower.includes("credit balance")) {
+          display = `Rate Limit / Quota Error: ${msg}\n\nWait a moment and retry, or use /model to switch.`;
+        } else if (lower.includes("econnrefused") || lower.includes("enotfound") || lower.includes("etimedout") || lower.includes("fetch failed") || lower.includes("network") || lower.includes("socket")) {
+          display = `Network Error: ${msg}\n\nCheck your internet connection and try again.`;
+        } else if (lower.includes("empty response")) {
+          display = `Empty Response: The model returned no output. Try again or switch models.`;
+        } else if (lower.includes("404") || (lower.includes("not found") && lower.includes("model"))) {
+          display = `Model Not Found: ${msg}\n\nUse /model to switch to a valid model.`;
+        } else {
+          display = `Error: ${msg}`;
+        }
+        addMessage("system", display);
+        toast("error", display.split("\n")[0]);
         setIsStreaming(false);
         props.onStatus("Error");
         setActiveTool(undefined);

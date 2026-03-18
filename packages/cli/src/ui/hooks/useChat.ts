@@ -32,7 +32,7 @@
  *                                                    setStreamingContent / setMessages
  */
 
-import { useState, useCallback, useRef, useMemo } from "react";
+import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 import * as path from "path";
 import * as fs from "fs";
 import chalk from "chalk";
@@ -168,6 +168,12 @@ export function useChat(opts: UseChatOptions) {
 
   /** Whether the /ls session browser overlay is open */
   const [showSessionBrowser, setShowSessionBrowser] = useState(false);
+
+  /** Track whether the component is still mounted to avoid state updates after unmount */
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    return () => { mountedRef.current = false; };
+  }, []);
 
   /** Bumped whenever modelConfigRef is mutated — forces a re-render so StatusBar reflects changes */
   const [_configVersion, _bumpConfigVersion] = useState(0);
@@ -411,6 +417,7 @@ export function useChat(opts: UseChatOptions) {
         onToken: (token) => {
           fullReply += token;
           fullReplyRef.current = fullReply;
+          if (!mountedRef.current) return;
           const unflushed = fullReply.slice(flushedPos);
           // Flush completed lines to Static immediately.
           // Only keep the last partial line in the dynamic area.
@@ -434,6 +441,7 @@ export function useChat(opts: UseChatOptions) {
         },
 
         onToolCall: (name, input) => {
+          if (!mountedRef.current) return;
           flushStreamingText();
           lastToolInputRef.current = input;
           const icon = TOOL_ICONS[name] || "⚡";
@@ -447,6 +455,7 @@ export function useChat(opts: UseChatOptions) {
         },
 
         onToolResult: (_name, _result, isError) => {
+          if (!mountedRef.current) return;
           const icon = TOOL_ICONS[_name] || "⚡";
           const line = isError
             ? chalk.red(`  ✗ ${icon} ${_name}`)
@@ -461,6 +470,7 @@ export function useChat(opts: UseChatOptions) {
         },
 
         onComplete: () => {
+          if (!mountedRef.current) return;
           const remaining = fullReply.slice(flushedPos);
           if (remaining.trim()) {
             setMessages((prev) => [...prev, { id: nextId(), role: "assistant", content: remaining }]);
@@ -507,9 +517,27 @@ export function useChat(opts: UseChatOptions) {
         },
 
         onError: (err) => {
+          if (!mountedRef.current) return;
+          const msg = err.message;
+          let display: string;
+          if (msg.includes("401") || msg.includes("403") || msg.includes("authentication") || msg.includes("invalid_api_key") || msg.includes("Authentication")) {
+            display = `❌ Authentication Error\n${msg}\n\nRun /setup or /login to re-authenticate.`;
+          } else if (msg.includes("429") || msg.includes("rate") || msg.includes("quota") || msg.includes("credit balance")) {
+            display = `❌ Rate Limit / Quota Error\n${msg}\n\nWait a moment and retry, or use /model to switch models.`;
+          } else if (msg.includes("404") || (msg.includes("not found") && msg.includes("odel"))) {
+            display = `❌ Model Not Found\n${msg}\n\nUse /model to switch to a valid model.`;
+          } else if (msg.includes("ECONNREFUSED") || msg.includes("ENOTFOUND") || msg.includes("ETIMEDOUT") || msg.includes("fetch failed") || msg.includes("network") || msg.includes("socket")) {
+            display = `❌ Network Error\n${msg}\n\nCheck your internet connection and try again.`;
+          } else if (msg.includes("400") || msg.includes("invalid")) {
+            display = `❌ Invalid Request\n${msg}\n\nThe model rejected the request — try /model to switch models.`;
+          } else if (msg.includes("Empty response")) {
+            display = `❌ Empty Response\nThe model returned no output. Try again or use /model to switch models.`;
+          } else {
+            display = `❌ Error: ${msg}`;
+          }
           setMessages((prev) => [
             ...prev,
-            { id: nextId(), role: "system", content: `❌ Error: ${err.message}`, isError: true },
+            { id: nextId(), role: "system", content: display, isError: true },
           ]);
           setStreamingContent("");
           setIsProcessing(false);
@@ -517,6 +545,7 @@ export function useChat(opts: UseChatOptions) {
         },
 
         onUsage: (usage) => {
+          if (!mountedRef.current) return;
           const u = usage as UsageInfo;
           setLastUsage(u);
 
@@ -536,11 +565,13 @@ export function useChat(opts: UseChatOptions) {
           }
         },
         onCompactStart: (contextPercent: number) => {
+          if (!mountedRef.current) return;
           try {
             addSystemMessage(`⟳ Compacting context (${contextPercent}% used)...`);
           } catch {}
         },
         onCompactEnd: (savedTokens: number, newPercent: number) => {
+          if (!mountedRef.current) return;
           try {
             addSystemMessage(`✓ Context compacted — saved ${savedTokens.toLocaleString()} tokens (now ${newPercent}%)`);
           } catch {}
@@ -685,6 +716,7 @@ export function useChat(opts: UseChatOptions) {
             onToolCall:   () => {},
             onToolResult: () => {},
             onComplete:   () => {
+              if (!mountedRef.current) return;
               setBackgroundJobs((prev) =>
                 prev.map((j) => j.id === id
                   ? { ...j, status: "done", result, completedAt: Date.now() }
@@ -692,6 +724,7 @@ export function useChat(opts: UseChatOptions) {
               addSystemMessage(`✅ Background job done: ${id}`);
             },
             onError: (e: Error) => {
+              if (!mountedRef.current) return;
               setBackgroundJobs((prev) =>
                 prev.map((j) => j.id === id
                   ? { ...j, status: "error", error: e.message, completedAt: Date.now() }
@@ -1046,15 +1079,17 @@ export function useChat(opts: UseChatOptions) {
           );
           let reply = "";
           await ephemeralAgent.run(arg, {
-            onToken:      (t: string) => { reply += t; setStreamingContent(reply); },
+            onToken:      (t: string) => { reply += t; if (mountedRef.current) setStreamingContent(reply); },
             onToolCall:   () => {},
             onToolResult: () => {},
             onComplete:   () => {
+              if (!mountedRef.current) return;
               setMessages((prev) => [...prev, { id: nextId(), role: "assistant", content: reply }]);
               setStreamingContent("");
               setIsProcessing(false);
             },
             onError: (e: Error) => {
+              if (!mountedRef.current) return;
               addSystemMessage(`❌ ${e.message}`);
               setStreamingContent("");
               setIsProcessing(false);
