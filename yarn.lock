@@ -1168,30 +1168,60 @@
   resolved "https://registry.npmjs.org/@opentui/core-darwin-arm64/-/core-darwin-arm64-0.1.87.tgz"
   integrity sha512-G8oq85diOfkU6n0T1CxCle7oDmpKxwhcdhZ9khBMU5IrfLx9ZDuCM3F6MsiRQWdvPPCq2oomNbd64bYkPamYgw==
 
+"@opentui/core-darwin-arm64@0.1.88":
+  version "0.1.88"
+  resolved "https://registry.yarnpkg.com/@opentui/core-darwin-arm64/-/core-darwin-arm64-0.1.88.tgz#ea5c773ec39f82dcc8329345118b1a60fb6d1fae"
+  integrity sha512-oGRexWwZFeQJymOK5ORrLrwJUbPHMYaFa0EcLnlhvPnymm1xyMcRKm39ez0WSIdtiCCi/PmMHX95CfyyJB5VMA==
+
 "@opentui/core-darwin-x64@0.1.87":
   version "0.1.87"
   resolved "https://registry.yarnpkg.com/@opentui/core-darwin-x64/-/core-darwin-x64-0.1.87.tgz#feedc5ad763d6f935848442f3e04f421e0097230"
   integrity sha512-MYTFQfOHm6qO7YaY4GHK9u/oJlXY6djaaxl5I+k4p2mk3vvuFIl/AP1ypITwBFjyV5gyp7PRWFp4nGfY9oN8bw==
+
+"@opentui/core-darwin-x64@0.1.88":
+  version "0.1.88"
+  resolved "https://registry.yarnpkg.com/@opentui/core-darwin-x64/-/core-darwin-x64-0.1.88.tgz#12ac97e51d21c96e75a3a1c0d743156b37682de4"
+  integrity sha512-ddnruYpXt7gXsAqZoQzNrHtZ50niYQfESVT3rhE5qgsz7zoWBdKe/RxLKcb6zQmHMZML6SjSh0NrMG86lsH4dQ==
 
 "@opentui/core-linux-arm64@0.1.87":
   version "0.1.87"
   resolved "https://registry.yarnpkg.com/@opentui/core-linux-arm64/-/core-linux-arm64-0.1.87.tgz#20da3f512cfa730a77e63788dde65f29045b7d15"
   integrity sha512-he8o1h5M6oskRJ7wE+xKJgmWnv5ZwN6gB3M/Z+SeHtOMPa5cZmi3TefTjG54llEgFfx0F9RcqHof7TJ/GNxRkw==
 
+"@opentui/core-linux-arm64@0.1.88":
+  version "0.1.88"
+  resolved "https://registry.yarnpkg.com/@opentui/core-linux-arm64/-/core-linux-arm64-0.1.88.tgz#36264aaeec8a86312417a877e4c014cea162612c"
+  integrity sha512-jfcU/Sw8re3aWWb9cQ4OXmVNp/pchu6lgDRqvfy0EKTpzd7CNIu6a0xm+rcUKiPO7BrTrwtumT5/jZWWgCdHlg==
+
 "@opentui/core-linux-x64@0.1.87":
   version "0.1.87"
   resolved "https://registry.yarnpkg.com/@opentui/core-linux-x64/-/core-linux-x64-0.1.87.tgz#07df33461d47b4f68f45f4e23204cff2adcb4e90"
   integrity sha512-aiUwjPlH4yDcB8/6YDKSmMkaoGAAltL0Xo0AzXyAtJXWK5tkCSaYjEVwzJ/rYRkr4Magnad+Mjth4AQUWdR2AA==
+
+"@opentui/core-linux-x64@0.1.88":
+  version "0.1.88"
+  resolved "https://registry.yarnpkg.com/@opentui/core-linux-x64/-/core-linux-x64-0.1.88.tgz#78578958b643a81fb3cc1ed4a1c9a1c8eb517bda"
+  integrity sha512-nyfilOYLu6XWRlPl1R0Y6WzdL+jVdIFnwShBWcZL+QC5HiJnQc6LKy5yX8uv0fVbY5xs1wBvlHVeUj1UwFQyFQ==
 
 "@opentui/core-win32-arm64@0.1.87":
   version "0.1.87"
   resolved "https://registry.yarnpkg.com/@opentui/core-win32-arm64/-/core-win32-arm64-0.1.87.tgz#9c6aa018d4d9c3cc52386f6807911fd582526bc1"
   integrity sha512-cmP0pOyREjWGniHqbDmaMY7U+1AyagrD8VseJbU0cGpNgVpG2/gbrJUGdfdLB0SNb+mzLdx6SOjdxtrElwRCQA==
 
+"@opentui/core-win32-arm64@0.1.88":
+  version "0.1.88"
+  resolved "https://registry.yarnpkg.com/@opentui/core-win32-arm64/-/core-win32-arm64-0.1.88.tgz#29983ad176566efa1e38391b8ae4b9235403bd9a"
+  integrity sha512-jv/dQwcku7YZ4lNnYjivVvjPwTfDfzGfcplUqHxmirnv1Q1pZL1qS5wH1PV6RhAKN779vHTvnYMD4OgHWzqVaA==
+
 "@opentui/core-win32-x64@0.1.87":
   version "0.1.87"
   resolved "https://registry.yarnpkg.com/@opentui/core-win32-x64/-/core-win32-x64-0.1.87.tgz#dec2f15c049b52148765e3fa1018457324dfe279"
   integrity sha512-N2GErAAP8iODf2RPp86pilPaVKiD6G4pkpZL5nLGbKsl0bndrVTpSqZcn8+/nQwFZDPD/AsiRTYNOfWOblhzOw==
+
+"@opentui/core-win32-x64@0.1.88":
+  version "0.1.88"
+  resolved "https://registry.yarnpkg.com/@opentui/core-win32-x64/-/core-win32-x64-0.1.88.tgz#3d3e3b4a089f26e8056b250d83429b85fdcbd9cf"
+  integrity sha512-saGvsQqwL8H7B0VBCQ+szMCKh9WIfTebOR8cwPa2+DR+1FnrEG2I4kiikoj4hfYfRMX18A0A11vQxSh3vvy8Ig==
 
 "@opentui/core@0.1.87":
   version "0.1.87"
@@ -1215,12 +1245,42 @@
     planck "^1.4.2"
     three "0.177.0"
 
+"@opentui/core@0.1.88":
+  version "0.1.88"
+  resolved "https://registry.yarnpkg.com/@opentui/core/-/core-0.1.88.tgz#ba86c680ca9b24c425f946d60280e6ec0ebee5cb"
+  integrity sha512-eaDVZfAzZraddOIkgWSHMVkyaY0O20foYnPWKPQx1TY4t7G1oatIoan2zkytx67epW+4BZQ9vGib+61/uNM1MA==
+  dependencies:
+    bun-ffi-structs "0.1.2"
+    diff "8.0.2"
+    jimp "1.6.0"
+    marked "17.0.1"
+    yoga-layout "3.2.1"
+  optionalDependencies:
+    "@dimforge/rapier2d-simd-compat" "^0.17.3"
+    "@opentui/core-darwin-arm64" "0.1.88"
+    "@opentui/core-darwin-x64" "0.1.88"
+    "@opentui/core-linux-arm64" "0.1.88"
+    "@opentui/core-linux-x64" "0.1.88"
+    "@opentui/core-win32-arm64" "0.1.88"
+    "@opentui/core-win32-x64" "0.1.88"
+    bun-webgpu "0.1.5"
+    planck "^1.4.2"
+    three "0.177.0"
+
 "@opentui/react@0.1.87":
   version "0.1.87"
   resolved "https://registry.npmjs.org/@opentui/react/-/react-0.1.87.tgz"
   integrity sha512-FTYYs/L2AbcJbCvezlK9Klsw45AbGkwpyfjNsHP0N3BIxc3QiI5pYFpre6ZSq0feJNODmg+s9UapTCv4LtfROg==
   dependencies:
     "@opentui/core" "0.1.87"
+    react-reconciler "^0.32.0"
+
+"@opentui/react@0.1.88":
+  version "0.1.88"
+  resolved "https://registry.yarnpkg.com/@opentui/react/-/react-0.1.88.tgz#8cb4217a0a06f2dc47db13b0d763d1c8670b3e48"
+  integrity sha512-EfEUBlGgCx9LqpbB852L+m7F19NcR8yeUww+C8NytIQeVKJbFIhSLu3r3wjBEGNoYiRk1DtAwWBpG5YaVvkXXw==
+  dependencies:
+    "@opentui/core" "0.1.88"
     react-reconciler "^0.32.0"
 
 "@rtsao/scc@^1.1.0":

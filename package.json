@@ -9,7 +9,8 @@
     ],
     "nohoist": [
       "**/next",
-      "**/next/**"
+      "**/next/**",
+      "@cdoing/opentuicli/**"
     ]
   },
   "scripts": {
