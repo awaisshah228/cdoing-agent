@@ -47,19 +47,23 @@ Open-source, multi-provider AI coding assistant — **CLI + TUI + VS Code Extens
 
 [Install from Marketplace](https://marketplace.visualstudio.com/items?itemName=awaisshah228.cdoing-vscode) or search **"Cdoing"** in the VS Code Extensions tab.
 
-### CLI (Ink React TUI)
+### CLI (Node.js — works with npm/yarn/pnpm)
 
 ```bash
 npm install -g @cdoing/cli
 cdoing
 ```
 
-### TUI (OpenTUI-powered terminal UI)
+**Requirements:** Node.js 18+
+
+### TUI (Bun only — OpenTUI-powered terminal UI)
 
 ```bash
-npm install -g @cdoing/opentuicli
+bun install -g @cdoing/opentuicli
 cdoing-tui
 ```
+
+**Requirements:** [Bun](https://bun.sh) — the OpenTUI framework uses Bun-native terminal rendering APIs and does not work with Node.js.
 
 ### From source
 
@@ -68,11 +72,11 @@ git clone https://github.com/awaisshah228/cdoing-agent.git
 cd cdoing-agent
 yarn install && yarn build
 
-# Run CLI
+# Run CLI (Node.js)
 yarn start
 
-# Run TUI
-cd packages/opentuicli && node dist/index.js
+# Run TUI (requires Bun)
+cd packages/opentuicli && bun dist/index.js
 
 # Run VS Code extension — open packages/vscode-extension in VS Code, press F5
 ```
@@ -87,8 +91,8 @@ On first run, the CLI launches an interactive setup wizard. Run `/setup` at any 
 |---------|-----|-------------|
 | [`@cdoing/core`](packages/core/) | [![npm](https://img.shields.io/npm/v/@cdoing/core)](https://www.npmjs.com/package/@cdoing/core) | Tools, permissions, sandbox, hooks, context providers, indexing |
 | [`@cdoing/ai`](packages/ai/) | [![npm](https://img.shields.io/npm/v/@cdoing/ai)](https://www.npmjs.com/package/@cdoing/ai) | Agent runner, LLM providers, context/token management |
-| [`@cdoing/cli`](packages/cli/) | [![npm](https://img.shields.io/npm/v/@cdoing/cli)](https://www.npmjs.com/package/@cdoing/cli) | Terminal UI (Ink + React), slash commands, setup wizard |
-| [`@cdoing/opentuicli`](packages/opentuicli/) | [![npm](https://img.shields.io/npm/v/@cdoing/opentuicli)](https://www.npmjs.com/package/@cdoing/opentuicli) | OpenTUI-powered terminal chat UI |
+| [`@cdoing/cli`](packages/cli/) | [![npm](https://img.shields.io/npm/v/@cdoing/cli)](https://www.npmjs.com/package/@cdoing/cli) | Terminal UI (Ink + React) — **Node.js** |
+| [`@cdoing/opentuicli`](packages/opentuicli/) | [![npm](https://img.shields.io/npm/v/@cdoing/opentuicli)](https://www.npmjs.com/package/@cdoing/opentuicli) | OpenTUI-powered terminal chat UI — **Bun only** |
 | [`cdoing-vscode`](packages/vscode-extension/) | [![VS Code](https://img.shields.io/visual-studio-marketplace/v/awaisshah228.cdoing-vscode)](https://marketplace.visualstudio.com/items?itemName=awaisshah228.cdoing-vscode) | VS Code sidebar chat, inline edit, inline autocomplete |
 | [`@cdoing/dashboard`](packages/dashboard/) | — | Next.js monitoring dashboard |
 | [`@cdoing/remote-coding-agent`](packages/remote-coding-agent/) | [![npm](https://img.shields.io/npm/v/@cdoing/remote-coding-agent)](https://www.npmjs.com/package/@cdoing/remote-coding-agent) | Headless remote agent runner |
