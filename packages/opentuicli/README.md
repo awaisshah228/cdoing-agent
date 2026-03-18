@@ -76,6 +76,18 @@ bun run build:all
 bun run script/publish.ts
 ```
 
+## Troubleshooting
+
+### Kill stuck processes
+
+If the TUI hangs or the terminal becomes garbled:
+
+```bash
+pkill -f "bun.*opentuicli" 2>/dev/null; pkill -f "bun.*src/index.ts" 2>/dev/null
+```
+
+Then type `reset` in the terminal to restore it.
+
 ## Why OpenTUI?
 
 This is the **lightweight alternative** to `@cdoing/cli`. While the main CLI uses Ink + React for a rich terminal UI, this package uses the OpenTUI framework for a minimal, fast, keyboard-driven experience.
