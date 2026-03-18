@@ -1,18 +1,19 @@
 {
   "name": "@cdoing/opentuicli",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "description": "OpenTUI-based terminal interface for cdoing agent (inspired by opencode's TUI)",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "cdoing-tui": "dist/index.js"
+    "cdoing-tui": "dist/cdoing-tui-current/bin/cdoing-tui"
   },
   "scripts": {
-    "build": "node esbuild.config.cjs",
+    "build": "bun run build.ts --single",
+    "build:all": "bun run build.ts",
     "typecheck": "tsc --noEmit",
-    "dev": "node esbuild.config.cjs --watch",
-    "start": "bun dist/index.js",
+    "dev": "bun --watch src/index.ts",
+    "start": "./dist/cdoing-tui-current/bin/cdoing-tui",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -26,6 +27,7 @@
     "zustand": "^5.0.12"
   },
   "devDependencies": {
+    "@types/bun": "^1.3.10",
     "@types/node": "^22.13.10",
     "@types/react": "^19.1.0",
     "esbuild": "^0.25.0",

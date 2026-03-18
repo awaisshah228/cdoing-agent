@@ -15,7 +15,7 @@
     "jsx": "react-jsx",
     "jsxImportSource": "@opentui/react",
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
-    "types": [],
+    "types": ["bun"],
     "noEmit": true
   },
   "include": ["src/**/*"],
