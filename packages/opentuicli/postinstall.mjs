@@ -77,8 +77,10 @@ async function main() {
 
     console.log(`@cdoing/opentuicli: Linked binary from ${binaryPath}`)
   } catch (error) {
-    console.error("Failed to setup cdoing-tui binary:", error.message)
-    process.exit(1)
+    console.warn("@cdoing/opentuicli: postinstall skipped -", error.message)
+    // Exit 0 so npx/npm don't treat this as a failed install.
+    // The bin wrapper has a fallback to find the binary at runtime.
+    process.exit(0)
   }
 }
 
