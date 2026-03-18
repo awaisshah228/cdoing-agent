@@ -2,6 +2,11 @@ name: Publish OpenTUI CLI
 
 on:
   push:
+    branches: [main]
+    paths:
+      - 'packages/opentuicli/**'
+      - 'packages/core/**'
+      - 'packages/ai/**'
     tags:
       - 'tui-v*'
   workflow_dispatch:
@@ -16,30 +21,48 @@ jobs:
   build:
     runs-on: ubuntu-latest
     outputs:
-      version_changed: ${{ steps.check_version.outputs.changed }}
-      version: ${{ steps.check_version.outputs.version }}
+      core_changed: ${{ steps.check_versions.outputs.core_changed }}
+      ai_changed: ${{ steps.check_versions.outputs.ai_changed }}
+      tui_changed: ${{ steps.check_versions.outputs.tui_changed }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
-      - name: Check if version bumped
-        id: check_version
+      - name: Check version bumps
+        id: check_versions
         run: |
-          LOCAL_VERSION=$(node -p "require('./packages/opentuicli/package.json').version")
-          NPM_VERSION=$(npm view @cdoing/opentuicli version 2>/dev/null || echo "0.0.0")
-          echo "version=$LOCAL_VERSION" >> $GITHUB_OUTPUT
-          if [ "$LOCAL_VERSION" != "$NPM_VERSION" ]; then
-            echo "changed=true" >> $GITHUB_OUTPUT
-            echo "OpenTUI CLI version changed: $NPM_VERSION -> $LOCAL_VERSION"
+          # @cdoing/core
+          CORE_LOCAL=$(node -p "require('./packages/core/package.json').version")
+          CORE_NPM=$(npm view @cdoing/core version 2>/dev/null || echo "0.0.0")
+          echo "Core: local=$CORE_LOCAL npm=$CORE_NPM"
+          if [ "$CORE_LOCAL" != "$CORE_NPM" ]; then
+            echo "core_changed=true" >> $GITHUB_OUTPUT
           else
-            echo "changed=false" >> $GITHUB_OUTPUT
-            echo "OpenTUI CLI version unchanged: $LOCAL_VERSION"
+            echo "core_changed=false" >> $GITHUB_OUTPUT
+          fi
+
+          # @cdoing/ai
+          AI_LOCAL=$(node -p "require('./packages/ai/package.json').version")
+          AI_NPM=$(npm view @cdoing/ai version 2>/dev/null || echo "0.0.0")
+          echo "AI: local=$AI_LOCAL npm=$AI_NPM"
+          if [ "$AI_LOCAL" != "$AI_NPM" ]; then
+            echo "ai_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "ai_changed=false" >> $GITHUB_OUTPUT
+          fi
+
+          # @cdoing/opentuicli
+          TUI_LOCAL=$(node -p "require('./packages/opentuicli/package.json').version")
+          TUI_NPM=$(npm view @cdoing/opentuicli version 2>/dev/null || echo "0.0.0")
+          echo "TUI: local=$TUI_LOCAL npm=$TUI_NPM"
+          if [ "$TUI_LOCAL" != "$TUI_NPM" ]; then
+            echo "tui_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "tui_changed=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Install dependencies
@@ -57,13 +80,80 @@ jobs:
             packages/ai/dist
             packages/opentuicli/dist
 
-  publish:
+  publish-core:
     needs: build
     runs-on: ubuntu-latest
-    if: >
-      needs.build.outputs.version_changed == 'true' &&
-      (github.event_name == 'push' ||
-       github.event_name == 'workflow_dispatch')
+    if: needs.build.outputs.core_changed == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: yarn install --ignore-engines
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: opentui-dist
+          path: packages
+
+      - name: Publish @cdoing/core
+        working-directory: packages/core
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            npm publish --access public --dry-run
+          else
+            npm publish --access public
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-ai:
+    needs: [build, publish-core]
+    runs-on: ubuntu-latest
+    if: |
+      always() &&
+      needs.build.outputs.ai_changed == 'true' &&
+      (needs.publish-core.result == 'success' || needs.publish-core.result == 'skipped')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: yarn install --ignore-engines
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: opentui-dist
+          path: packages
+
+      - name: Publish @cdoing/ai
+        working-directory: packages/ai
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            npm publish --access public --dry-run
+          else
+            npm publish --access public
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-opentuicli:
+    needs: [build, publish-ai]
+    runs-on: ubuntu-latest
+    if: |
+      always() &&
+      needs.build.outputs.tui_changed == 'true' &&
+      (needs.publish-ai.result == 'success' || needs.publish-ai.result == 'skipped')
     steps:
       - uses: actions/checkout@v4
 
