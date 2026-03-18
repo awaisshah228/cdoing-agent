@@ -52,6 +52,22 @@ const nativeStubPlugin: BunPlugin = {
   },
 }
 
+// Resolve @cdoing/* workspace packages to their real paths so cross-compilation works
+// (Bun's cross-compile doesn't follow workspace symlinks reliably)
+const workspacePlugin: BunPlugin = {
+  name: "resolve-workspace",
+  setup(build) {
+    build.onResolve({ filter: /^@cdoing\/(ai|core)/ }, (args) => {
+      const pkg = args.path.startsWith("@cdoing/ai") ? "ai" : "core"
+      const subpath = args.path.replace(`@cdoing/${pkg}`, "").replace(/^\//, "")
+      const resolved = subpath
+        ? path.join(dir, "..", pkg, subpath)
+        : path.join(dir, "..", pkg, "dist", "index.js")
+      return { path: resolved }
+    })
+  },
+}
+
 const dedupeReactPlugin: BunPlugin = {
   name: "dedupe-react",
   setup(build) {
@@ -98,7 +114,7 @@ for (const item of targets) {
 
   const result = await Bun.build({
     entrypoints: [path.join(dir, "src/index.ts")],
-    plugins: [nativeStubPlugin, dedupeReactPlugin],
+    plugins: [nativeStubPlugin, workspacePlugin, dedupeReactPlugin],
     tsconfig: path.join(dir, "tsconfig.json"),
     compile: {
       autoloadBunfig: false,
