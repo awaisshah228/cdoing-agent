@@ -44,6 +44,8 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
 
+      - uses: oven-sh/setup-bun@v2
+
       - name: Check version bumps
         id: check_versions
         run: |
