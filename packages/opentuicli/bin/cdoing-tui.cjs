@@ -50,7 +50,7 @@ if (!arch) {
   arch = os.arch()
 }
 
-const base = "@cdoing/opentuicli-" + platform + "-" + arch
+const base = "@cdoing/cdoing-tui-" + platform + "-" + arch
 const binary = platform === "windows" ? "cdoing-tui.exe" : "cdoing-tui"
 
 const names = [base]

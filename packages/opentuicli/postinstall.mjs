@@ -28,7 +28,7 @@ function detectPlatformAndArch() {
 
 function findBinary() {
   const { platform, arch } = detectPlatformAndArch()
-  const packageName = `@cdoing/opentuicli-${platform}-${arch}`
+  const packageName = `@cdoing/cdoing-tui-${platform}-${arch}`
   const binaryName = platform === "windows" ? "cdoing-tui.exe" : "cdoing-tui"
 
   try {
