@@ -58,19 +58,28 @@ const workspacePlugin: BunPlugin = {
 // Stub native @opentui/core-{platform}-{arch} imports for non-host targets.
 // Bun's compiler tries to resolve ALL dynamic imports even when cross-compiling,
 // but the .ts source files aren't available — only the compiled .js in npm packages.
+// Stub native @opentui/core-{platform}-{arch} imports for non-host targets.
+// Bun's compiler tries to resolve ALL dynamic imports even when cross-compiling,
+// but the .ts source files aren't available — only the compiled .js in npm packages.
 const nativeStubPlugin: BunPlugin = {
   name: "native-stub",
   setup(build) {
-    // Match @opentui/core-{platform}-{arch} imports
+    // Match @opentui/core-{platform}-{arch} imports (with or without subpath)
     build.onResolve({ filter: /^@opentui\/core-[a-z0-9]+-[a-z0-9]+/ }, (args) => {
-      // Check if the module can be resolved normally
-      try {
-        const resolved = require.resolve(args.path)
-        return { path: resolved }
-      } catch {
-        // Can't resolve — stub it with an empty module
-        return { path: args.path, namespace: "native-stub" }
+      // Try multiple resolution strategies
+      const attempts = [args.path]
+      // If importing /index.ts, also try the package root (npm packages have index.ts)
+      if (args.path.endsWith("/index.ts")) {
+        attempts.push(args.path.replace("/index.ts", ""))
       }
+      for (const attempt of attempts) {
+        try {
+          const resolved = require.resolve(attempt)
+          return { path: resolved }
+        } catch {}
+      }
+      // Can't resolve — stub it with an empty module
+      return { path: args.path, namespace: "native-stub" }
     })
     build.onLoad({ filter: /.*/, namespace: "native-stub" }, () => ({
       contents: "export default {}; export const createTerminal = () => { throw new Error('unsupported platform'); };",
