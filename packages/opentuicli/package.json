@@ -1,6 +1,6 @@
 {
   "name": "@cdoing/opentuicli",
-  "version": "0.1.26",
+  "version": "0.1.27",
   "description": "OpenTUI-based terminal interface for cdoing agent (inspired by opencode's TUI)",
   "type": "module",
   "main": "dist/index.js",
@@ -9,9 +9,11 @@
     "cdoing-tui": "dist/cdoing-tui-current/bin/cdoing-tui"
   },
   "files": [
-    "dist/"
+    "dist/",
+    "postinstall.mjs"
   ],
   "scripts": {
+    "postinstall": "node postinstall.mjs",
     "build": "bun run build.ts --single",
     "build:all": "bun run build.ts",
     "typecheck": "tsc --noEmit",

@@ -1,4 +1,4 @@
-name: Publish opentuicli Platform Binaries
+name: Publish opentuicli
 
 on:
   push:
@@ -33,25 +33,10 @@ jobs:
           fi
           echo "Local: $LOCAL, npm: $NPM"
 
-  build-and-publish-platform:
+  publish:
     needs: check-version
     if: needs.check-version.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            platform: linux
-            arch: x64
-          - os: ubuntu-24.04-arm
-            platform: linux
-            arch: arm64
-          - os: macos-latest
-            platform: darwin
-            arch: arm64
-          - os: windows-latest
-            platform: win32
-            arch: x64
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -65,60 +50,11 @@ jobs:
       - name: Install dependencies
         run: yarn install --ignore-engines
 
-      - name: Build binary
+      - name: Build all platforms
         working-directory: packages/opentuicli
-        run: bun run build
+        run: bun run build:all
 
-      - name: Publish platform package
-        working-directory: packages/opentuicli
-        run: |
-          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
-            node scripts/publish-platform.mjs --dry-run
-          else
-            node scripts/publish-platform.mjs
-          fi
-        shell: bash
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-  publish-main:
-    needs: [check-version, build-and-publish-platform]
-    if: needs.check-version.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          registry-url: https://registry.npmjs.org
-
-      - uses: oven-sh/setup-bun@v2
-
-      - name: Install dependencies
-        run: yarn install --ignore-engines
-
-      - name: Build (for dist structure)
-        working-directory: packages/opentuicli
-        run: bun run build
-
-      - name: Inject optionalDependencies for publish
-        working-directory: packages/opentuicli
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          node -e "
-            const pkg = require('./package.json');
-            pkg.optionalDependencies = {
-              '@cdoing/opentuicli-darwin-arm64': '$VERSION',
-              '@cdoing/opentuicli-linux-arm64': '$VERSION',
-              '@cdoing/opentuicli-linux-x64': '$VERSION',
-              '@cdoing/opentuicli-windows-x64': '$VERSION'
-            };
-            require('fs').writeFileSync('./package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
-          echo "Injected optionalDependencies for v$VERSION"
-
-      - name: Publish main package
+      - name: Publish
         working-directory: packages/opentuicli
         run: |
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then

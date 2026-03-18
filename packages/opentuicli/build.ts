@@ -23,6 +23,35 @@ const reactJsxDevPath = require.resolve("react/jsx-dev-runtime")
 const reactReconcilerPath = require.resolve("react-reconciler")
 const reactReconcilerConstantsPath = require.resolve("react-reconciler/constants")
 
+// Stub out @opentui/core-{platform}-{arch} native imports for cross-platform targets.
+// At runtime, @opentui/core dynamically imports the correct native package for the
+// host platform, so we only need the host's native package at build time.
+const hostPlatform = process.platform
+const hostArch = process.arch
+const nativeStubPlugin: BunPlugin = {
+  name: "native-platform-stub",
+  setup(build) {
+    // Match @opentui/core-<platform>-<arch>/index.ts
+    build.onResolve({ filter: /^@opentui\/core-[a-z0-9]+-[a-z0-9]+/ }, (args) => {
+      // Check if this is for a non-host platform — if so, stub it
+      const hostPkg = `@opentui/core-${hostPlatform}-${hostArch}`
+      if (!args.path.startsWith(hostPkg)) {
+        return {
+          path: args.path,
+          namespace: "native-stub",
+        }
+      }
+      return undefined // let Bun resolve the host platform normally
+    })
+    build.onLoad({ filter: /.*/, namespace: "native-stub" }, () => {
+      return {
+        contents: `export default "";`,
+        loader: "js",
+      }
+    })
+  },
+}
+
 const dedupeReactPlugin: BunPlugin = {
   name: "dedupe-react",
   setup(build) {
@@ -43,7 +72,6 @@ const allTargets: {
   { os: "linux", arch: "x64" },
   { os: "darwin", arch: "arm64" },
   { os: "darwin", arch: "x64" },
-  { os: "win32", arch: "arm64" },
   { os: "win32", arch: "x64" },
 ]
 
@@ -70,7 +98,7 @@ for (const item of targets) {
 
   const result = await Bun.build({
     entrypoints: [path.join(dir, "src/index.ts")],
-    plugins: [dedupeReactPlugin],
+    plugins: [nativeStubPlugin, dedupeReactPlugin],
     tsconfig: path.join(dir, "tsconfig.json"),
     compile: {
       autoloadBunfig: false,
