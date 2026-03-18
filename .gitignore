@@ -6,6 +6,9 @@ dist/
 out/
 *.tsbuildinfo
 
+# Compiled binaries
+packages/opentuicli/bin/.cdoing-tui
+
 # Environment
 .env
 .env.*
