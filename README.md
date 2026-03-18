@@ -59,11 +59,15 @@ cdoing
 ### TUI (OpenTUI-powered terminal UI)
 
 ```bash
+# Run directly without installing
+npx @cdoing/opentuicli
+
+# Or install globally
 npm install -g @cdoing/opentuicli
 cdoing-tui
 ```
 
-Ships as a standalone binary — no Bun runtime required to run. Install with `npm`, `yarn`, or `bun`.
+Ships as a **standalone binary** with platform-specific packages — no Bun runtime required. npm automatically downloads only the binary for your platform (macOS, Linux, Windows × arm64/x64).
 
 ### From source
 
@@ -115,11 +119,13 @@ cdoing --login                  # OAuth login (Claude Pro/Max)
 ## TUI (OpenTUI)
 
 ```bash
-cdoing-tui                      # Launch OpenTUI chat
+npx @cdoing/opentuicli          # Run via npx
+cdoing-tui                      # Launch OpenTUI chat (if installed globally)
 cdoing-tui --provider openai    # Use a different provider
+cdoing-tui "fix this bug"       # Direct prompt
 ```
 
-The TUI provides a rich terminal UI powered by [OpenTUI](https://github.com/nichochar/opentui) with mouse support, scrollable panels, and a modern terminal experience.
+The TUI provides a rich terminal UI powered by [OpenTUI](https://github.com/nichochar/opentui) with mouse support, scrollable panels, and a modern terminal experience. Uses platform-specific npm packages for zero-dependency binary distribution.
 
 ---
 

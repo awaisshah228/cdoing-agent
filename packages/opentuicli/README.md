@@ -8,6 +8,9 @@ Lightweight terminal interface for [Cdoing Agent](https://github.com/awaisshah22
 ## Installation
 
 ```bash
+# Run directly without installing
+npx @cdoing/opentuicli
+
 # Install globally (no Bun required — standalone binary with embedded runtime)
 npm install -g @cdoing/opentuicli
 
@@ -17,11 +20,26 @@ pnpm add -g @cdoing/opentuicli
 bun install -g @cdoing/opentuicli
 ```
 
+After global install, both `cdoing-tui` and `opentuicli` commands are available.
+
+### Shell alias (optional)
+
+Add to your `~/.zshrc` or `~/.bashrc`:
+
+```bash
+alias cdoing-tui="npx @cdoing/opentuicli@latest"
+```
+
+Then reload: `source ~/.zshrc`
+
 ## Quick Start
 
 ```bash
 # Launch the TUI
 cdoing-tui
+
+# Or via npx
+npx @cdoing/opentuicli
 
 # With a direct prompt
 cdoing-tui "refactor this function to use async/await"
@@ -32,16 +50,30 @@ cdoing-tui --provider openrouter --model anthropic/claude-sonnet-4
 
 ## How It Works
 
-The published package includes a **standalone compiled binary** with the Bun runtime embedded — no Bun, Node.js, or any runtime needed to run it. Install with any package manager (`npm`, `yarn`, `pnpm`, or `bun`). This is the same approach used by [opencode](https://github.com/opencode-ai/opencode).
+The package uses **platform-specific optional dependencies** — the same approach used by [esbuild](https://esbuild.github.io/), [SWC](https://swc.rs/), and [opencode](https://github.com/opencode-ai/opencode):
 
-For development, you need [Bun](https://bun.sh) to build from source:
+- `@cdoing/opentuicli` — lightweight wrapper (6KB) with `optionalDependencies`
+- `@cdoing/cdoing-tui-darwin-arm64` — macOS Apple Silicon binary
+- `@cdoing/cdoing-tui-darwin-x64` — macOS Intel binary
+- `@cdoing/cdoing-tui-linux-arm64` — Linux ARM binary
+- `@cdoing/cdoing-tui-linux-x64` — Linux x64 binary
+- `@cdoing/cdoing-tui-windows-x64` — Windows x64 binary
+
+npm automatically installs only the binary matching your platform. Each binary is a **standalone compiled Bun executable** — no runtime needed.
+
+### Building from source
+
+For development, you need [Bun](https://bun.sh):
 
 ```bash
 # Build for current platform
 bun run build
 
-# Build for all platforms (linux, macOS, windows × arm64/x64)
+# Build for all platforms
 bun run build:all
+
+# Build + publish
+bun run script/publish.ts
 ```
 
 ## Why OpenTUI?

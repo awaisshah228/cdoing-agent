@@ -7,6 +7,7 @@
  * that embeds the Bun runtime (no Bun install needed to run).
  */
 
+import { $ } from "bun"
 import path from "path"
 import fs from "fs"
 import type { BunPlugin } from "bun"
@@ -23,33 +24,19 @@ const reactJsxDevPath = require.resolve("react/jsx-dev-runtime")
 const reactReconcilerPath = require.resolve("react-reconciler")
 const reactReconcilerConstantsPath = require.resolve("react-reconciler/constants")
 
-// Stub out @opentui/core-{platform}-{arch} native imports for cross-platform targets.
-// At runtime, @opentui/core dynamically imports the correct native package for the
-// host platform, so we only need the host's native package at build time.
-const hostPlatform = process.platform
-const hostArch = process.arch
-const nativeStubPlugin: BunPlugin = {
-  name: "native-platform-stub",
-  setup(build) {
-    // Match @opentui/core-<platform>-<arch>/index.ts
-    build.onResolve({ filter: /^@opentui\/core-[a-z0-9]+-[a-z0-9]+/ }, (args) => {
-      // Check if this is for a non-host platform — if so, stub it
-      const hostPkg = `@opentui/core-${hostPlatform}-${hostArch}`
-      if (!args.path.startsWith(hostPkg)) {
-        return {
-          path: args.path,
-          namespace: "native-stub",
-        }
-      }
-      return undefined // let Bun resolve the host platform normally
-    })
-    build.onLoad({ filter: /.*/, namespace: "native-stub" }, () => {
-      return {
-        contents: `export default "";`,
-        loader: "js",
-      }
-    })
-  },
+// Install all platform-specific @opentui/core native packages so cross-compilation
+// embeds the correct native binary for each target (same approach as opencode).
+const skipInstall = process.argv.includes("--skip-install")
+if (!skipInstall) {
+  const v = pkg.devDependencies["@opentui/core"]
+  const nativePkgs = [
+    `@opentui/core-darwin-arm64@${v}`,
+    `@opentui/core-darwin-x64@${v}`,
+    `@opentui/core-linux-arm64@${v}`,
+    `@opentui/core-linux-x64@${v}`,
+    `@opentui/core-win32-x64@${v}`,
+  ]
+  await $`bun add --no-save ${nativePkgs}`
 }
 
 // Resolve @cdoing/* workspace packages to their real paths so cross-compilation works
@@ -116,7 +103,7 @@ for (const item of targets) {
 
   const result = await Bun.build({
     entrypoints: [path.join(dir, "src/index.ts")],
-    plugins: [nativeStubPlugin, workspacePlugin, dedupeReactPlugin],
+    plugins: [workspacePlugin, dedupeReactPlugin],
     tsconfig: path.join(dir, "tsconfig.json"),
     compile: {
       autoloadBunfig: false,
