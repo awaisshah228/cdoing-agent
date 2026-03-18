@@ -27,6 +27,7 @@ Open-source, multi-provider AI coding assistant — **CLI + TUI + VS Code Extens
 
 ## Features
 
+- **3 interfaces** — [CLI](https://www.npmjs.com/package/@cdoing/cli) (Ink/React), [TUI](https://www.npmjs.com/package/@cdoing/opentuicli) (OpenTUI, standalone binary), [VS Code Extension](https://marketplace.visualstudio.com/items?itemName=awaisshah228.cdoing-vscode)
 - **Multi-provider** — Anthropic, OpenAI, Google, Ollama, any OpenAI-compatible API
 - **20 built-in tools** — file read/write/edit, shell exec, search, web fetch, sub-agents, and more
 - **10 context providers** — `@terminal`, `@tree`, `@url`, `@codebase`, `@git`, `@diff`, `@clipboard`, `@file`, `@open`, `@problems`
@@ -282,8 +283,8 @@ The VS Code extension auto-publishes to the Marketplace when the version in `pac
 |----------|-----|
 | GitHub | [github.com/awaisshah228/cdoing-agent](https://github.com/awaisshah228/cdoing-agent) |
 | VS Code Extension | [marketplace.visualstudio.com](https://marketplace.visualstudio.com/items?itemName=awaisshah228.cdoing-vscode) |
-| @cdoing/cli (npm) | [npmjs.com/@cdoing/cli](https://www.npmjs.com/package/@cdoing/cli) |
-| @cdoing/opentuicli (npm) | [npmjs.com/@cdoing/opentuicli](https://www.npmjs.com/package/@cdoing/opentuicli) |
+| TUI (standalone binary) | [npmjs.com/@cdoing/opentuicli](https://www.npmjs.com/package/@cdoing/opentuicli) — `npx @cdoing/opentuicli` |
+| CLI (Node.js) | [npmjs.com/@cdoing/cli](https://www.npmjs.com/package/@cdoing/cli) — `npx @cdoing/cli` |
 | @cdoing/core (npm) | [npmjs.com/@cdoing/core](https://www.npmjs.com/package/@cdoing/core) |
 | @cdoing/ai (npm) | [npmjs.com/@cdoing/ai](https://www.npmjs.com/package/@cdoing/ai) |
 | @cdoing/remote-coding-agent (npm) | [npmjs.com/@cdoing/remote-coding-agent](https://www.npmjs.com/package/@cdoing/remote-coding-agent) |
