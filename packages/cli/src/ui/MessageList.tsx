@@ -118,7 +118,7 @@ export const RenderMarkdown: React.FC<{ text: string }> = ({ text }) => {
           const indent = line.match(/^(\s*)/)?.[1] || "";
           const content = line.replace(/^(\s*)[-*] /, "");
           return (
-            <Text key={i}>
+            <Text key={i} color={t.text}>
               {indent}
               <Text color={t.bullet}>{"● "}</Text>
               {content}
@@ -129,7 +129,7 @@ export const RenderMarkdown: React.FC<{ text: string }> = ({ text }) => {
         const numMatch = line.match(/^(\s*)(\d+)\. (.*)/);
         if (numMatch) {
           return (
-            <Text key={i}>
+            <Text key={i} color={t.text}>
               {numMatch[1]}
               <Text color={t.listNumber}>{numMatch[2] + ". "}</Text>
               {numMatch[3]}
@@ -149,7 +149,7 @@ export const RenderMarkdown: React.FC<{ text: string }> = ({ text }) => {
           .replace(/`([^`]+)`/g, (_m: string, c: string) => chalk.cyan(c))
           .replace(/\*\*([^*]+)\*\*/g, (_m: string, c: string) => chalk.bold(c))
           .replace(/(?<!\w)\*([^*]+)\*(?!\w)/g, (_m: string, c: string) => chalk.italic(c));
-        return <Text key={i}>{styled}</Text>;
+        return <Text key={i} color={t.text}>{styled}</Text>;
       })}
     </Box>
   );
