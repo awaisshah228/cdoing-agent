@@ -411,9 +411,10 @@ export async function initThemeAsync(options?: { syncTerminalBg?: boolean }): Pr
     _currentThemeName = stored;
     _currentTheme = themes[stored];
   } else {
-    // Default to dark theme
-    _currentThemeName = "dark";
-    _currentTheme = themes["dark"];
+    // Auto-detect from terminal background using OSC 11
+    const detected = await detectTerminalThemeAsync();
+    _currentThemeName = "auto";
+    _currentTheme = themes[detected];
   }
 
   // Optionally set the terminal background to match
