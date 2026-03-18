@@ -54,13 +54,24 @@ jobs:
         working-directory: packages/opentuicli
         run: bun run build:all
 
-      - name: Publish
+      - name: Publish platform packages
         working-directory: packages/opentuicli
         run: |
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
-            npm publish --access public --dry-run
+            node scripts/publish-platform.mjs --dry-run
           else
-            npm publish --access public
+            node scripts/publish-platform.mjs
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish main package
+        working-directory: packages/opentuicli
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            node scripts/publish-main.mjs --dry-run
+          else
+            node scripts/publish-main.mjs
           fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
