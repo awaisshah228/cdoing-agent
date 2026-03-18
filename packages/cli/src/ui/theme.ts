@@ -410,17 +410,17 @@ export async function initThemeAsync(options?: { syncTerminalBg?: boolean }): Pr
   if (stored === "light" || stored === "dark") {
     _currentThemeName = stored;
     _currentTheme = themes[stored];
+    // Only sync terminal bg when user explicitly chose a theme
+    if (options?.syncTerminalBg) {
+      _syncTerminalBg = true;
+      setTerminalBackground(stored);
+    }
   } else {
     // Auto-detect from terminal background using OSC 11
+    // Don't change the terminal bg — just adapt our colors to match it
     const detected = await detectTerminalThemeAsync();
     _currentThemeName = "auto";
     _currentTheme = themes[detected];
-  }
-
-  // Optionally set the terminal background to match
-  if (options?.syncTerminalBg) {
-    const resolved: "dark" | "light" = _currentTheme === lightTheme ? "light" : "dark";
-    setTerminalBackground(resolved);
   }
 }
 
