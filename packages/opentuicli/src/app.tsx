@@ -23,6 +23,9 @@ import {
   ToolRegistry,
   PermissionManager,
   PermissionMode,
+  ProcessManager,
+  TodoStore,
+  MemoryStore,
   registerAllTools,
   resolveOAuthToken,
   supportsOAuth,
@@ -604,9 +607,20 @@ export async function startTUI(options: TUIOptions): Promise<void> {
     return "allow";
   });
 
+  const processManager = new ProcessManager();
+  const todoStore = new TodoStore();
+  const memoryStore = new MemoryStore(options.workingDir);
   await registerAllTools(registry, {
     workingDir: options.workingDir,
     permissionManager: pm,
+    processManager,
+    todoStore,
+    memoryStore,
+    planExitCallback: (summary: string) => {
+      // Signal that plan is ready — the session component handles the approval via /plan approve
+      console.log("\n  📋 Plan ready: " + summary);
+      console.log("  Use /plan approve, /plan reject, or /plan show\n");
+    },
   });
 
   // Resolve API key: flag → env var → stored config → OAuth token

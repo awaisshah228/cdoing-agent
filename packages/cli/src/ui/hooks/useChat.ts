@@ -41,14 +41,16 @@ import type { ModelConfig, ImageAttachment } from "@cdoing/ai";
 import {
   ShellExecTool,
   getOAuthProvider,
+  PermissionMode,
 } from "@cdoing/core";
 import type {
   ToolRegistry,
   PermissionManager,
-  PermissionMode,
   HookManager,
   MemoryStore,
   TodoStore,
+  SubAgentManager,
+  ProcessManager,
 } from "@cdoing/core";
 import type { EffortLevel } from "@cdoing/core";
 
@@ -110,6 +112,8 @@ export interface UseChatOptions {
   hookManager:       HookManager;
   memoryStore:       MemoryStore;
   todoStore?:        TodoStore;
+  subAgentManager?:  SubAgentManager;
+  processManager?:   ProcessManager;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -356,9 +360,15 @@ export function useChat(opts: UseChatOptions) {
         return;
       }
 
+      // ── Inject plan mode context if active ──────────────────────────────
+      let messageText = text;
+      if (planModeActiveRef.current && opts.permissionManager.getMode() === PermissionMode.PLAN) {
+        messageText = `[PLAN MODE — Read-only] You are in plan mode. Do NOT write files, run commands, or modify anything. Only read, search, analyze, and create a plan using the todo tool. When your plan is ready, call plan_exit.\n\n${text}`;
+      }
+
       // ── Resolve @mentions ────────────────────────────────────────────────
       const enriched = await resolveContextProviders(
-        text,
+        messageText,
         workingDirRef.current,
         lastTerminalOutputRef.current,
       );
@@ -463,16 +473,25 @@ export function useChat(opts: UseChatOptions) {
           setIsProcessing(false);
           abortRef.current = null;
 
-          // Kill all background processes spawned during this agent run
+          // Kill all background processes and sub-agents spawned during this agent run
           const shellTool = opts.toolRegistry.get("shell_exec") as ShellExecTool | undefined;
+          let killedProcesses = 0;
+          let killedAgents = 0;
           if (shellTool?.getProcessManager) {
-            const killed = shellTool.getProcessManager().killAll();
-            if (killed > 0) {
-              setMessages((prev) => [...prev, {
-                id: nextId(), role: "system",
-                content: chalk.yellow(`[auto-killed ${killed} background process${killed > 1 ? "es" : ""}]`),
-              }]);
-            }
+            killedProcesses = shellTool.getProcessManager().killAll();
+          }
+          if (opts.subAgentManager) {
+            killedAgents = opts.subAgentManager.terminateAll();
+          }
+          const totalKilled = killedProcesses + killedAgents;
+          if (totalKilled > 0) {
+            const parts: string[] = [];
+            if (killedProcesses > 0) parts.push(`${killedProcesses} background process${killedProcesses > 1 ? "es" : ""}`);
+            if (killedAgents > 0) parts.push(`${killedAgents} background sub-agent${killedAgents > 1 ? "s" : ""}`);
+            setMessages((prev) => [...prev, {
+              id: nextId(), role: "system",
+              content: chalk.yellow(`[auto-killed ${parts.join(" and ")}]`),
+            }]);
           }
 
           // Auto-generate a title after the first exchange
@@ -849,7 +868,20 @@ export function useChat(opts: UseChatOptions) {
           // Sync all references to the new directory
           workingDirRef.current           = newDir;
           setWorkingDir(newDir);
-          toolRegistryRef.current         = await createToolRegistry(newDir);
+          toolRegistryRef.current         = await createToolRegistry(newDir, {
+            planExitCallback: (summary: string) => {
+              planModeActiveRef.current = true;
+              addSystemMessage([
+                "",
+                "📋 **Plan Ready for Review**",
+                summary,
+                "",
+                "`/plan approve`  — approve and start building",
+                "`/plan reject`   — reject the plan",
+                "`/plan show`     — review plan details",
+              ].join("\n"));
+            },
+          });
           opts.permissionManager.setProjectDir(newDir);
           opts.hookManager.setWorkingDir(newDir);
           rebuildAndRefresh();
@@ -914,39 +946,80 @@ export function useChat(opts: UseChatOptions) {
           if (arg === "off" || arg === "cancel") {
             planModeActiveRef.current = false;
             planManagerRef.current.clearPlan();
-            return "Plan mode disabled.";
+            opts.permissionManager.setMode(PermissionMode.DEFAULT);
+            rebuildAndRefresh();
+            return "Plan mode cancelled. Switched to build mode.";
           }
           if (arg === "show") {
             const plan = planManagerRef.current.getCurrentPlan();
             return plan ? planManagerRef.current.formatPlan() : "No active plan.";
           }
           if (arg === "approve" || arg === "yes") {
-            if (planManagerRef.current.approvePlan()) {
-              planModeActiveRef.current = false;
-              const plan = planManagerRef.current.getCurrentPlan();
-              if (plan) {
-                planManagerRef.current.startExecution();
-                sendMessage(`Execute this plan:\n\n${planManagerRef.current.formatPlan()}\n\nOriginal request: ${plan.originalRequest}`);
-              }
-              return "Plan approved! Executing...";
-            }
-            return "No plan to approve.";
+            const plan = planManagerRef.current.getCurrentPlan();
+            if (!plan) return "No plan to approve. Use /plan <request> to create one.";
+            if (plan.status !== "pending_approval") return `Plan is ${plan.status}, not pending approval.`;
+
+            // Approve and switch to build mode
+            planManagerRef.current.approvePlan();
+            planManagerRef.current.startExecution();
+            planModeActiveRef.current = false;
+            opts.permissionManager.setMode(PermissionMode.DEFAULT);
+            rebuildAndRefresh();
+
+            // Send the full plan to the LLM with build mode instructions
+            sendMessage([
+              "[MODE SWITCH: Plan → Build]",
+              "Your operational mode has changed from plan to build.",
+              "You are no longer in read-only mode. You now have full access to write files, run commands, and execute tools.",
+              "",
+              "## Approved Plan",
+              planManagerRef.current.formatPlan(),
+              "",
+              `## Original Request`,
+              plan.originalRequest,
+              "",
+              plan.filePath ? `## Plan File\nSaved at: \`${plan.filePath}\` — you can read this file for reference.\n` : "",
+              "## Instructions",
+              "Execute the plan above step by step. Mark each step as completed using the todo tool as you go.",
+              "If a step fails, explain why and suggest alternatives. Do not skip steps.",
+            ].join("\n"));
+
+            const planPath = plan.filePath ? `\nPlan saved at: ${plan.filePath}` : "";
+            return `Plan approved! Switched to build mode. Executing plan...${planPath}`;
           }
           if (arg === "reject" || arg === "no") {
             planManagerRef.current.rejectPlan();
             planModeActiveRef.current = false;
-            return "Plan rejected.";
+            opts.permissionManager.setMode(PermissionMode.DEFAULT);
+            rebuildAndRefresh();
+            return "Plan rejected. Switched to build mode.";
           }
           if (!arg) {
             planModeActiveRef.current = !planModeActiveRef.current;
-            return planModeActiveRef.current
-              ? "Plan mode ON — next message will generate a plan."
-              : "Plan mode OFF.";
+            if (planModeActiveRef.current) {
+              opts.permissionManager.setMode(PermissionMode.PLAN);
+              rebuildAndRefresh();
+              return "Plan mode ON (read-only enforced). Send a message to start planning.\nUse /plan approve to execute, /plan reject to cancel.";
+            } else {
+              opts.permissionManager.setMode(PermissionMode.DEFAULT);
+              rebuildAndRefresh();
+              return "Plan mode OFF. Switched to build mode.";
+            }
           }
-          // /plan <request> — immediately generate a plan for the given request
+          // /plan <request> — enter plan mode and start planning
           planModeActiveRef.current = true;
-          sendMessage(`[PLAN MODE] Analyze this request and create a step-by-step plan. Do NOT modify files.\n\nRequest: ${arg}`);
-          return "Generating plan...";
+          opts.permissionManager.setMode(PermissionMode.PLAN);
+          rebuildAndRefresh();
+          sendMessage([
+            "[PLAN MODE — Read-only]",
+            "Analyze this request and create a detailed step-by-step implementation plan.",
+            "You are in read-only mode — you can read files, search code, and explore, but CANNOT write or execute anything.",
+            "",
+            "When your plan is complete, call plan_exit with a summary. The user will then review and approve before you can start building.",
+            "",
+            `Request: ${arg}`,
+          ].join("\n"));
+          return `Plan mode ON (read-only). Generating plan...\nPlans will be saved to: ${planManagerRef.current.getPlansDir()}`;
         }
 
         // ── Effort level ─────────────────────────────────────────────────────

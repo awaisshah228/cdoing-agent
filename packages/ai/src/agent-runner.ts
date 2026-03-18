@@ -26,7 +26,7 @@ import {
 } from "@langchain/core/messages";
 import { AIMessageChunk } from "@langchain/core/messages";
 import type { BaseMessage } from "@langchain/core/messages";
-import type { ToolRegistry, PermissionManager, HookManager } from "@cdoing/core";
+import type { ToolRegistry, PermissionManager, HookManager, SubAgentManager, ProcessManager } from "@cdoing/core";
 import type { DiffChunk } from "@cdoing/core";
 import { streamDeterministicDiff } from "@cdoing/core";
 
@@ -62,6 +62,10 @@ export interface AgentRunnerOptions {
   systemPrompt?: string;
   maxTurns?: number;
   workingDir?: string;
+  /** SubAgentManager — used to report running background agents on interrupt */
+  subAgentManager?: SubAgentManager;
+  /** ProcessManager — used to report running background processes on interrupt */
+  processManager?: ProcessManager;
 }
 
 export class AgentRunner {
@@ -85,6 +89,11 @@ export class AgentRunner {
   /** Recent tool call signatures for doom loop detection */
   private recentToolCalls: string[] = [];
   private static readonly DOOM_LOOP_THRESHOLD = 3;
+  /** Set when the previous run was interrupted — tells the next run to prompt the LLM about background agents */
+  private wasInterrupted: boolean = false;
+  /** Optional managers for reporting background work on interrupt */
+  private subAgentManager: SubAgentManager | null = null;
+  private processManager: ProcessManager | null = null;
 
   constructor(
     modelConfig: Partial<ModelConfig>,
@@ -100,6 +109,8 @@ export class AgentRunner {
     this.maxRetries = options?.maxRetries ?? 3;
     this.retryDelayMs = options?.retryDelayMs ?? 1000;
     this.maxTurns = options?.maxTurns ?? Infinity;
+    this.subAgentManager = options?.subAgentManager || null;
+    this.processManager = options?.processManager || null;
 
     const workingDir = options?.workingDir || process.cwd();
 
@@ -201,6 +212,18 @@ export class AgentRunner {
       }
     }
 
+    // In plan mode: always include plan_exit, exclude write tools
+    // In build mode: exclude plan_exit (not needed)
+    const isPlanMode = this.permissionManager.getMode() === "plan";
+    if (isPlanMode) {
+      // Make sure plan_exit is available
+      if (filterNames) filterNames.add("plan_exit");
+      filterNames?.add("todo"); // for creating the plan
+    } else {
+      // Remove plan_exit in build mode — not needed
+      tools = tools.filter((t) => t.definition.name !== "plan_exit");
+    }
+
     if (filterNames) {
       // Always include activated tools (previously fetched via get_tool)
       tools = tools.filter((t) => filterNames.has(t.definition.name) || this.activatedTools.has(t.definition.name));
@@ -243,34 +266,71 @@ export class AgentRunner {
     return defs;
   }
 
-  /** Build the get_tool meta-tool definition — lets LLM fetch any tool on demand */
+  /**
+   * Build the get_tool meta-tool — a lightweight tool selector.
+   *
+   * Two modes:
+   *   - action="list": Browse available tools with one-line descriptions (no schemas).
+   *     Use this to discover what tools are available before fetching full schemas.
+   *   - action="get" + tool_name: Fetch the full schema of a specific tool so you can call it.
+   *
+   * This approach keeps the token cost minimal: the LLM sees tool names + descriptions
+   * (~500 tokens for the catalog) instead of full schemas for all 20+ tools (~5,000 tokens).
+   */
   private buildGetToolDefinition() {
     const allNames = this.toolRegistry.getAll().map((t) => t.definition.name);
     return {
       type: "function" as const,
       function: {
         name: "get_tool",
-        description: `Fetch the full schema of a tool not in your current toolset so you can call it. Available tools: ${allNames.join(", ")}`,
+        description:
+          "Browse and fetch tools not in your current toolset. " +
+          "Use action=\"list\" to see all available tools with descriptions. " +
+          "Use action=\"get\" with tool_name to fetch a tool's full schema so you can call it.",
         parameters: {
           type: "object",
           properties: {
+            action: {
+              type: "string",
+              enum: ["list", "get"],
+              description: "\"list\" to browse available tools, \"get\" to fetch a specific tool's schema",
+            },
             tool_name: {
               type: "string",
               enum: allNames,
-              description: "Name of the tool to fetch",
+              description: "Name of the tool to fetch (required for action=\"get\")",
             },
           },
-          required: ["tool_name"],
+          required: ["action"],
         },
       },
     };
   }
 
-  /** Handle a get_tool call — return the full schema and activate the tool for future turns */
-  private handleGetTool(toolName: string): string {
+  /** Handle a get_tool call — list catalog or fetch full schema */
+  private handleGetTool(args: Record<string, unknown>): string {
+    const action = (args.action as string) || "get";
+    const toolName = args.tool_name as string;
+
+    if (action === "list") {
+      // Return a compact catalog: name + first sentence of description
+      const tools = this.toolRegistry.getAll();
+      const lines = tools.map((t) => {
+        const desc = t.definition.description.split(/[.\n]/)[0].trim();
+        const active = this.activatedTools.has(t.definition.name) ? " [active]" : "";
+        return `- ${t.definition.name}: ${desc}${active}`;
+      });
+      return `Available tools (${tools.length}):\n${lines.join("\n")}\n\nUse get_tool with action="get" and tool_name to fetch the full schema of any tool.`;
+    }
+
+    // action === "get"
+    if (!toolName) {
+      return 'Error: tool_name is required when action="get". Use action="list" to see available tools.';
+    }
+
     const tool = this.toolRegistry.get(toolName);
     if (!tool) {
-      return `Tool "${toolName}" not found.`;
+      return `Tool "${toolName}" not found. Use action="list" to see available tools.`;
     }
 
     // Activate this tool for all future turns in this session
@@ -462,6 +522,7 @@ export class AgentRunner {
    */
   interrupt(partialResponse?: string): void {
     this.isCancelled = true;
+    this.wasInterrupted = true;
     this.abortController?.abort();
     this.abortController = null;
     // Add the partial response to history so the LLM sees what it was doing before interruption
@@ -470,6 +531,51 @@ export class AgentRunner {
         partialResponse.trim() + "\n\n[Response interrupted by user — your partial response above is preserved as context]"
       ));
     }
+  }
+
+  /**
+   * Build a summary of all active background sub-agents and processes.
+   * Returns null if nothing is running.
+   */
+  private getBackgroundStatus(): string | null {
+    const lines: string[] = [];
+
+    // Check sub-agents
+    if (this.subAgentManager) {
+      const agents = this.subAgentManager.listAll();
+      const running = agents.filter((a) => a.status === "running");
+      if (running.length > 0) {
+        lines.push("Background sub-agents:");
+        for (const a of running) {
+          const secs = Math.round(a.durationMs / 1000);
+          lines.push(`  - ${a.id} (running ${secs}s, task: "${a.task.slice(0, 100)}")`);
+        }
+      }
+      // Also report recently completed ones the LLM hasn't seen yet
+      const completed = agents.filter((a) => a.status === "completed");
+      if (completed.length > 0) {
+        lines.push("Completed sub-agents (results not yet read):");
+        for (const a of completed) {
+          lines.push(`  - ${a.id} (completed, task: "${a.task.slice(0, 100)}")`);
+        }
+      }
+    }
+
+    // Check background processes
+    if (this.processManager) {
+      const procs = this.processManager.listAll();
+      const running = procs.filter((p) => p.status === "running");
+      if (running.length > 0) {
+        lines.push("Background processes:");
+        for (const p of running) {
+          const secs = Math.round(p.durationMs / 1000);
+          lines.push(`  - ${p.id} (running ${secs}s, cmd: "${p.command.slice(0, 100)}", pid: ${p.pid ?? "?"})`);
+        }
+      }
+    }
+
+    if (lines.length === 0) return null;
+    return lines.join("\n");
   }
 
   /**
@@ -483,6 +589,18 @@ export class AgentRunner {
       return errMsg;
     }
     this.isCancelled = false;
+
+    // If the previous run was interrupted, inject real background work status
+    if (this.wasInterrupted) {
+      this.wasInterrupted = false;
+      const bgStatus = this.getBackgroundStatus();
+      if (bgStatus) {
+        userMessage += "\n\n[System: Your previous response was interrupted by this new message. " +
+          "Here is the current state of background work:\n" + bgStatus +
+          "\nBased on the user's new message, decide whether to let them continue, " +
+          "terminate them (sub_agent_terminate / shell_exec action=kill), or wait for their results.]";
+      }
+    }
 
     // Build multimodal content if images are provided
     // Uses standard image_url format for ALL providers — LangChain handles
@@ -506,6 +624,11 @@ export class AgentRunner {
 
     try {
       while (true) {
+        // Check abort/cancel before each turn
+        if (this.isCancelled) {
+          throw new Error("__cancelled__");
+        }
+
         // Check max turns limit
         this.currentTurns++;
         if (this.currentTurns > this.maxTurns) {
@@ -609,8 +732,14 @@ export class AgentRunner {
           }
         }
 
-        // No tools → model is done
-        if (toolCalls.length === 0) {
+        // Check LLM finish reason — more robust than just checking tool calls.
+        // If the model explicitly signaled end_turn/stop, it's done regardless.
+        const finishReason = accumulated.response_metadata?.finish_reason
+          || accumulated.response_metadata?.stop_reason;
+        const isModelDone = toolCalls.length === 0
+          || (finishReason && finishReason !== "tool_calls" && finishReason !== "tool_use" && finishReason !== "unknown");
+
+        if (isModelDone) {
           this.messages.push(new AIMessage(fullText));
           fullResponse += fullText;
           break;
@@ -632,9 +761,8 @@ export class AgentRunner {
         const realToolCalls: typeof toolCalls = [];
         for (const tc of toolCalls) {
           if (tc.name === "get_tool") {
-            const toolName = tc.args.tool_name as string;
             callbacks.onToolCall(tc.name, tc.args);
-            const result = this.handleGetTool(toolName);
+            const result = this.handleGetTool(tc.args);
             this.messages.push(new ToolMessage({ content: result, tool_call_id: tc.id }));
             callbacks.onToolResult(tc.name, result, false);
           } else {
@@ -648,6 +776,13 @@ export class AgentRunner {
         if (realToolCalls.length > 0) {
           await this.executeToolCalls(realToolCalls, callbacks);
         }
+
+        // If task_complete was called, break the loop — the tool already
+        // cleaned up background processes and sub-agents
+        if (realToolCalls.some(tc => tc.name === "task_complete")) {
+          break;
+        }
+
         // Loop: model sees tool results, decides next step
       }
 
@@ -679,7 +814,7 @@ export class AgentRunner {
 
   /** Tools that must always run sequentially (side effects, shared state) */
   private static readonly ALWAYS_SEQUENTIAL = new Set([
-    "shell_exec", "file_run", "batch", "question", "skill", "plan_exit",
+    "shell_exec", "file_run", "batch", "question", "skill", "plan_exit", "task_complete",
   ]);
 
   /** Execute a single tool call with hooks, permissions, and error handling */
@@ -953,6 +1088,7 @@ const ALWAYS_INCLUDE = new Set([
   "glob_search",     // finding files by pattern
   "grep_search",     // searching code content
   "list_dir",        // exploring directory structure
+  "task_complete",   // explicit "I'm done" signal — always available
 ]);
 
 /** Tool groups activated by keyword signals in the user message */
@@ -965,7 +1101,7 @@ const TOOL_SIGNALS: Array<{ keywords: RegExp; tools: string[] }> = [
   { keywords: /notebook|ipynb|jupyter|cell/i, tools: ["notebook_edit"] },
   { keywords: /ast|tree.?sitter|parse|struct|node|rename func|rename class/i, tools: ["ast_edit"] },
   { keywords: /diff|git|commit|branch|status|log/i, tools: ["view_diff", "shell_exec"] },
-  { keywords: /todo|task|plan|track/i, tools: ["todo"] },
+  { keywords: /todo|task|plan|track/i, tools: ["todo", "plan_exit"] },
   { keywords: /sub.?agent|parallel|background|delegate/i, tools: ["sub_agent", "sub_agent_status", "sub_agent_terminate"] },
   { keywords: /repo|map|structure|overview|architecture/i, tools: ["view_repo_map"] },
   { keywords: /system|info|permission|sandbox/i, tools: ["system_info"] },
@@ -974,6 +1110,7 @@ const TOOL_SIGNALS: Array<{ keywords: RegExp; tools: string[] }> = [
   { keywords: /lsp|definition|reference|hover|symbol|go.?to.?def/i, tools: ["lsp"] },
   { keywords: /ask|question|choose|confirm|select/i, tools: ["question"] },
   { keywords: /batch|bulk|multiple.?tools/i, tools: ["batch"] },
+  { keywords: /remember|forget|memory|recall|preference|learned/i, tools: ["memory"] },
 ];
 
 /**
@@ -984,17 +1121,15 @@ const TOOL_SIGNALS: Array<{ keywords: RegExp; tools: string[] }> = [
 function selectToolsForMessage(message: string): Set<string> {
   const selected = new Set(ALWAYS_INCLUDE);
 
-  let signalMatched = false;
   for (const signal of TOOL_SIGNALS) {
     if (signal.keywords.test(message)) {
       for (const tool of signal.tools) selected.add(tool);
-      signalMatched = true;
     }
   }
 
-  // If no specific signals matched, include all tools (ambiguous request)
-  if (!signalMatched) return new Set<string>(); // empty = no filter = all tools
-
+  // No keyword match → just use core tools (not all tools).
+  // The LLM can always fetch additional tools via get_tool on demand.
+  // This saves ~3,600 tokens on simple/conversational messages.
   return selected;
 }
 

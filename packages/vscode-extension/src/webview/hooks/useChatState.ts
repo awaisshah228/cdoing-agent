@@ -50,6 +50,7 @@ export function useChatState() {
   const [permissionRequest, setPermissionRequest] = useState<{
     id: string; toolName: string; message: string; hasProject: boolean;
   } | null>(null);
+  const [currentMode, setCurrentMode] = useState<string>("ask");
 
   const streamingRef = useRef<string | null>(null);
 
@@ -308,6 +309,9 @@ export function useChatState() {
           setProviderLabel(msg.provider);
           setModelLabel(msg.model || msg.provider);
           break;
+        case "modeChanged":
+          setCurrentMode((msg as any).mode || "ask");
+          break;
 
         // Tab messages
         case "tabCreated":
@@ -396,5 +400,6 @@ export function useChatState() {
     showSettings, extensionConfig, openSettings, closeSettings,
     saveSettings, openVscodeSettings, cancelGeneration,
     permissionRequest, respondToPermission,
+    currentMode,
   };
 }

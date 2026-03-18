@@ -27,7 +27,7 @@ const SLASH_COMMANDS = [
   { cmd: "/usage",       desc: "Token usage" },
   { cmd: "/compact",     desc: "Compact context" },
   { cmd: "/tasks",       desc: "Show task list" },
-  { cmd: "/plan",        desc: "Toggle plan mode" },
+  { cmd: "/plan",        desc: "Plan mode (approve/reject/show/off)" },
   { cmd: "/effort",      desc: "Set analysis depth" },
   { cmd: "/btw",         desc: "Ask without adding to history" },
   { cmd: "/bg",          desc: "Run prompt as background job" },

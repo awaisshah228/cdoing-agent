@@ -44,6 +44,9 @@ const TOOL_CONFIG: Record<string, { label: string; icon: React.ReactNode }> = {
   web_search:      { label: "Web search", icon: <ToolSvg d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM2 12h20" /> },
   sub_agent:       { label: "Agent",      icon: <ToolSvg d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" /> },
   todo:            { label: "Todo",       icon: <ToolSvg d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /> },
+  plan_exit:       { label: "Plan",      icon: <ToolSvg d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /> },
+  memory:          { label: "Memory",    icon: <ToolSvg d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 8v4l3 3" /> },
+  task_complete:   { label: "Done",      icon: <ToolSvg d="M22 11.08V12a10 10 0 1 1-5.93-9.14M22 4L12 14.01l-3-3" /> },
   list_dir:        { label: "List dir",   icon: <ToolSvg d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /> },
   view_diff:       { label: "Diff",       icon: <ToolSvg d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5" /> },
   view_repo_map:   { label: "Repo map",   icon: <ToolSvg d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4zM8 2v16M16 6v16" /> },
@@ -127,6 +130,33 @@ function getToolDescription(name: string, input: string, description?: string): 
     case "view_repo_map": {
       const path = shortPath(String(p.path || ""));
       return path ? `Repo map ${path}` : "Repo map";
+    }
+    case "todo": {
+      const action = String(p.action || "");
+      const subject = String(p.subject || "");
+      const status = String(p.status || "");
+      if (action === "create") return subject ? `Create task: ${trim(subject, 40)}` : "Create task";
+      if (action === "update") return status ? `Update task → ${status}` : "Update task";
+      if (action === "list") return "List tasks";
+      if (action === "delete") return "Delete task";
+      return `Todo: ${action}`;
+    }
+    case "plan_exit": {
+      const summary = String(p.summary || "");
+      return summary ? `Plan ready: ${trim(summary, 40)}` : "Plan complete";
+    }
+    case "memory": {
+      const action = String(p.action || "");
+      const key = String(p.key || p.query || "");
+      if (action === "save") return key ? `Save memory: ${key}` : "Save memory";
+      if (action === "search") return key ? `Search memories: "${trim(key, 30)}"` : "Search memories";
+      if (action === "forget") return key ? `Forget: ${key}` : "Forget memory";
+      if (action === "list") return "List memories";
+      return `Memory: ${action}`;
+    }
+    case "task_complete": {
+      const summary = String(p.summary || "");
+      return summary ? `Done: ${trim(summary, 40)}` : "Task complete";
     }
     default: {
       // Fallback: try to build a description from common input fields
@@ -227,6 +257,22 @@ function renderToolInput(name: string, parsed: Record<string, unknown>, onOpenFi
       const task = String(parsed.task || parsed.prompt || "");
       return <pre className="tool-io-block">{trimLines(task, 4)}</pre>;
     }
+    case "todo": {
+      const action = String(parsed.action || "");
+      const subject = String(parsed.subject || "");
+      const parentId = String(parsed.parent_id || "");
+      const status = String(parsed.status || "");
+      const id = String(parsed.id || "");
+      return (
+        <div className="tool-io-block tool-todo-input">
+          <span className="tool-io-label">{action}</span>
+          {subject && <span>: {subject}</span>}
+          {parentId && <span className="tool-io-meta"> (under #{parentId})</span>}
+          {id && <span className="tool-io-meta"> #{id}</span>}
+          {status && <span className="tool-io-meta"> → {status}</span>}
+        </div>
+      );
+    }
     case "ast_edit": {
       const path = String(parsed.file_path || parsed.path || "");
       const ops = Array.isArray(parsed.operations) ? parsed.operations as Array<Record<string, unknown>> : [];
@@ -304,6 +350,9 @@ function renderToolOutput(name: string, output: string, isError?: boolean, onOpe
     case "codebase_search": {
       return <pre className="tool-io-block">{trimLines(output, 12)}</pre>;
     }
+    case "todo": {
+      return <TodoOutputRenderer output={output} />;
+    }
     default:
       return <pre className="tool-io-block">{trimLines(output, 12)}</pre>;
   }
@@ -312,7 +361,8 @@ function renderToolOutput(name: string, output: string, isError?: boolean, onOpe
 // ── Main Component ───────────────────────────────────
 
 const ToolCallBubbleInner: React.FC<ToolCallBubbleProps> = ({ entry }) => {
-  const [expanded, setExpanded] = useState(false);
+  const isTodo = entry.name === "todo";
+  const [expanded, setExpanded] = useState(isTodo);
   const vscode = useVsCode();
   const toggle = useCallback(() => setExpanded(p => !p), []);
 
@@ -323,13 +373,18 @@ const ToolCallBubbleInner: React.FC<ToolCallBubbleProps> = ({ entry }) => {
   const statusIcon = isRunning ? "" : entry.isError ? "✗" : "✓";
 
   // Auto-expand shell tools when streaming output arrives
+  // Auto-expand todo tools always (so checklist is visible)
   const autoExpandedRef = useRef(false);
   useEffect(() => {
     if (isShell && isRunning && entry.output && !autoExpandedRef.current) {
       autoExpandedRef.current = true;
       setExpanded(true);
     }
-  }, [isShell, isRunning, entry.output]);
+    if (isTodo && !autoExpandedRef.current) {
+      autoExpandedRef.current = true;
+      setExpanded(true);
+    }
+  }, [isShell, isTodo, isRunning, entry.output]);
 
   const description = useMemo(
     () => getToolDescription(entry.name, entry.input, entry.description),
@@ -374,8 +429,14 @@ const ToolCallBubbleInner: React.FC<ToolCallBubbleProps> = ({ entry }) => {
         </span>
       </div>
 
-      {/* Expanded detail — IN + OUT sections */}
-      {expanded && (
+      {/* Expanded detail */}
+      {expanded && isTodo && entry.output && (
+        // Todo: show checklist directly, no IN/OUT badges
+        <div className="tool-step-detail">
+          {renderToolOutput(entry.name, entry.output, entry.isError, openFile)}
+        </div>
+      )}
+      {expanded && !isTodo && (
         <div className="tool-step-detail">
           {entry.input && (
             <div className="tool-io-section">
@@ -417,6 +478,60 @@ export const ToolCallBubble = React.memo(ToolCallBubbleInner, (prev, next) => {
     && prev.entry.kind === next.entry.kind
     && prev.entry.output === next.entry.output;
 });
+
+// ── Todo Renderer (Claude Code style) ────────────────
+
+const TodoOutputRenderer: React.FC<{ output: string }> = ({ output }) => {
+  // Split on ---TODO_STATE--- marker to get action result + full checklist
+  const parts = output.split("---TODO_STATE---");
+  const actionResult = parts[0]?.trim() || "";
+  const todoState = parts[1]?.trim() || "";
+
+  // No todo state — just show the action result
+  if (!todoState) {
+    return <div className="tool-io-block tool-todo-result">{actionResult}</div>;
+  }
+
+  // Parse checklist lines from the todo state
+  const lines = todoState.split("\n").filter(l => l.trim());
+  const items = lines.filter(l => /\[[ x~!-]\]/.test(l)).map((line) => {
+    const indent = line.match(/^(\s*)/)?.[1]?.length || 0;
+    const isCompleted = /\[x\]/.test(line);
+    const isInProgress = /\[~\]/.test(line);
+    const isBlocked = /\[!\]/.test(line);
+    // Remove checkbox and #id prefix to get clean task name
+    const text = line.replace(/^\s*\[[ x~!-]\]\s*#\d+\s*/, "").trim();
+    const subtaskMatch = line.match(/\((\d+) subtasks?\)/);
+    const subtaskCount = subtaskMatch ? parseInt(subtaskMatch[1]) : 0;
+
+    return { indent, isCompleted, isInProgress, isBlocked, text, subtaskCount };
+  });
+
+  const summaryLine = lines.find(l => l.startsWith("Summary:"));
+
+  return (
+    <div className="tool-todo-checklist">
+      {items.map((item, i) => (
+        <div
+          key={i}
+          className={`tool-todo-item ${item.isCompleted ? "completed" : ""} ${item.isInProgress ? "in-progress" : ""} ${item.isBlocked ? "blocked" : ""}`}
+          style={{ paddingLeft: `${8 + (item.indent > 0 ? 20 : 0)}px` }}
+        >
+          <span className="tool-todo-checkbox">
+            {item.isCompleted ? "✓" : item.isInProgress ? "◉" : item.isBlocked ? "⊘" : "○"}
+          </span>
+          <span className="tool-todo-text">{item.text}</span>
+          {item.subtaskCount > 0 && (
+            <span className="tool-todo-subtask-count"> ({item.subtaskCount})</span>
+          )}
+        </div>
+      ))}
+      {summaryLine && (
+        <div className="tool-todo-summary">{summaryLine}</div>
+      )}
+    </div>
+  );
+};
 
 // ── Helper Components ────────────────────────────────
 

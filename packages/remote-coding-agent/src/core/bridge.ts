@@ -37,6 +37,8 @@ import {
   ViewDiffTool,
   ViewRepoMapTool,
   CodebaseSearchTool,
+  TaskCompleteTool,
+  ProcessManager,
 } from "@cdoing/core";
 
 import type {
@@ -629,6 +631,7 @@ export class AgentBridge {
       : undefined;
 
     const registry = new ToolRegistry();
+    const processManager = new ProcessManager();
 
     // Full coding tools
     registry.register(new FileReadTool(workingDir, sm));
@@ -641,11 +644,14 @@ export class AgentBridge {
     registry.register(new ViewDiffTool(workingDir));
     registry.register(new ViewRepoMapTool(workingDir));
     registry.register(new CodebaseSearchTool(workingDir));
-    registry.register(new ShellExecTool(workingDir, sm));
+    registry.register(new ShellExecTool(workingDir, sm, undefined, processManager));
     registry.register(new FileRunTool(workingDir, sm));
     registry.register(new CodeVerifyTool(workingDir));
     registry.register(new WebFetchTool(sm));
     registry.register(new WebSearchTool());
+
+    // Task completion — cleans up background processes
+    registry.register(new TaskCompleteTool(processManager));
 
     return registry;
   }

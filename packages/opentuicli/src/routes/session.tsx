@@ -179,6 +179,8 @@ export function SessionView(props: {
   const conversationRef = useRef<Conversation | null>(null);
   const backgroundJobsRef = useRef<BackgroundJob[]>([]);
   const bgIdCounterRef = useRef(0);
+  const planPendingRef = useRef(false);
+  const planSummaryRef = useRef("");
 
   // Initialize conversation on first render
   if (!conversationRef.current) {
@@ -438,18 +440,77 @@ export function SessionView(props: {
       }
 
       case "/plan": {
-        if (arg === "on") {
-          addMessage("system", "Plan mode enabled. Agent will propose a plan before executing.");
-        } else if (arg === "off") {
-          addMessage("system", "Plan mode disabled.");
+        // Helper: rebuild agent with fresh system prompt, preserving history
+        const rebuildWithHistory = () => {
+          if (sdk.rebuildAgent) {
+            const history = sdk.agent.getHistory();
+            sdk.rebuildAgent(sdk.provider, sdk.model);
+            if (history.length > 0) {
+              sdk.agent.setHistory(history);
+            }
+          }
+        };
+
+        if (arg === "off" || arg === "cancel") {
+          planPendingRef.current = false;
+          sdk.permissionManager.setMode("default" as any);
+          rebuildWithHistory();
+          addMessage("system", "Plan mode cancelled. Switched to build mode.");
         } else if (arg === "show") {
-          addMessage("system", "No active plan.");
-        } else if (arg === "approve") {
-          addMessage("system", "No plan to approve.");
-        } else if (arg === "reject") {
-          addMessage("system", "No plan to reject.");
+          addMessage("system", planSummaryRef.current || "No active plan.");
+        } else if (arg === "approve" || arg === "yes") {
+          if (!planPendingRef.current) {
+            addMessage("system", "No plan to approve. Use /plan <request> to create one.");
+            break;
+          }
+          planPendingRef.current = false;
+          sdk.permissionManager.setMode("default" as any);
+          rebuildWithHistory();
+          addMessage("system", "Plan approved! Switched to build mode. Executing...");
+          const buildPrompt = [
+            "[MODE SWITCH: Plan → Build]",
+            "Your operational mode has changed from plan to build.",
+            "You now have full access to write files, run commands, and execute tools.",
+            "",
+            "## Approved Plan",
+            planSummaryRef.current || "Execute the plan you created.",
+            "",
+            "## Instructions",
+            "Execute the plan step by step. If a step fails, explain why and suggest alternatives.",
+          ].join("\n");
+          sendMessage(buildPrompt);
+        } else if (arg === "reject" || arg === "no") {
+          planPendingRef.current = false;
+          sdk.permissionManager.setMode("default" as any);
+          rebuildWithHistory();
+          addMessage("system", "Plan rejected. Switched to build mode.");
+        } else if (!arg) {
+          const isActive = planPendingRef.current;
+          if (isActive) {
+            planPendingRef.current = false;
+            sdk.permissionManager.setMode("default" as any);
+            rebuildWithHistory();
+            addMessage("system", "Plan mode OFF. Switched to build mode.");
+          } else {
+            sdk.permissionManager.setMode("plan" as any);
+            rebuildWithHistory();
+            addMessage("system", "Plan mode ON (read-only). Send a message to start planning.\nUse /plan approve to execute, /plan reject to cancel.");
+          }
         } else {
-          addMessage("system", "Usage: /plan <on|off|show|approve|reject>");
+          // /plan <request>
+          sdk.permissionManager.setMode("plan" as any);
+          rebuildWithHistory();
+          planPendingRef.current = true;
+          addMessage("system", "Plan mode ON (read-only). Generating plan...\nUse /plan approve when ready, /plan reject to cancel.");
+          const planPrompt = [
+            "[PLAN MODE — Read-only]",
+            "Analyze this request and create a detailed step-by-step implementation plan.",
+            "You are in read-only mode — you can read files, search code, and explore, but CANNOT write or execute.",
+            "When your plan is complete, call plan_exit with a summary.",
+            "",
+            `Request: ${arg}`,
+          ].join("\n");
+          sendMessage(planPrompt);
         }
         break;
       }
@@ -1060,9 +1121,15 @@ export function SessionView(props: {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const doSendMessage = async (text: string, images?: ImageAttachment[]) => {
+    // Inject plan mode context if active
+    let messageText = text;
+    if (planPendingRef.current || sdk.permissionManager.getMode() === ("plan" as any)) {
+      messageText = `[PLAN MODE — Read-only] You are in plan mode. Do NOT write files, run commands, or modify anything. Only read, search, analyze, and create a plan using the todo tool. When your plan is ready, call plan_exit.\n\n${text}`;
+    }
+
     // Resolve @mention context providers
-    let expandedText = text;
-    if (hasContextMentions(text)) {
+    let expandedText = messageText;
+    if (hasContextMentions(messageText)) {
       try {
         expandedText = await resolveContextProviders(text, sdk.workingDir);
       } catch {

@@ -30,6 +30,10 @@ interface InputAreaProps {
   onInterruptAndSend?: (newMessage: string) => void;
   permissionRequest?: PermissionRequest | null;
   onPermissionResponse?: (decision: string) => void;
+  agentMode?: "build" | "plan";
+  onToggleMode?: () => void;
+  planApproval?: { summary: string; filePath?: string } | null;
+  onPlanApprovalResponse?: (decision: "approve" | "reject") => void;
 }
 
 interface FileResult {
@@ -75,6 +79,13 @@ const SLASH_COMMANDS: SlashCommand[] = [
     { value: "auto-edit", label: "auto-edit", hint: "auto-approve file edits" },
     { value: "auto", label: "auto", hint: "auto-approve everything" },
     { value: "plan", label: "plan", hint: "read-only planning mode" },
+    { value: "default", label: "default", hint: "reset to default (build mode)" },
+  ]},
+  { cmd: "/plan", hint: "Plan mode — create & approve plans", args: [
+    { value: "approve", label: "approve", hint: "approve plan and switch to build mode" },
+    { value: "reject", label: "reject", hint: "reject plan and return to build mode" },
+    { value: "show", label: "show", hint: "show current plan" },
+    { value: "off", label: "off", hint: "cancel plan mode" },
   ]},
   { cmd: "/clear", hint: "Clear conversation" },
   { cmd: "/new", hint: "New conversation tab" },
@@ -93,7 +104,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { cmd: "/delete", hint: "Delete a conversation" },
 ];
 
-export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, onSend, onCancel, onInterruptAndSend, permissionRequest, onPermissionResponse }) => {
+export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, onSend, onCancel, onInterruptAndSend, permissionRequest, onPermissionResponse, agentMode = "build", onToggleMode, planApproval, onPlanApprovalResponse }) => {
   const [text, setText] = useState("");
   const [attachments, setAttachments] = useState<ContextAttachment[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -602,6 +613,22 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
         </div>
       )}
 
+      {/* Plan approval prompt — compact, like permission prompts */}
+      {planApproval && onPlanApprovalResponse && (
+        <div className="plan-approval-bar">
+          <span className="plan-approval-label">📋 Plan ready</span>
+          <span className="plan-approval-summary">{planApproval.summary}</span>
+          <div className="plan-approval-actions">
+            <button className="plan-approval-btn plan-approve-btn" onClick={() => onPlanApprovalResponse("approve")}>
+              Approve & Build
+            </button>
+            <button className="plan-approval-btn plan-reject-btn" onClick={() => onPlanApprovalResponse("reject")}>
+              Reject
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Interrupt / Enqueue prompt */}
       {pendingMessage && (
         <div className="interrupt-prompt">
@@ -703,6 +730,27 @@ export const InputArea: React.FC<InputAreaProps> = ({ isProcessing, queueCount, 
         {/* Toolbar */}
         <div className="input-toolbar">
           <div className="input-toolbar-left">
+            {/* Plan / Build mode toggle */}
+            {onToggleMode && (
+              <button
+                className={`mode-toggle ${agentMode === "plan" ? "mode-toggle-plan" : "mode-toggle-build"}`}
+                onClick={onToggleMode}
+                title={agentMode === "plan" ? "Switch to Build mode" : "Switch to Plan mode"}
+              >
+                {agentMode === "plan" ? (
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+                    <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="16 18 22 12 16 6" />
+                    <polyline points="8 6 2 12 8 18" />
+                  </svg>
+                )}
+                <span className="mode-toggle-label">{agentMode === "plan" ? "Plan" : "Build"}</span>
+              </button>
+            )}
             <button className="input-tool-btn" onClick={pickFile} title="Attach file">
               <svg viewBox="0 0 24 24">
                 <line x1="12" y1="5" x2="12" y2="19" />

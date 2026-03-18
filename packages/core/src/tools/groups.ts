@@ -15,6 +15,7 @@ import type { SubAgentManager } from "./agents/sub-agent-manager";
 import type { TodoStore } from "../utils/todo";
 import type { QuestionPromptFn } from "./session/question";
 import type { PlanExitCallback } from "./session/plan-exit";
+import type { TaskCompleteCallback } from "./session/task-complete";
 import type { DiagnosticsCallback } from "./file/file-write";
 import type { ConfigUpdateCallback } from "./system/config-update";
 
@@ -29,8 +30,10 @@ export interface ToolGroupOptions {
   subAgentFactory?: SubAgentRunnerFactory;
   subAgentManager?: SubAgentManager;
   todoStore?: TodoStore;
+  memoryStore?: import("../utils/memory").MemoryStore;
   questionPromptFn?: QuestionPromptFn;
   planExitCallback?: PlanExitCallback;
+  taskCompleteCallback?: TaskCompleteCallback;
   diagnosticsCallback?: DiagnosticsCallback;
   onConfigUpdate?: ConfigUpdateCallback;
 }
@@ -151,6 +154,20 @@ export async function registerSessionTools(registry: ToolRegistry, opts: ToolGro
     const { PlanExitTool } = await import("./session/plan-exit");
     registry.register(new PlanExitTool(opts.planExitCallback));
   }
+
+  // Memory tool — lets the LLM save/search/forget memories
+  if (opts.memoryStore) {
+    const { MemoryTool } = await import("./session/memory");
+    registry.register(new MemoryTool(opts.memoryStore));
+  }
+
+  // Always register task_complete — it's the explicit "I'm done" signal
+  const { TaskCompleteTool } = await import("./session/task-complete");
+  registry.register(new TaskCompleteTool(
+    opts.processManager,
+    opts.subAgentManager,
+    opts.taskCompleteCallback,
+  ));
 }
 
 /** Register system tools: system_info, lsp, config_update */

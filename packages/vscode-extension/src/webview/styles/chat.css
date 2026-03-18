@@ -973,6 +973,126 @@ pre.tool-io-block {
 }
 .tool-io-error { color: var(--error-fg) !important; }
 .tool-io-empty { font-style: italic; opacity: 0.5; font-size: 11px; }
+
+/* Todo checklist (Claude Code style) */
+.tool-todo-checklist {
+  padding: 6px 0;
+}
+.tool-todo-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.tool-todo-checkbox {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  border-radius: 50%;
+}
+.tool-todo-item.completed .tool-todo-checkbox {
+  color: var(--success, #4caf50);
+}
+.tool-todo-item.in-progress .tool-todo-checkbox {
+  color: var(--accent, #3b82f6);
+  animation: pulse 1.5s infinite;
+}
+.tool-todo-item.blocked .tool-todo-checkbox {
+  color: var(--error, #f44336);
+}
+.tool-todo-item.completed .tool-todo-text {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+.tool-todo-text {
+  flex: 1;
+}
+.tool-todo-subtask-count {
+  font-size: 10px;
+  opacity: 0.5;
+  margin-left: 4px;
+}
+.tool-todo-summary {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  opacity: 0.7;
+}
+.tool-todo-result {
+  font-size: 12px;
+}
+.tool-todo-input {
+  font-size: 12px;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Plan approval bar — compact inline prompt */
+.plan-approval-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin: 4px 0;
+  background: rgba(229, 161, 0, 0.08);
+  border: 1px solid rgba(229, 161, 0, 0.25);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.plan-approval-label {
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--warning, #e5a100);
+}
+.plan-approval-summary {
+  flex: 1;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+.plan-approval-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.plan-approval-btn {
+  padding: 4px 12px;
+  border-radius: 4px;
+  border: none;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.plan-approve-btn {
+  background: var(--accent, #3b82f6);
+  color: #fff;
+}
+.plan-approve-btn:hover {
+  background: #2563eb;
+}
+.plan-reject-btn {
+  background: transparent;
+  color: var(--desc-fg);
+  border: 1px solid var(--border, #333);
+}
+.plan-reject-btn:hover {
+  background: rgba(244, 67, 54, 0.1);
+  color: var(--error, #f44336);
+  border-color: var(--error, #f44336);
+}
+
 .tool-step-desc {
   font-family: var(--vscode-editor-font-family);
   opacity: 0.85;
@@ -1354,6 +1474,52 @@ pre.tool-io-block {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* Plan / Build mode toggle */
+.mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--desc-fg);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+.mode-toggle:hover {
+  background: var(--surface-hover);
+  color: var(--fg);
+  border-color: var(--desc-fg);
+}
+.mode-toggle-build {
+  color: var(--accent);
+  border-color: var(--accent-soft, rgba(59, 130, 246, 0.25));
+  background: var(--accent-soft, rgba(59, 130, 246, 0.08));
+}
+.mode-toggle-build:hover {
+  color: var(--accent);
+  background: rgba(59, 130, 246, 0.15);
+  border-color: var(--accent);
+}
+.mode-toggle-plan {
+  color: var(--warning, #e5a100);
+  border-color: rgba(229, 161, 0, 0.25);
+  background: rgba(229, 161, 0, 0.08);
+}
+.mode-toggle-plan:hover {
+  color: var(--warning, #e5a100);
+  background: rgba(229, 161, 0, 0.15);
+  border-color: var(--warning, #e5a100);
+}
+.mode-toggle-label {
+  letter-spacing: 0.03em;
 }
 
 .input-tool-btn {

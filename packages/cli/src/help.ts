@@ -70,7 +70,7 @@ export function printHelp(): void {
     ["/permissions", "View/clear stored permissions"],
     ["/memory", "View/manage persistent memory"],
     ["/hooks", "View configured hooks"],
-    ["/plan [request]", "Plan before executing"],
+    ["/plan [request]", "Plan mode (approve/reject/show/off)"],
     ["/effort <level>", "Set effort (low/med/high/max)"],
     ["/btw <question>", "Ask without saving to history"],
     ["/rules", "View project rules"],

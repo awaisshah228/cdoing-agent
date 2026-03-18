@@ -88,6 +88,10 @@ export const ChatPanel: React.FC = () => {
   const respondToPermission = useChatStore((s) => s.respondToPermission);
   const switchModel = useChatStore((s) => s.switchModel);
   const providerLabel = useChatStore((s) => s.providerLabel);
+  const agentMode = useChatStore((s) => s.agentMode);
+  const toggleMode = useChatStore((s) => s.toggleMode);
+  const planApproval = useChatStore((s) => s.planApproval);
+  const respondToPlanApproval = useChatStore((s) => s.respondToPlanApproval);
 
   const headerModelOptions = useMemo(
     () => HEADER_MODEL_OPTIONS[providerLabel] || [],
@@ -128,6 +132,10 @@ export const ChatPanel: React.FC = () => {
         onInterruptAndSend={interruptAndSend}
         permissionRequest={permissionRequest}
         onPermissionResponse={respondToPermission}
+        agentMode={agentMode}
+        onToggleMode={toggleMode}
+        planApproval={planApproval}
+        onPlanApprovalResponse={respondToPlanApproval}
       />
 
       {showHistory && (

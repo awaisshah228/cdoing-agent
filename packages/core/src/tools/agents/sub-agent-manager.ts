@@ -180,4 +180,15 @@ export class SubAgentManager {
   hasRunning(): boolean {
     return Array.from(this.agents.values()).some((e) => e.status === "running");
   }
+
+  /** Terminate all running sub-agents (cleanup) */
+  terminateAll(): number {
+    let terminated = 0;
+    for (const entry of this.agents.values()) {
+      if (entry.status === "running") {
+        if (this.terminate(entry.id)) terminated++;
+      }
+    }
+    return terminated;
+  }
 }

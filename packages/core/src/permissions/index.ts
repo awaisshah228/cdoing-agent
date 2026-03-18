@@ -121,7 +121,11 @@ const TOOL_CATEGORY: Record<string, string> = {
 };
 
 /** Write/exec tools that are blocked in Plan mode */
-const PLAN_BLOCKED = new Set(["shell_exec", "file_run", "file_write", "file_edit", "multi_edit", "apply_patch", "batch", "question"]);
+const PLAN_BLOCKED = new Set([
+  "shell_exec", "file_run", "file_write", "file_edit", "multi_edit",
+  "apply_patch", "batch", "question",
+  "notebook_edit", "ast_edit", "config_update",  // also write operations
+]);
 
 /** File-edit tools that are auto-allowed in acceptEdits mode */
 const ACCEPT_EDITS_AUTO = new Set(["file_write", "file_edit", "multi_edit", "apply_patch"]);
@@ -668,6 +672,15 @@ export class PermissionManager {
     if (!toolDef.requiresPermission) return true;
 
     const toolName   = toolDef.name;
+
+    // Plan mode is an ABSOLUTE override — checked before allow rules,
+    // session approvals, and stored permissions. Nothing bypasses plan mode
+    // except tools not in PLAN_BLOCKED (read-only tools).
+    if (this.mode === PermissionMode.PLAN) return !PLAN_BLOCKED.has(toolName);
+
+    // Explore mode is also absolute
+    if (this.agentType === "explore") return !EXPLORE_BLOCKED.has(toolName);
+
     const ruleResult = this.evaluateRules(toolName, input);
 
     if (ruleResult === "deny") return false;
@@ -701,8 +714,7 @@ export class PermissionManager {
     // Persistent stored rules for Bash tools ("permanently per project + command")
     if (this.hasStoredPermission(toolName, input)) return true;
 
-    if (this.mode === PermissionMode.PLAN)     return !PLAN_BLOCKED.has(toolName);
-    if (this.agentType === "explore")           return !EXPLORE_BLOCKED.has(toolName);
+    // Plan/explore already handled above (absolute override).
     if (this.mode === PermissionMode.DONT_ASK) return false;
 
     if (this.mode === PermissionMode.ACCEPT_EDITS && ACCEPT_EDITS_AUTO.has(toolName)) return true;

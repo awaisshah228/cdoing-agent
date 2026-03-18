@@ -16,7 +16,9 @@ import {
   loadProjectConfig,
   registerToolCategories,
   getOAuthProviders,
+  ShellExecTool,
 } from "@cdoing/core";
+import { ProcessManager, TodoStore } from "@cdoing/core";
 import type { ToolCategory } from "@cdoing/core";
 import {
   AgentRunner,
@@ -49,6 +51,10 @@ interface TabState {
   messageQueue: string[];
   /** Buffered UI messages for when this tab is in the background */
   pendingUiMessages: any[];
+  /** True when a plan is waiting for user approval */
+  planPending: boolean;
+  /** Summary of the current plan (from plan_exit) */
+  planSummary: string;
 }
 
 export class ChatPanelProvider implements vscode.WebviewViewProvider {
@@ -57,6 +63,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private permissionManager?: PermissionManager;
   private hookManager?: HookManager;
   private memoryStore?: MemoryStore;
+  private todoStore?: import("@cdoing/core").TodoStore;
 
   // Multi-tab state
   private tabs = new Map<string, TabState>();
@@ -204,6 +211,11 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           const tab = this.getTab();
           if (tab?.isProcessing) {
             tab.agent.cancel();
+            // Kill all background processes on cancel
+            const shellTool = this.toolRegistry?.get("shell_exec") as ShellExecTool | undefined;
+            if (shellTool?.getProcessManager) {
+              shellTool.getProcessManager().killAll();
+            }
             // Immediately reset processing state so the UI unblocks.
             // The agent's onComplete/onError may also fire, but setting
             // isProcessing=false here is safe (idempotent) and prevents
@@ -366,6 +378,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       isProcessing: false,
       messageQueue: [],
       pendingUiMessages: [],
+      planPending: false,
+      planSummary: "",
     };
 
     this.tabs.set(id, tab);
@@ -576,17 +590,48 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     // Excludes "agents" category since VS Code extension doesn't support sub-agents
     this.toolRegistry = new ToolRegistry();
     const extensionCategories: ToolCategory[] = ["file", "search", "execution", "web", "editing", "viewing", "session", "system"];
+    const processManager = new ProcessManager();
+    const todoStore = new TodoStore();
+    this.todoStore = todoStore;
+    this.memoryStore = this.memoryStore || new MemoryStore(workingDir);
     // registerToolCategories is async but initSharedServices is sync — use void for fire-and-forget
     // The registry will be populated before the first agent run since createAgentRunner checks it
+    // plan_exit callback: show inline approval prompt (like permission prompts)
+    const planExitCallback = (summary: string) => {
+      const tab = this.getTab();
+      if (tab) {
+        tab.planPending = true;
+        tab.planSummary = summary;
+      }
+      // Send short summary for the approval prompt (not the full plan text)
+      const shortSummary = summary.split("\n")[0].substring(0, 100);
+      this.postMessage({ type: "planReady", summary: shortSummary } as any);
+    };
+
     void registerToolCategories(this.toolRegistry, extensionCategories, {
       workingDir,
       sandboxManager: sm,
       permissionManager: this.permissionManager,
+      processManager,
+      todoStore,
+      memoryStore: this.memoryStore,
+      planExitCallback,
     });
 
     // Hooks and memory
     this.hookManager = new HookManager(workingDir);
     this.memoryStore = this.memoryStore || new MemoryStore();
+  }
+
+  /** Rebuild the current tab's agent (preserves conversation history) */
+  private rebuildCurrentAgent(): void {
+    const tab = this.getTab();
+    if (!tab) return;
+    const oldHistory = tab.agent.getHistory();
+    tab.agent = this.createAgentRunner();
+    if (oldHistory.length > 0) {
+      tab.agent.setHistory(oldHistory);
+    }
   }
 
   /** Create a new AgentRunner instance (one per tab) */
@@ -1078,6 +1123,12 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       }
     }
 
+    // Inject plan mode context when in plan mode
+    // This ensures the LLM knows it's read-only even when the user just typed normally
+    if (this.permissionManager?.getMode() === PermissionMode.PLAN) {
+      fullMessage = `[PLAN MODE — Read-only] You are in plan mode. Do NOT write files, run commands, or modify anything. Only read, search, analyze, and create a plan using the todo tool. When your plan is ready, call plan_exit.\n\n${fullMessage}`;
+    }
+
     const tab = this.getTab(requestTabId);
     if (!tab) {
       this.createTab();
@@ -1160,11 +1211,29 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         this.postTabMessage(tabId, { type: "toolProgress", name, chunk } as any);
       },
       onToolResult: (name, result, isError) => {
-        // Send more output (up to 3KB) so the webview can render trimmed IN/OUT
+        let output = result.length > 3000 ? result.substring(0, 3000) + `\n… (${result.length - 3000} more chars)` : result;
+
+        // For todo tool: append the full todo list state so the widget can render it
+        if (name === "todo" && this.todoStore) {
+          const allTodos = this.todoStore.getAll();
+          if (allTodos.length > 0) {
+            const lines: string[] = [output, "", "---TODO_STATE---"];
+            for (const t of allTodos) {
+              const indent = t.parentId ? "  " : "";
+              const icon = t.status === "completed" ? "[x]" : t.status === "in_progress" ? "[~]" : t.status === "blocked" ? "[!]" : "[ ]";
+              const subs = t.subtaskIds?.length > 0 ? ` (${t.subtaskIds.length} subtasks)` : "";
+              lines.push(`${indent}${icon} #${t.id} ${t.subject}${subs}`);
+            }
+            const summary = allTodos.filter(t => t.status === "completed").length;
+            lines.push(`\nSummary: ${summary}/${allTodos.length} completed`);
+            output = lines.join("\n");
+          }
+        }
+
         this.postTabMessage(tabId, {
           type: "toolResult",
           name,
-          result: result.length > 3000 ? result.substring(0, 3000) + `\n… (${result.length - 3000} more chars)` : result,
+          result: output,
           isError,
         });
       },
@@ -1180,6 +1249,19 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
             parts.push(`${totalTokens.toLocaleString()} tokens`);
             if (totalCost > 0) parts.push(`$${totalCost.toFixed(4)}`);
             this.postTabMessage(tabId, { type: "usageInfo", text: parts.join(" · ") });
+          }
+
+          // Kill all background processes spawned during this agent run
+          const shellTool = this.toolRegistry?.get("shell_exec") as ShellExecTool | undefined;
+          if (shellTool?.getProcessManager) {
+            const killed = shellTool.getProcessManager().killAll();
+            if (killed > 0) {
+              this.postTabMessage(tabId, {
+                type: "addMessage",
+                role: "system",
+                content: `[auto-killed ${killed} background process${killed > 1 ? "es" : ""}]`,
+              });
+            }
           }
 
           t.isProcessing = false;
@@ -1512,6 +1594,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           default:                  newMode = PermissionMode.DEFAULT;
         }
         this.permissionManager?.setMode(newMode);
+        this.rebuildCurrentAgent();
+        this.postMessage({ type: "modeChanged", mode: arg } as any);
         this.postMessage({ type: "systemMessage", text: `Mode: **${arg}**` });
         break;
       }
@@ -1575,7 +1659,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         }
         const memories = this.memoryStore?.getAll() || [];
         if (memories.length === 0) { this.postMessage({ type: "systemMessage", text: "No memories." }); }
-        else { this.postMessage({ type: "systemMessage", text: `**Memories:**\n${memories.map((m) => `- **${m.key}** *(${m.category})*: ${m.value}`).join("\n")}` }); }
+        else { this.postMessage({ type: "systemMessage", text: `**Memories:**\n${memories.map((m) => `- **${m.key}** *(${m.type})*: ${m.content}`).join("\n")}` }); }
         break;
       }
 
@@ -1597,6 +1681,86 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         vscode.commands.executeCommand("cdoing.openSettings");
         break;
 
+      case "/plan": {
+        if (!tab) { this.postMessage({ type: "systemMessage", text: "No active tab." }); break; }
+        if (arg === "off" || arg === "cancel") {
+          tab.planPending = false;
+          this.permissionManager?.setMode(PermissionMode.DEFAULT);
+          this.rebuildCurrentAgent();
+          this.postMessage({ type: "modeChanged", mode: "ask" } as any);
+          this.postMessage({ type: "systemMessage", text: "Plan mode cancelled. Switched to **build mode**." });
+          break;
+        }
+        if (arg === "show") {
+          this.postMessage({ type: "systemMessage", text: tab.planSummary ? `**Plan:** ${tab.planSummary}` : "No active plan." });
+          break;
+        }
+        if (arg === "approve" || arg === "yes") {
+          if (!tab.planPending) {
+            this.postMessage({ type: "systemMessage", text: "No plan to approve. Use `/plan <request>` to create one." });
+            break;
+          }
+          tab.planPending = false;
+          this.permissionManager?.setMode(PermissionMode.DEFAULT);
+          this.rebuildCurrentAgent();
+          this.postMessage({ type: "modeChanged", mode: "ask" } as any);
+          this.postMessage({ type: "systemMessage", text: "Plan approved! Switched to **build mode**. Executing..." });
+          const buildMsg = [
+            "[MODE SWITCH: Plan → Build]",
+            "Your operational mode has changed from plan to build.",
+            "You now have full access to write files, run commands, and execute tools.",
+            "",
+            "## Approved Plan",
+            tab.planSummary || "Execute the plan you created.",
+            "",
+            "## Instructions",
+            "Execute the plan step by step. If a step fails, explain why and suggest alternatives.",
+          ].join("\n");
+          this.handleUserMessage(buildMsg);
+          break;
+        }
+        if (arg === "reject" || arg === "no") {
+          tab.planPending = false;
+          this.permissionManager?.setMode(PermissionMode.DEFAULT);
+          this.rebuildCurrentAgent();
+          this.postMessage({ type: "modeChanged", mode: "ask" } as any);
+          this.postMessage({ type: "systemMessage", text: "Plan rejected. Switched to **build mode**." });
+          break;
+        }
+        if (!arg) {
+          const isActive = this.permissionManager?.getMode() === PermissionMode.PLAN;
+          if (isActive) {
+            this.permissionManager?.setMode(PermissionMode.DEFAULT);
+            tab.planPending = false;
+            this.rebuildCurrentAgent();
+            this.postMessage({ type: "modeChanged", mode: "ask" } as any);
+            this.postMessage({ type: "systemMessage", text: "Plan mode **OFF**. Switched to build mode." });
+          } else {
+            this.permissionManager?.setMode(PermissionMode.PLAN);
+            this.rebuildCurrentAgent();
+            this.postMessage({ type: "modeChanged", mode: "plan" } as any);
+            this.postMessage({ type: "systemMessage", text: "Plan mode **ON** (read-only). Send a message to start planning.\nUse `/plan approve` to execute, `/plan reject` to cancel." });
+          }
+          break;
+        }
+        // /plan <request> — enter plan mode and start planning
+        this.permissionManager?.setMode(PermissionMode.PLAN);
+        this.rebuildCurrentAgent();
+        tab.planPending = true;
+        this.postMessage({ type: "modeChanged", mode: "plan" } as any);
+        this.postMessage({ type: "systemMessage", text: "Plan mode **ON** (read-only). Generating plan...\nUse `/plan approve` when ready, `/plan reject` to cancel." });
+        const planMsg = [
+          "[PLAN MODE — Read-only]",
+          "Analyze this request and create a detailed step-by-step implementation plan.",
+          "You are in read-only mode — you can read files, search code, and explore, but CANNOT write or execute.",
+          "When your plan is complete, call plan_exit with a summary.",
+          "",
+          `Request: ${arg}`,
+        ].join("\n");
+        this.handleUserMessage(planMsg);
+        break;
+      }
+
       case "/help":
         this.postMessage({
           type: "systemMessage",
@@ -1615,6 +1779,13 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 - \`/model [name]\` — View/change model
 - \`/provider [name]\` — View/change provider
 - \`/mode [mode]\` — Permission mode
+
+**Plan:**
+- \`/plan <request>\` — Enter plan mode (read-only) and generate a plan
+- \`/plan approve\` — Approve plan and switch to build mode
+- \`/plan reject\` — Reject plan and return to build mode
+- \`/plan show\` — Show current plan
+- \`/plan off\` — Cancel plan mode
 
 **Info:**
 - \`/config\` — Configuration

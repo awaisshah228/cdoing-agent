@@ -38,6 +38,9 @@ const extensionBuild = {
 };
 
 // Bundle 2: React webview — runs in a browser sandbox inside VS Code
+// IMPORTANT: alias react/react-dom to the LOCAL copies to prevent duplicate React instances.
+// Without this, transitive deps (zustand) may resolve React from the workspace root,
+// creating two React copies — which causes "Cannot read properties of null ('useCallback')" crashes.
 const webviewBuild = {
   entryPoints: [path.resolve(__dirname, "src/webview/index.tsx")],
   bundle: true,
@@ -48,6 +51,10 @@ const webviewBuild = {
   sourcemap: true,
   minify: !isWatch,
   loader: { ".css": "css" }, // Extract CSS to dist/webview.css
+  alias: {
+    "react": path.resolve(__dirname, "node_modules/react"),
+    "react-dom": path.resolve(__dirname, "node_modules/react-dom"),
+  },
 };
 
 async function build() {

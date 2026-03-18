@@ -13,6 +13,7 @@ import {
   SubAgentManager,
   ProcessManager,
   TodoStore,
+  MemoryStore,
   SandboxManager,
   PermissionManager,
   FileTimeLock,
@@ -24,6 +25,7 @@ export interface ToolRegistryOptions {
   subAgentManager?: SubAgentManager;
   processManager?: ProcessManager;
   todoStore?: TodoStore;
+  memoryStore?: MemoryStore;
   sandboxManager?: SandboxManager;
   permissionManager?: PermissionManager;
   /** Prompt function for the question tool (provided by CLI or VSCode) */
@@ -63,6 +65,7 @@ export async function createToolRegistry(
     subAgentFactory: options.subAgentFactory,
     subAgentManager: options.subAgentManager,
     todoStore: options.todoStore,
+    memoryStore: options.memoryStore,
     questionPromptFn: options.questionPromptFn,
     planExitCallback: options.planExitCallback,
     diagnosticsCallback: options.diagnosticsCallback,

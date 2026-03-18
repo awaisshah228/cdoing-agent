@@ -11,16 +11,17 @@ import { TodoStore, type TodoStatus } from "../../utils/todo";
 export class TodoTool implements BaseTool {
   definition: ToolDefinition = {
     name: "todo",
-    description: `Manage tasks for the current session. Use this to:
+    description: `Manage tasks and subtasks for the current session. Use this to:
 - Create tasks to track what needs to be done
+- Create subtasks under a parent task to break work into steps
 - Update task status as you work (pending -> in_progress -> completed)
 - Help the user see your progress
 
 Actions:
-- create: Create a new task (returns task ID)
-- update: Update a task's status or details
-- list: Show all tasks
-- delete: Remove a task
+- create: Create a new task or subtask (returns task ID). Use parent_id to create a subtask.
+- update: Update a task's status or details. When all subtasks complete, parent auto-completes.
+- list: Show all tasks with subtask hierarchy
+- delete: Remove a task (also deletes its subtasks)
 
 Always mark tasks as in_progress when starting work, and completed when done.`,
     inputSchema: {
@@ -42,6 +43,10 @@ Always mark tasks as in_progress when starting work, and completed when done.`,
         id: {
           type: "string",
           description: "Task ID (for update/delete)",
+        },
+        parent_id: {
+          type: "string",
+          description: "Parent task ID — creates this as a subtask of the parent (for create)",
         },
         status: {
           type: "string",
@@ -66,10 +71,17 @@ Always mark tasks as in_progress when starting work, and completed when done.`,
           return { success: false, output: "", error: "Subject is required for create" };
         }
         const description = input.description as string | undefined;
-        const todo = this.todoStore.create(subject, description);
+        const parentId = input.parent_id as string | undefined;
+
+        if (parentId && !this.todoStore.get(parentId)) {
+          return { success: false, output: "", error: `Parent task #${parentId} not found` };
+        }
+
+        const todo = this.todoStore.create(subject, description, parentId);
+        const prefix = parentId ? `Created subtask #${todo.id} under #${parentId}` : `Created task #${todo.id}`;
         return {
           success: true,
-          output: `Created task #${todo.id}: ${todo.subject}`,
+          output: `${prefix}: ${todo.subject}`,
         };
       }
 
@@ -101,16 +113,15 @@ Always mark tasks as in_progress when starting work, and completed when done.`,
       }
 
       case "list": {
-        const todos = this.todoStore.getAll();
-        if (todos.length === 0) {
+        const topLevel = this.todoStore.getAll(true);
+        if (topLevel.length === 0) {
           return { success: true, output: "No tasks" };
         }
 
-        const lines = todos.map(t => {
-          const icon = this.getStatusIcon(t.status);
-          const desc = t.description ? ` - ${t.description}` : "";
-          return `${icon} #${t.id} [${t.status}] ${t.subject}${desc}`;
-        });
+        const lines: string[] = [];
+        for (const t of topLevel) {
+          lines.push(...this.formatTodoTree(t, 0));
+        }
 
         const summary = this.todoStore.getSummary();
         lines.push("");
@@ -145,5 +156,21 @@ Always mark tasks as in_progress when starting work, and completed when done.`,
       case "completed": return "[x]";
       case "blocked": return "[!]";
     }
+  }
+
+  /** Format a todo and its subtasks as an indented tree */
+  private formatTodoTree(todo: import("../../utils/todo").TodoItem, depth: number): string[] {
+    const indent = "  ".repeat(depth);
+    const icon = this.getStatusIcon(todo.status);
+    const desc = todo.description ? ` - ${todo.description}` : "";
+    const subtaskCount = todo.subtaskIds.length > 0 ? ` (${todo.subtaskIds.length} subtasks)` : "";
+    const lines: string[] = [`${indent}${icon} #${todo.id} [${todo.status}] ${todo.subject}${desc}${subtaskCount}`];
+
+    // Render subtasks indented
+    for (const subtask of this.todoStore.getSubtasks(todo.id)) {
+      lines.push(...this.formatTodoTree(subtask, depth + 1));
+    }
+
+    return lines;
   }
 }

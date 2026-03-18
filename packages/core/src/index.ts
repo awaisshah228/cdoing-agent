@@ -51,6 +51,9 @@ export type { QuestionPromptFn, QuestionOption } from "./tools/session/question"
 export { SkillTool } from "./tools/session/skill";
 export { PlanExitTool } from "./tools/session/plan-exit";
 export type { PlanExitCallback } from "./tools/session/plan-exit";
+export { TaskCompleteTool } from "./tools/session/task-complete";
+export type { TaskCompleteCallback } from "./tools/session/task-complete";
+export { MemoryTool } from "./tools/session/memory";
 
 // Tools — System
 export { SystemInfoTool } from "./tools/system/system-info";
@@ -110,7 +113,7 @@ export { safePath } from "./utils/path-safety";
 export { loadIgnorePatterns } from "./utils/gitignore";
 export { loadProjectConfig, getProjectConfigPath } from "./utils/project-config";
 export { MemoryStore } from "./utils/memory";
-export type { MemoryEntry } from "./utils/memory";
+export type { MemoryEntry, MemoryType } from "./utils/memory";
 export { TodoStore } from "./utils/todo";
 export type { TodoItem, TodoStatus } from "./utils/todo";
 

@@ -61,6 +61,12 @@ interface ChatState {
     hasProject: boolean;
   } | null;
 
+  // Agent mode (plan vs build)
+  agentMode: "build" | "plan";
+
+  // Plan approval prompt (shown inline like permission prompts)
+  planApproval: { summary: string; filePath?: string } | null;
+
   // OAuth status (captured from extension host, survives SettingsPanel mount/unmount)
   oauthStatus: "none" | "active" | "expired";
   oauthExpiresAt: number | undefined;
@@ -102,9 +108,13 @@ interface ChatActions {
   saveSettings: (config: Partial<ExtensionConfig>) => void;
   openVscodeSettings: () => void;
   switchModel: (model: string) => void;
+  toggleMode: () => void;
 
   // Permissions
   respondToPermission: (decision: string) => void;
+
+  // Plan approval
+  respondToPlanApproval: (decision: "approve" | "reject") => void;
 
   // Message handler
   handleMessage: (msg: IncomingMessage) => void;
@@ -223,6 +233,8 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
     showSettings: false,
     extensionConfig: null,
     permissionRequest: null,
+    agentMode: "build",
+    planApproval: null,
     oauthStatus: "none",
     oauthExpiresAt: undefined,
 
@@ -426,6 +438,12 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
       set({ modelLabel: model });
     },
 
+    toggleMode: () => {
+      const current = get().agentMode;
+      const next = current === "plan" ? "default" : "plan";
+      getVsCode().postMessage({ type: "command", command: "/mode", args: [next] });
+    },
+
     // ── Permissions ─────────────────────────────────
 
     respondToPermission: (decision) => {
@@ -433,6 +451,11 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
       if (!req) return;
       getVsCode().postMessage({ type: "permissionResponse", id: req.id, decision });
       set({ permissionRequest: null });
+    },
+
+    respondToPlanApproval: (decision) => {
+      set({ planApproval: null });
+      getVsCode().postMessage({ type: "command", command: "/plan", args: [decision] });
     },
 
     // ── Message Handler ─────────────────────────────
@@ -524,6 +547,10 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
           });
           break;
 
+        case "modeChanged":
+          set({ agentMode: (msg as any).mode === "plan" ? "plan" : "build" });
+          break;
+
         // ── Tab messages ────────────────────────────
 
         case "tabCreated":
@@ -587,6 +614,15 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
               toolName: (msg as any).toolName,
               message: (msg as any).message,
               hasProject: (msg as any).hasProject,
+            },
+          });
+          break;
+
+        case "planReady":
+          set({
+            planApproval: {
+              summary: (msg as any).summary || "Plan is ready",
+              filePath: (msg as any).filePath,
             },
           });
           break;

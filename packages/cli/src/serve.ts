@@ -78,7 +78,7 @@ export async function startServer(opts: ServeOptions): Promise<void> {
   const modelConfig = buildModelConfig(cliOpts);
   const permissionManager = createPermissionManager(cliOpts);
   const hookManager = new HookManager(opts.dir);
-  const memoryStore = new MemoryStore();
+  const memoryStore = new MemoryStore(opts.dir);
   const projectConfig = loadProjectConfig(opts.dir);
 
   const agentOptions = {

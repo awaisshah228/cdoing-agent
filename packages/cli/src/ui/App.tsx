@@ -27,6 +27,8 @@ import type {
   HookManager,
   MemoryStore,
   TodoStore,
+  SubAgentManager,
+  ProcessManager,
 } from "@cdoing/core";
 import { ShellExecTool } from "@cdoing/core";
 
@@ -50,6 +52,8 @@ export interface AppProps {
   hookManager: HookManager;
   memoryStore: MemoryStore;
   todoStore?: TodoStore;
+  subAgentManager?: SubAgentManager;
+  processManager?: ProcessManager;
   initialPrompt?: string;
 }
 
@@ -60,6 +64,8 @@ export const App: React.FC<AppProps> = ({
   hookManager,
   memoryStore,
   todoStore,
+  subAgentManager,
+  processManager,
   initialPrompt,
 }) => {
   const { exit } = useApp();
@@ -94,6 +100,8 @@ export const App: React.FC<AppProps> = ({
     hookManager,
     memoryStore,
     todoStore,
+    subAgentManager,
+    processManager,
   });
 
   // Track when processing starts for the ActionStatus timer

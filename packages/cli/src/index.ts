@@ -7,7 +7,7 @@
 
 import { Command } from "commander";
 import { AgentRunner } from "@cdoing/ai";
-import { HookManager, loadProjectConfig, MemoryStore, TodoStore } from "@cdoing/core";
+import { HookManager, loadProjectConfig, MemoryStore, TodoStore, SubAgentManager, ProcessManager } from "@cdoing/core";
 import { ChatInterface } from "./chat";
 import { buildModelConfig, createPermissionManager, resolveApiKey, type CLIOptions } from "./config";
 import { createToolRegistry } from "./tools";
@@ -131,7 +131,7 @@ async function run(prompt: string | undefined, options: CLIOptions) {
   const modelConfig = buildModelConfig(options);
   const permissionManager = createPermissionManager(options);
   const hookManager = new HookManager(options.dir);
-  const memoryStore = new MemoryStore();
+  const memoryStore = new MemoryStore(options.dir);
   const todoStore = new TodoStore();
   const projectConfig = loadProjectConfig(options.dir);
 
@@ -150,11 +150,28 @@ async function run(prompt: string | undefined, options: CLIOptions) {
     agentOptions.maxTurns = parseInt(options.maxTurns, 10);
   }
 
+  const subAgentManager = new SubAgentManager();
+  const processManager = new ProcessManager();
+
   const subAgentFactory = createSubAgentFactory(
     modelConfig, options.dir, permissionManager, hookManager, agentOptions,
   );
 
-  let toolRegistry = await createToolRegistry(options.dir, { subAgentFactory, todoStore });
+  // plan_exit callback: show approval prompt to user
+  const planExitCallback = (summary: string) => {
+    console.log();
+    console.log(chalk.bold.cyan("  ╔══════════════════════════════════════════════╗"));
+    console.log(chalk.bold.cyan("  ║  📋 Plan Ready for Review                   ║"));
+    console.log(chalk.bold.cyan("  ╚══════════════════════════════════════════════╝"));
+    console.log(chalk.dim(`  ${summary}`));
+    console.log();
+    console.log(chalk.green("  /plan approve") + chalk.dim("  — approve and start building"));
+    console.log(chalk.red("  /plan reject") + chalk.dim("   — reject the plan"));
+    console.log(chalk.blue("  /plan show") + chalk.dim("     — review plan details"));
+    console.log();
+  };
+
+  let toolRegistry = await createToolRegistry(options.dir, { subAgentFactory, subAgentManager, processManager, todoStore, memoryStore, planExitCallback });
 
   // Handle tool filtering
   if (options.allowedTools) {
@@ -193,7 +210,7 @@ async function run(prompt: string | undefined, options: CLIOptions) {
   }
 
   if (prompt) {
-    const agent = new AgentRunner(modelConfig, toolRegistry, permissionManager, hookManager, agentOptions);
+    const agent = new AgentRunner(modelConfig, toolRegistry, permissionManager, hookManager, { ...agentOptions, subAgentManager, processManager });
 
     // Restore history from resumed conversation
     if (resumedConversation) {
@@ -220,7 +237,7 @@ async function run(prompt: string | undefined, options: CLIOptions) {
 
     await agent.run(prompt, callbacks);
   } else {
-    const chat = new ChatInterface(modelConfig, toolRegistry, permissionManager, hookManager, memoryStore, todoStore);
+    const chat = new ChatInterface(modelConfig, toolRegistry, permissionManager, hookManager, memoryStore, todoStore, subAgentManager, processManager);
     await chat.start();
   }
 }

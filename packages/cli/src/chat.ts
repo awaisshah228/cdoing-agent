@@ -22,6 +22,8 @@ import type {
   HookManager,
   MemoryStore,
   TodoStore,
+  SubAgentManager,
+  ProcessManager,
 } from "@cdoing/core";
 import { App } from "./ui/App";
 import { printWelcome } from "./help";
@@ -34,6 +36,8 @@ export class ChatInterface {
   private hookManager: HookManager;
   private memoryStore: MemoryStore;
   private todoStore: TodoStore | null;
+  private subAgentManager: SubAgentManager | null;
+  private processManager: ProcessManager | null;
 
   constructor(
     modelConfig: Partial<ModelConfig>,
@@ -42,6 +46,8 @@ export class ChatInterface {
     hookManager: HookManager,
     memoryStore: MemoryStore,
     todoStore?: TodoStore,
+    subAgentManager?: SubAgentManager,
+    processManager?: ProcessManager,
   ) {
     this.modelConfig = modelConfig;
     this.toolRegistry = toolRegistry;
@@ -49,6 +55,8 @@ export class ChatInterface {
     this.hookManager = hookManager;
     this.memoryStore = memoryStore;
     this.todoStore = todoStore || null;
+    this.subAgentManager = subAgentManager || null;
+    this.processManager = processManager || null;
   }
 
   async start(initialPrompt?: string): Promise<void> {
@@ -72,6 +80,8 @@ export class ChatInterface {
         hookManager: this.hookManager,
         memoryStore: this.memoryStore,
         todoStore: this.todoStore || undefined,
+        subAgentManager: this.subAgentManager || undefined,
+        processManager: this.processManager || undefined,
         initialPrompt,
       }),
     );

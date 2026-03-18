@@ -19,6 +19,7 @@ export type IncomingMessage =
   | { type: "startResponse" }                                          // Agent started processing
   | { type: "token"; text: string }                                    // One streamed token from the LLM
   | { type: "toolCall"; name: string; input: string; description?: string } // Agent is invoking a tool
+  | { type: "toolProgress"; name: string; chunk: string }                // Streaming tool output (e.g. shell_exec)
   | { type: "toolResult"; name: string; result: string; isError: boolean } // Tool finished
   | { type: "endResponse" }                                            // Agent done, no more tokens
   | { type: "finalizeStreaming" }                                        // Finalize current streaming message so next tokens start a new message
@@ -40,7 +41,9 @@ export type IncomingMessage =
   | { type: "permissionRequest"; id: string; toolName: string; message: string; hasProject: boolean } // Permission prompt
   | { type: "oauthStatus"; status: "none" | "active" | "expired"; expiresAt?: number }  // OAuth status update
   | { type: "oauthStarted"; url: string }                                                // OAuth flow started, browser opened
-  | { type: "oauthResult"; success: boolean; error?: string };                           // OAuth exchange result
+  | { type: "oauthResult"; success: boolean; error?: string }                            // OAuth exchange result
+  | { type: "modeChanged"; mode: string }                                                // Permission mode changed (plan, ask, auto, etc.)
+  | { type: "planReady"; summary: string; filePath?: string };                             // Plan complete, waiting for user approval
 
 // ─── Messages FROM webview TO extension host ───
 

@@ -29,7 +29,7 @@
 import { useRef } from "react";
 import { AgentRunner } from "@cdoing/ai";
 import type { ModelConfig } from "@cdoing/ai";
-import type { ToolRegistry, HookManager, MemoryStore, PermissionManager } from "@cdoing/core";
+import type { ToolRegistry, HookManager, MemoryStore, PermissionManager, SubAgentManager, ProcessManager } from "@cdoing/core";
 import {
   loadProjectConfig,
   PlanManager,
@@ -56,6 +56,8 @@ export interface UseAgentOptions {
   permissionManager: PermissionManager;
   hookManager:       HookManager;
   memoryStore:       MemoryStore;
+  subAgentManager?:  SubAgentManager;
+  processManager?:   ProcessManager;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -89,7 +91,7 @@ export function useAgent(opts: UseAgentOptions) {
   // can query them synchronously inside buildAgent() without going through state.
 
   /** Plan mode: the agent proposes a plan before executing */
-  const planManagerRef = useRef(new PlanManager());
+  const planManagerRef = useRef(new PlanManager(process.cwd()));
 
   /** Project-specific rules loaded from .cdoing/rules.md */
   const rulesManagerRef = useRef(new RulesManager(process.cwd()));
@@ -151,6 +153,8 @@ export function useAgent(opts: UseAgentOptions) {
         workingDir:    dir,
         projectConfig: systemPrompt || undefined,
         memory:        opts.memoryStore.formatForPrompt() || undefined,
+        subAgentManager: opts.subAgentManager,
+        processManager:  opts.processManager,
       },
     );
   }
@@ -161,7 +165,12 @@ export function useAgent(opts: UseAgentOptions) {
    */
   function rebuildAgent(): void {
     try {
+      // Preserve conversation history across rebuilds
+      const oldHistory = agentRef.current?.getHistory() || [];
       agentRef.current = buildAgentInternal();
+      if (oldHistory.length > 0) {
+        agentRef.current.setHistory(oldHistory);
+      }
     } catch (err) {
       // Don't crash — agentRef keeps the previous agent (or null).
       // The error will surface as a friendly message on the next send.

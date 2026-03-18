@@ -1,8 +1,14 @@
 /**
- * Plan Exit Tool — switch from plan mode to build mode.
+ * Plan Exit Tool — signal that planning is complete.
  *
- * Used by the agent in plan mode to signal it's ready to start executing.
- * The agent-runner listens for this and switches modes.
+ * Does NOT auto-switch to build mode. Instead:
+ *   1. LLM calls plan_exit when done planning
+ *   2. The callback notifies the UI that the plan is ready for review
+ *   3. User reviews the plan and types /plan approve
+ *   4. Only then does the system switch to build mode
+ *
+ * This follows OpenCode's pattern where plan_exit shows a
+ * "Would you like to switch to build agent?" dialog.
  */
 
 import type { BaseTool, ToolDefinition, ToolResult } from "../types";
@@ -13,19 +19,20 @@ export class PlanExitTool implements BaseTool {
   definition: ToolDefinition = {
     name: "plan_exit",
     description:
-      "Exit plan mode and switch to build mode. Use this when you have finished planning and are ready to start implementing. Requires user confirmation.",
+      "Signal that your plan is complete and ready for user review. " +
+      "This does NOT immediately switch to build mode — the user must approve the plan first. " +
+      "Provide a summary of the plan you created.",
     inputSchema: {
       type: "object",
       properties: {
-        reason: {
+        summary: {
           type: "string",
-          description: "Brief explanation of why you're ready to switch from planning to building",
+          description: "Brief summary of the plan that's ready for review",
         },
       },
-      required: ["reason"],
+      required: ["summary"],
     },
-    requiresPermission: true,
-    permissionMessage: (input) => `Exit plan mode: ${input.reason}`,
+    requiresPermission: false,
   };
 
   private onPlanExit: PlanExitCallback;
@@ -35,17 +42,27 @@ export class PlanExitTool implements BaseTool {
   }
 
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
-    const reason = String(input.reason || "Ready to implement");
+    const summary = String(input.summary || "Plan is ready for review");
 
     try {
-      this.onPlanExit(reason);
+      this.onPlanExit(summary);
       return {
         success: true,
-        output: `Switched from plan mode to build mode. Reason: ${reason}`,
+        output: [
+          `Plan complete: ${summary}`,
+          "",
+          "The plan is now waiting for user approval.",
+          "The user can:",
+          "  /plan approve  — approve and start building",
+          "  /plan reject   — reject the plan",
+          "  /plan show     — review the plan details",
+          "",
+          "Do NOT proceed with any changes until the user approves.",
+        ].join("\n"),
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      return { success: false, output: "", error: `Failed to exit plan mode: ${message}` };
+      return { success: false, output: "", error: `Failed to signal plan completion: ${message}` };
     }
   }
 }
