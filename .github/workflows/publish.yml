@@ -7,7 +7,6 @@ on:
       - 'packages/core/**'
       - 'packages/ai/**'
       - 'packages/cli/**'
-      - 'packages/opentuicli/**'
     tags:
       - 'v*'
   workflow_dispatch:
@@ -20,7 +19,6 @@ on:
           - core
           - ai
           - cli
-          - opentuicli
           - all
       dry_run:
         description: 'Dry run (no actual publish)'
@@ -35,7 +33,6 @@ jobs:
       core_changed: ${{ steps.check_versions.outputs.core_changed }}
       ai_changed: ${{ steps.check_versions.outputs.ai_changed }}
       cli_changed: ${{ steps.check_versions.outputs.cli_changed }}
-      opentui_changed: ${{ steps.check_versions.outputs.opentui_changed }}
     steps:
       - uses: actions/checkout@v4
 
@@ -63,7 +60,6 @@ jobs:
           check_pkg "@cdoing/core" "packages/core" "core"
           check_pkg "@cdoing/ai" "packages/ai" "ai"
           check_pkg "@cdoing/cli" "packages/cli" "cli"
-          check_pkg "@cdoing/opentuicli" "packages/opentuicli" "opentui"
 
       - name: Install dependencies
         run: yarn install --ignore-engines
@@ -79,7 +75,6 @@ jobs:
             packages/core/dist
             packages/ai/dist
             packages/cli/dist
-            packages/opentuicli/dist
 
   # Step 1: @cdoing/core (no internal deps)
   publish-core:
@@ -146,7 +141,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-  # Step 3a: @cdoing/cli (depends on core + ai)
+  # Step 3: @cdoing/cli (depends on core + ai)
   publish-cli:
     needs: [build, publish-ai]
     runs-on: ubuntu-latest
@@ -171,40 +166,6 @@ jobs:
           path: packages
       - name: Publish @cdoing/cli
         working-directory: packages/cli
-        run: |
-          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
-            npm publish --access public --dry-run
-          else
-            npm publish --access public
-          fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-  # Step 3b: @cdoing/opentuicli (depends on core + ai, parallel with cli)
-  publish-opentui:
-    needs: [build, publish-ai]
-    runs-on: ubuntu-latest
-    if: |
-      always() &&
-      needs.build.result == 'success' &&
-      needs.build.outputs.opentui_changed == 'true' &&
-      (needs.publish-ai.result == 'success' || needs.publish-ai.result == 'skipped') &&
-      (github.event_name == 'push' ||
-       github.event.inputs.package == 'opentuicli' ||
-       github.event.inputs.package == 'all')
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          registry-url: https://registry.npmjs.org
-      - run: yarn install --ignore-engines
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: packages
-      - name: Publish @cdoing/opentuicli
-        working-directory: packages/opentuicli
         run: |
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
             npm publish --access public --dry-run

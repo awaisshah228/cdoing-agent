@@ -48,9 +48,6 @@ jobs:
           - os: macos-latest
             platform: darwin
             arch: arm64
-          - os: macos-13
-            platform: darwin
-            arch: x64
           - os: windows-latest
             platform: win32
             arch: x64
@@ -113,10 +110,8 @@ jobs:
             const pkg = require('./package.json');
             pkg.optionalDependencies = {
               '@cdoing/opentuicli-darwin-arm64': '$VERSION',
-              '@cdoing/opentuicli-darwin-x64': '$VERSION',
               '@cdoing/opentuicli-linux-arm64': '$VERSION',
               '@cdoing/opentuicli-linux-x64': '$VERSION',
-              '@cdoing/opentuicli-windows-arm64': '$VERSION',
               '@cdoing/opentuicli-windows-x64': '$VERSION'
             };
             require('fs').writeFileSync('./package.json', JSON.stringify(pkg, null, 2) + '\n');
