@@ -35,8 +35,8 @@ pkg.optionalDependencies = {
 }
 
 // Main package should be lightweight — binaries come from platform packages.
-// Only ship the bin script (which finds and runs the platform binary).
-pkg.files = ["bin/"]
+// Ship the bin script and postinstall (which links the platform binary for fast launches).
+pkg.files = ["bin/", "postinstall.mjs"]
 
 fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n")
 console.log(`Injected optionalDependencies for v${version}`)

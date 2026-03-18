@@ -25,6 +25,12 @@ if (envPath) {
 const scriptPath = fs.realpathSync(__filename)
 const scriptDir = path.dirname(scriptPath)
 
+// Check for hard-linked binary from postinstall
+const localBinary = path.join(scriptDir, ".cdoing-tui")
+if (fs.existsSync(localBinary)) {
+  run(localBinary)
+}
+
 const platformMap = {
   darwin: "darwin",
   linux: "linux",

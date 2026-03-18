@@ -100,6 +100,8 @@ const targets = singleFlag
 // Clean dist
 fs.rmSync(path.join(dir, "dist"), { recursive: true, force: true })
 
+const binaries: Record<string, string> = {}
+
 for (const item of targets) {
   const name = [
     "cdoing-tui",
@@ -137,6 +139,22 @@ for (const item of targets) {
     process.exit(1)
   }
 
+  // Write per-platform package.json with os/cpu fields for npm
+  fs.writeFileSync(
+    path.join(dir, "dist", name, "package.json"),
+    JSON.stringify(
+      {
+        name: `@cdoing/${name}`,
+        version: pkg.version,
+        os: [item.os],
+        cpu: [item.arch],
+      },
+      null,
+      2,
+    ),
+  )
+
+  binaries[`@cdoing/${name}`] = pkg.version
   console.log(`  -> dist/${name}/bin/cdoing-tui`)
 
   // For --single builds, also create a "current" symlink for easy access
@@ -148,3 +166,5 @@ for (const item of targets) {
 }
 
 console.log("Build complete.")
+
+export { binaries }
