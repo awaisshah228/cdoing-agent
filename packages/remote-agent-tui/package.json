@@ -1,6 +1,6 @@
 {
   "name": "@cdoing/remote-agent-tui",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OpenTUI-based terminal interface for cdoing remote coding agent",
   "type": "module",
   "main": "dist/index.js",
