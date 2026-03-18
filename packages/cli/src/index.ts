@@ -244,6 +244,7 @@ async function run(prompt: string | undefined, options: CLIOptions) {
     }
 
     await agent.run(prompt, callbacks);
+    process.exit(0);
   } else {
     const chat = new ChatInterface(modelConfig, toolRegistry, permissionManager, hookManager, memoryStore, todoStore, subAgentManager, processManager);
     await chat.start();

@@ -2,7 +2,9 @@ import React, { useState, useCallback, useRef } from "react";
 import { Box, Text, useInput } from "ink";
 import * as fs from "fs";
 import * as path from "path";
-import { execSync } from "child_process";
+import { exec } from "child_process";
+import { promisify } from "util";
+const execAsync = promisify(exec);
 import { getTheme } from "./theme";
 import type { ImageAttachment } from "@cdoing/ai";
 
@@ -703,59 +705,85 @@ export const UserInput: React.FC<UserInputProps> = ({
       return;
     }
 
-    // Ctrl+V — paste from clipboard (text or image)
+    // Ctrl+V — paste from clipboard (text or image, cross-platform, non-blocking)
     if (key.ctrl && char === "v") {
-      try {
-        // First, try to get clipboard image (macOS only for now)
-        if (process.platform === "darwin") {
+      (async () => {
+        try {
+          // First, try to get clipboard image
           try {
-            // Check if clipboard has image data
-            const hasImage = execSync(
-              `osascript -e 'clipboard info' 2>/dev/null | grep -q "TIFF\\|PNG\\|JPEG"  && echo "yes" || echo "no"`,
-              { encoding: "utf-8", timeout: 1000 },
-            ).trim();
-
-            if (hasImage === "yes") {
-              // Extract clipboard image as PNG base64
-              const base64 = execSync(
-                `osascript -e 'set theImage to the clipboard as «class PNGf»' -e 'return theImage' 2>/dev/null | base64`,
-                { encoding: "utf-8", timeout: 3000, maxBuffer: 20 * 1024 * 1024 },
-              ).trim();
-
-              if (base64 && base64.length > 100) {
-                imageCountRef.current += 1;
-                setPendingImages((prev) => [...prev, { data: base64, mimeType: "image/png" }]);
-                const placeholder = `[Image #${imageCountRef.current} pasted]`;
-                const next = input + placeholder;
-                setInput(next);
-                updateAll(next, history);
-                return;
+            let imgBase64: string | null = null;
+            if (process.platform === "darwin") {
+              const { stdout: hasImage } = await execAsync(
+                `osascript -e 'clipboard info' 2>/dev/null | grep -q "TIFF\\|PNG\\|JPEG" && echo "yes" || echo "no"`,
+                { encoding: "utf-8", timeout: 1000 },
+              );
+              if (hasImage.trim() === "yes") {
+                const tmpFile = `/tmp/cdoing_clip_${Date.now()}.png`;
+                await execAsync(
+                  `osascript -e 'set theFile to POSIX file "${tmpFile}"' -e 'set theImage to the clipboard as «class PNGf»' -e 'set fp to open for access theFile with write permission' -e 'write theImage to fp' -e 'close access fp' 2>/dev/null`,
+                  { encoding: "utf-8", timeout: 3000 },
+                );
+                const { stdout } = await execAsync(
+                  `base64 < "${tmpFile}" && rm -f "${tmpFile}"`,
+                  { encoding: "utf-8", timeout: 3000, maxBuffer: 20 * 1024 * 1024 },
+                );
+                imgBase64 = stdout.trim();
               }
+            } else if (process.platform === "win32") {
+              const script = `Add-Type -AssemblyName System.Windows.Forms; $img = [System.Windows.Forms.Clipboard]::GetImage(); if ($img) { $ms = New-Object System.IO.MemoryStream; $img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png); [Convert]::ToBase64String($ms.ToArray()) }`;
+              const { stdout } = await execAsync(
+                `powershell.exe -NonInteractive -NoProfile -Command "${script.replace(/"/g, '\\"')}"`,
+                { encoding: "utf-8", timeout: 5000, maxBuffer: 20 * 1024 * 1024 },
+              );
+              imgBase64 = stdout.trim();
+            }
+            if (imgBase64 && imgBase64.length > 100) {
+              imageCountRef.current += 1;
+              setPendingImages((prev) => [...prev, { data: imgBase64!, mimeType: "image/png" }]);
+              const placeholder = `[Image #${imageCountRef.current} pasted]`;
+              const next = input + placeholder;
+              setInput(next);
+              updateAll(next, history);
+              return;
             }
           } catch { /* not an image, fall through to text paste */ }
-        }
 
-        // Fall back to text paste
-        let pasted = "";
-        try {
-          pasted = execSync("pbpaste", { encoding: "utf-8", timeout: 500 }).trim();
-        } catch {
+          // Fall back to text paste (cross-platform)
+          let pasted = "";
           try {
-            pasted = execSync("xclip -o -selection clipboard", { encoding: "utf-8", timeout: 500 }).trim();
-          } catch {
-            try {
-              pasted = execSync("xsel -ob", { encoding: "utf-8", timeout: 500 }).trim();
-            } catch { /* no clipboard tool */ }
-          }
-        }
+            if (process.platform === "darwin") {
+              const { stdout } = await execAsync("pbpaste", { encoding: "utf-8", timeout: 500 });
+              pasted = stdout.trim();
+            } else if (process.platform === "win32") {
+              const { stdout } = await execAsync('powershell.exe -NonInteractive -NoProfile -Command "Get-Clipboard"', { encoding: "utf-8", timeout: 500 });
+              pasted = stdout.replace(/\r\n/g, "\n").trim();
+            } else {
+              // Linux — try Wayland first, then X11
+              try {
+                const { stdout } = await execAsync("wl-paste --no-newline 2>/dev/null", { encoding: "utf-8", timeout: 500 });
+                pasted = stdout.trim();
+              } catch {
+                try {
+                  const { stdout } = await execAsync("xclip -o -selection clipboard", { encoding: "utf-8", timeout: 500 });
+                  pasted = stdout.trim();
+                } catch {
+                  try {
+                    const { stdout } = await execAsync("xsel -ob", { encoding: "utf-8", timeout: 500 });
+                    pasted = stdout.trim();
+                  } catch {}
+                }
+              }
+            }
+          } catch {}
 
-        if (pasted) {
-          const cleaned = pasted.replace(/\n/g, " ").replace(/\r/g, "");
-          const next = input + cleaned;
-          setInput(next);
-          updateAll(next, history);
-        }
-      } catch { /* skip on any error */ }
+          if (pasted) {
+            const cleaned = pasted.replace(/\n/g, " ").replace(/\r/g, "");
+            const next = input + cleaned;
+            setInput(next);
+            updateAll(next, history);
+          }
+        } catch { /* skip on any error */ }
+      })();
       return;
     }
 
