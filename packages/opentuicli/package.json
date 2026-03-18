@@ -14,7 +14,7 @@
     "postinstall.mjs"
   ],
   "scripts": {
-    "build": "bun run build.ts --single",
+    "build:single": "bun run build.ts --single",
     "build:dev": "bun run build.ts --single && node postinstall.mjs",
     "build:all": "bun run build.ts",
     "typecheck": "tsc --noEmit",
