@@ -9,18 +9,15 @@
     "cdoing-tui": "dist/cdoing-tui-current/bin/cdoing-tui"
   },
   "files": [
-    "postinstall.mjs"
+    "dist/"
   ],
   "scripts": {
     "build": "bun run build.ts --single",
     "build:all": "bun run build.ts",
-    "postinstall": "node postinstall.mjs",
     "typecheck": "tsc --noEmit",
     "dev": "bun --watch src/index.ts",
     "start": "./dist/cdoing-tui-current/bin/cdoing-tui",
-    "clean": "rm -rf dist",
-    "publish:platform": "node scripts/publish-platform.mjs",
-    "publish:main": "node scripts/publish-main.mjs"
+    "clean": "rm -rf dist"
   },
   "devDependencies": {
     "@cdoing/ai": "*",
