@@ -32,7 +32,7 @@ cdoing-tui --provider openrouter --model anthropic/claude-sonnet-4
 
 ## How It Works
 
-The published package includes a **standalone compiled binary** with the Bun runtime embedded — no Bun, Node.js, or any runtime needed to run it. This is the same approach used by [opencode](https://github.com/opencode-ai/opencode).
+The published package includes a **standalone compiled binary** with the Bun runtime embedded — no Bun, Node.js, or any runtime needed to run it. Install with any package manager (`npm`, `yarn`, `pnpm`, or `bun`). This is the same approach used by [opencode](https://github.com/opencode-ai/opencode).
 
 For development, you need [Bun](https://bun.sh) to build from source:
 
