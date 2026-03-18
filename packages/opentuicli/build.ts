@@ -122,7 +122,7 @@ for (const item of targets) {
       autoloadTsconfig: true,
       autoloadPackageJson: true,
       target: `bun-${item.os}-${item.arch}` as any,
-      outfile: path.join(outdir, "cdoing-tui"),
+      outfile: path.join(outdir, item.os === "win32" ? "cdoing-tui.exe" : "cdoing-tui"),
     },
     define: {
       CDOING_TUI_VERSION: `'${pkg.version}'`,
