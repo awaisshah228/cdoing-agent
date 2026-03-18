@@ -14,9 +14,10 @@
   ],
   "scripts": {
     "build": "bun run build.ts --single",
+    "build:dev": "bun run build.ts --single && node postinstall.mjs",
     "build:all": "bun run build.ts",
     "typecheck": "tsc --noEmit",
-    "dev": "bun --watch src/index.ts",
+    "dev": "bun --preload ./preload.ts --watch src/index.ts",
     "start": "./dist/cdoing-tui-current/bin/cdoing-tui",
     "clean": "rm -rf dist"
   },
