@@ -52,8 +52,8 @@ const webviewBuild = {
   minify: !isWatch,
   loader: { ".css": "css" }, // Extract CSS to dist/webview.css
   alias: {
-    "react": path.resolve(__dirname, "node_modules/react"),
-    "react-dom": path.resolve(__dirname, "node_modules/react-dom"),
+    "react": path.dirname(require.resolve("react/package.json")),
+    "react-dom": path.dirname(require.resolve("react-dom/package.json")),
   },
 };
 

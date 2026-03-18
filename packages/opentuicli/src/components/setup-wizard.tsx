@@ -12,6 +12,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { execSync } from "child_process";
+import open from "open";
 import { TextAttributes } from "@opentui/core";
 import { useState, useRef, useEffect } from "react";
 import { useKeyboard } from "@opentui/react";
@@ -79,12 +80,7 @@ function readClipboard(): string {
 }
 
 function openBrowser(url: string): void {
-  try {
-    const cmd = process.platform === "darwin" ? `open "${url}"`
-      : process.platform === "win32" ? `start "" "${url}"`
-      : `xdg-open "${url}"`;
-    execSync(cmd, { stdio: "ignore", timeout: 3000 });
-  } catch { /* browser open is best-effort */ }
+  open(url).catch(() => {});
 }
 
 export function SetupWizard(props: SetupWizardProps) {
@@ -109,6 +105,7 @@ export function SetupWizard(props: SetupWizardProps) {
 
   // OAuth state
   const [oauthUrl, setOauthUrl] = useState("");
+  const [consoleUrl, setConsoleUrl] = useState("");
   const [oauthVerifier, setOauthVerifier] = useState("");
   const [oauthCodeInput, setOauthCodeInput] = useState("");
   const [showCode, setShowCode] = useState(false);
@@ -118,17 +115,23 @@ export function SetupWizard(props: SetupWizardProps) {
   const provider = PROVIDERS[selectedProvider];
   const models = authMethod === "oauth" ? getOAuthModels(chosenProviderId) : (MODELS[chosenProviderId] || []);
 
-  // Generate OAuth URL when entering oauth-paste step
+  // Generate OAuth URLs when entering oauth-paste step
   useEffect(() => {
     if (step !== "oauth-paste") return;
     try {
       const { generateOAuthUrl } = require("@cdoing/core");
       const { url, codeVerifier } = generateOAuthUrl(chosenProviderId);
+      // Local URL — opens in browser, redirects to localhost for auto-capture
       setOauthUrl(url);
       setOauthVerifier(codeVerifier);
       setOauthCodeInput("");
       setOauthError("");
       openBrowser(url);
+
+      // Console URL — fallback that shows the code in browser for manual copy
+      const authUrl = new URL(url);
+      authUrl.searchParams.set("redirect_uri", "https://console.anthropic.com/oauth/code/callback");
+      setConsoleUrl(authUrl.toString());
     } catch {
       setOauthError("OAuth not available. Install @cdoing/core with OAuth support.");
     }
@@ -285,9 +288,19 @@ export function SetupWizard(props: SetupWizardProps) {
         setStep("oauth-exchanging");
         try {
           const { exchangeOAuthCode } = require("@cdoing/core");
-          exchangeOAuthCode(code, oauthVerifier, chosenProviderId)
+          exchangeOAuthCode(code, oauthVerifier, chosenProviderId, "https://console.anthropic.com/oauth/code/callback")
             .then((tokens: any) => {
-              saveAndComplete(chosenProviderId, chosenModelId, undefined);
+              // Save config file (provider + model) directly — don't use saveAndComplete
+              // because it calls onComplete without the oauthToken
+              const cfgDir = path.join(os.homedir(), ".cdoing");
+              const cfgPath = path.join(cfgDir, "config.json");
+              let cfg: Record<string, any> = {};
+              try { if (fs.existsSync(cfgPath)) cfg = JSON.parse(fs.readFileSync(cfgPath, "utf-8")); } catch {}
+              cfg.provider = chosenProviderId;
+              cfg.model = chosenModelId;
+              if (!fs.existsSync(cfgDir)) fs.mkdirSync(cfgDir, { recursive: true });
+              fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), "utf-8");
+              // Call onComplete once with the token
               props.onComplete({
                 provider: chosenProviderId,
                 model: chosenModelId,
@@ -506,12 +519,19 @@ export function SetupWizard(props: SetupWizardProps) {
             {`Step ${stepLabel("oauth-paste")}: OAuth Login`}
           </text>
           <text>{""}</text>
-          <text fg={t.text}>{"  1. Browser opening to Claude login..."}</text>
-          {oauthUrl ? (
-            <text fg={t.textDim}>{`     If it didn't open: ${oauthUrl.substring(0, 70)}...`}</text>
+          <text fg={t.text}>{"  1. Browser should open to Claude login"}</text>
+          <text fg={t.text}>{"  2. Log in and approve access"}</text>
+          <text fg={t.text}>{"  3. Copy the code and paste below"}</text>
+          <text>{""}</text>
+          {consoleUrl ? (
+            <>
+              <text fg={t.textDim}>{"  If browser didn't open, click this link:"}</text>
+              <text
+                fg={t.primary}
+                onMouseUp={() => { openBrowser(consoleUrl); }}
+              >{`  ${consoleUrl.substring(0, 60)}...`}</text>
+            </>
           ) : null}
-          <text fg={t.text}>{"  2. Approve -> you'll land on a page with a code in the URL"}</text>
-          <text fg={t.text}>{"  3. Copy the code= value from the URL and paste below"}</text>
           {oauthError ? (
             <>
               <text>{""}</text>

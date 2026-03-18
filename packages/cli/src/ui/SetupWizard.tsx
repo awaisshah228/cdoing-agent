@@ -10,6 +10,7 @@
 
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { Box, Text, useInput } from "ink";
+import open from "open";
 import { loadConfig, saveConfig } from "../config";
 import { exchangeOAuthCode, startLocalOAuthServer } from "../oauth";
 import { getOAuthProvider, supportsOAuth } from "@cdoing/core";
@@ -135,6 +136,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
   const [showKey, setShowKey]                 = useState(false);
   // OAuth paste step
   const [oauthUrl, setOauthUrl]               = useState("");
+  const [consoleUrl, setConsoleUrl]           = useState("");
   const [oauthVerifier, setOauthVerifier]     = useState("");
   const [oauthState, setOauthState]           = useState("");
   const [oauthRedirectUri, setOauthRedirectUri] = useState("");
@@ -170,6 +172,15 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
         setOauthRedirectUri(localRedirectUri);
         setOauthAutoCapturing(true);
         openBrowser(server.url);
+
+        // Also generate console callback URL as fallback for manual paste
+        if (chosenProvider === "anthropic") {
+          const { generateOAuthUrl } = require("@cdoing/core");
+          const fallback = generateOAuthUrl(chosenProvider);
+          const fallbackUrl = new URL(fallback.url);
+          fallbackUrl.searchParams.set("redirect_uri", "https://console.anthropic.com/oauth/code/callback");
+          setConsoleUrl(fallbackUrl.toString());
+        }
 
         // Auto-capture: wait for browser to redirect to localhost callback
         const code = await server.codePromise;
@@ -344,13 +355,16 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
         if (!code || exchangingRef.current) return;
         exchangingRef.current = true;
         setStep("oauth-exchanging");
-        // Pass redirectUri + state only if the local server was used; otherwise use provider defaults
+        // If user pasted manually and we have a console URL, use console callback redirect
+        const redirectUri = consoleUrl
+          ? "https://console.anthropic.com/oauth/code/callback"
+          : oauthRedirectUri || undefined;
         exchangeOAuthCode(
           code,
           oauthVerifier,
           chosenProvider,
-          oauthRedirectUri || undefined,
-          oauthState || undefined,
+          redirectUri,
+          consoleUrl ? undefined : oauthState || undefined,
         )
           .then((tokens) => {
             _saveOAuth(chosenProvider, chosenModel);
@@ -481,31 +495,29 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
         {oauthUrl
           ? <Text dimColor={tt.useDim} color={tt.textDim}>{`     If it didn't open: ${oauthUrl.substring(0, 72)}…`}</Text>
           : null}
-        {oauthAutoCapturing
-          ? <>
-              <Text color={tt.warning}>{"  2. Waiting for browser redirect — complete login in the browser…"}</Text>
-              <Text dimColor={tt.useDim} color={tt.textDim}>{"     (code will be captured automatically)"}</Text>
-            </>
-          : <>
-              <Text color={tt.text}>{"  2. Approve → you'll land on a page with a code in the URL"}</Text>
-              <Text color={tt.text}>{"  3. Copy the code= value from the URL and paste below"}</Text>
-            </>
-        }
+        <Text color={tt.text}>{"  2. Log in and approve access"}</Text>
+        <Text color={tt.text}>{"  3. Copy the code and paste below"}</Text>
+        {oauthAutoCapturing && (
+          <Text color={tt.warning}>{"     (or wait — code will be captured automatically)"}</Text>
+        )}
+        {consoleUrl ? (
+          <>
+            <Text>{" "}</Text>
+            <Text dimColor={tt.useDim} color={tt.textDim}>{"  If browser didn't open, copy this link:"}</Text>
+            <Text dimColor={tt.useDim} color={tt.textDim}>{`  ${consoleUrl.substring(0, 72)}…`}</Text>
+          </>
+        ) : null}
         {oauthError
           ? <Text color={tt.error}>{`\n  ✗ ${oauthError}`}</Text>
           : null}
-        {!oauthAutoCapturing && (
-          <>
-            <Text>{" "}</Text>
-            <Box>
-              <Text color={tt.prompt}>{"  Code: "}</Text>
-              <Text color={tt.text}>{maskedCode || " "}</Text>
-              <Text color={tt.cursor}>{"▊"}</Text>
-            </Box>
-            <Text>{" "}</Text>
-            <Text dimColor={tt.useDim} color={tt.textDim}>{"  Paste code then Enter  ·  Ctrl+S toggle visible  ·  Esc cancel"}</Text>
-          </>
-        )}
+        <Text>{" "}</Text>
+        <Box>
+          <Text color={tt.prompt}>{"  Code: "}</Text>
+          <Text color={tt.text}>{maskedCode || " "}</Text>
+          <Text color={tt.cursor}>{"▊"}</Text>
+        </Box>
+        <Text>{" "}</Text>
+        <Text dimColor={tt.useDim} color={tt.textDim}>{"  Paste code then Enter  ·  Ctrl+S toggle visible  ·  Esc cancel"}</Text>
       </Box>
     );
   }
@@ -546,9 +558,5 @@ function _saveOAuth(provider: string, model: string) {
 }
 
 function openBrowser(url: string): void {
-  const { exec } = require("child_process") as typeof import("child_process");
-  const cmd = process.platform === "darwin" ? `open "${url}"`
-    : process.platform === "win32" ? `start "" "${url}"`
-    : `xdg-open "${url}"`;
-  exec(cmd, () => {});
+  open(url).catch(() => {});
 }

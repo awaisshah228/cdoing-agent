@@ -2,7 +2,7 @@
   "name": "cdoing-vscode",
   "displayName": "Cdoing Agent",
   "description": "AI-powered coding assistant with multi-model support — chat, instruct, and run commands right from VS Code",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "publisher": "awaisshah228",
   "engines": {
     "vscode": "^1.95.0"
@@ -346,8 +346,6 @@
     "@cdoing/core": "*",
     "highlight.js": "^11.11.1",
     "marked": "^17.0.4",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
     "zustand": "^5.0.12"
   },
   "devDependencies": {
@@ -356,6 +354,8 @@
     "@types/react-dom": "^19.2.3",
     "@types/vscode": "^1.95.0",
     "esbuild": "^0.24.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
     "typescript": "^5.8.2"
   }
 }

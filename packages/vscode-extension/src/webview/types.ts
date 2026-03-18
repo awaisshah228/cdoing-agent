@@ -41,6 +41,7 @@ export type IncomingMessage =
   | { type: "permissionRequest"; id: string; toolName: string; message: string; hasProject: boolean } // Permission prompt
   | { type: "oauthStatus"; status: "none" | "active" | "expired"; expiresAt?: number }  // OAuth status update
   | { type: "oauthStarted"; url: string }                                                // OAuth flow started, browser opened
+  | { type: "oauthFallbackUrl"; url: string }                                            // OAuth fallback URL for manual copy
   | { type: "oauthResult"; success: boolean; error?: string }                            // OAuth exchange result
   | { type: "modeChanged"; mode: string }                                                // Permission mode changed (plan, ask, auto, etc.)
   | { type: "planReady"; summary: string; filePath?: string };                             // Plan complete, waiting for user approval

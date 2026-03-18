@@ -6,6 +6,7 @@
  */
 
 import chalk from "chalk";
+import open from "open";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
@@ -51,42 +52,62 @@ export async function oauthLogin(provider: string = "anthropic"): Promise<OAuthT
   console.log(chalk.dim("  Starting local server for automatic code capture...\n"));
 
   const { url, codeVerifier, state, port, codePromise, close } = await startLocalOAuthServer(provider);
+  const localRedirectUri = `http://localhost:${port}/callback`;
+  const consoleCallbackUri = "https://console.anthropic.com/oauth/code/callback";
 
   console.log(chalk.white("  If the browser doesn't open, visit:"));
   console.log(chalk.dim(`  ${url}\n`));
   console.log(chalk.dim(`  Listening on http://localhost:${port}/callback ...\n`));
 
+  // Also show console fallback URL
+  if (provider === "anthropic") {
+    const consoleUrl = new URL(url);
+    consoleUrl.searchParams.set("redirect_uri", consoleCallbackUri);
+    console.log(chalk.white("  Or open this link to get the code manually:"));
+    console.log(chalk.dim(`  ${consoleUrl.toString()}\n`));
+  }
+
   openBrowser(url);
 
-  const localRedirectUri = `http://localhost:${port}/callback`;
+  // Race: auto-capture vs manual paste
+  const readline = await import("readline");
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
+  console.log(chalk.dim("  Waiting for auto-capture, or paste the code below:\n"));
 
   let code: string;
   let usedLocalRedirect = true;
-  try {
-    // Auto-capture: browser redirects to localhost, server captures code
-    code = await codePromise;
-  } catch {
-    close();
-    usedLocalRedirect = false;
-    // Fallback: local server failed — ask user to paste the code manually
-    const readline = await import("readline");
-    console.log(chalk.yellow("\n  Auto-capture failed. Please paste the authorization code manually."));
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    code = await new Promise<string>((resolve) => {
-      rl.question(chalk.green("  Paste the authorization code here: "), (a) => {
-        rl.close();
-        resolve(a.trim());
-      });
+
+  const manualPromise = new Promise<string>((resolve) => {
+    rl.question(chalk.green("  Paste code here: "), (a) => {
+      rl.close();
+      resolve(a.trim());
     });
+  });
+
+  // Whichever completes first wins
+  const result = await Promise.race([
+    codePromise.then((c) => ({ source: "auto" as const, code: c })),
+    manualPromise.then((c) => ({ source: "manual" as const, code: c })),
+  ]);
+
+  close();
+  try { rl.close(); } catch {}
+
+  if (result.source === "auto") {
+    code = result.code;
+    console.log(chalk.green("\n  ✓ Code captured automatically!\n"));
+  } else {
+    usedLocalRedirect = false;
+    code = result.code;
   }
 
   if (!code) throw new Error("No authorization code provided");
-  // Pass the localhost redirect URI + state only when the local server was used
   return exchangeOAuthCode(
     code,
     codeVerifier,
     provider,
-    usedLocalRedirect ? localRedirectUri : undefined,
+    usedLocalRedirect ? localRedirectUri : consoleCallbackUri,
     usedLocalRedirect ? state : undefined,
   );
 }
@@ -94,23 +115,9 @@ export async function oauthLogin(provider: string = "anthropic"): Promise<OAuthT
 // ── CLI-specific: Browser opener ─────────────────────────
 
 function openBrowser(urlToOpen: string): void {
-  const { exec } = require("child_process");
-  const platform = process.platform;
-
-  let command: string;
-  if (platform === "darwin") {
-    command = `open "${urlToOpen}"`;
-  } else if (platform === "win32") {
-    command = `start "" "${urlToOpen}"`;
-  } else {
-    command = `xdg-open "${urlToOpen}"`;
-  }
-
-  exec(command, (err: Error | null) => {
-    if (err) {
-      console.log(chalk.yellow("  Could not open browser automatically."));
-      console.log(chalk.white("  Please open the URL above manually.\n"));
-    }
+  open(urlToOpen).catch(() => {
+    console.log(chalk.yellow("  Could not open browser automatically."));
+    console.log(chalk.white("  Please open the URL above manually.\n"));
   });
 }
 

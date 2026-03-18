@@ -28,7 +28,8 @@ export function StatCard({ title, value, subtitle, icon, color = "blue" }: StatC
         </div>
         {icon && (
           <div className={clsx("w-10 h-10 rounded-lg flex items-center justify-center", colorMap[color])}>
-            {icon}
+            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+            {icon as any}
           </div>
         )}
       </div>

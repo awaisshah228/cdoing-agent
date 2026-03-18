@@ -1,6 +1,6 @@
 {
   "name": "@cdoing/opentuicli",
-  "version": "0.1.38",
+  "version": "0.1.39",
   "description": "OpenTUI-based terminal interface for cdoing agent (inspired by opencode's TUI)",
   "type": "module",
   "main": "dist/index.js",
@@ -41,5 +41,8 @@
     "ts-node": "^10.9.2",
     "typescript": "^5.8.2"
   },
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "dependencies": {
+    "open": "^11.0.0"
+  }
 }

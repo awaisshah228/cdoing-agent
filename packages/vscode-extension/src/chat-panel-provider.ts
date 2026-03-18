@@ -260,28 +260,58 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           try {
             const { url, codeVerifier, state, port, codePromise, close } = await startLocalOAuthServer(provider);
             const localRedirectUri = `http://localhost:${port}/callback`;
+            const consoleCallbackUri = "https://console.anthropic.com/oauth/code/callback";
             this.oauthCodeVerifier = codeVerifier;
             this.postMessage({ type: "oauthStarted", url, port } as any);
             // Open browser — VS Code shows the "Open external website?" dialog
             vscode.env.openExternal(vscode.Uri.parse(url));
 
+            // Generate console fallback URL
+            let consoleUrlStr = "";
+            if (provider === "anthropic") {
+              const consoleUrl = new URL(url);
+              consoleUrl.searchParams.set("redirect_uri", consoleCallbackUri);
+              consoleUrlStr = consoleUrl.toString();
+            }
+
+            // Race: auto-capture vs manual paste — whichever completes first wins
             let code: string;
             let usedLocalRedirect = true;
-            try {
-              // Automatic: wait for browser to redirect to localhost callback
-              code = await codePromise;
-            } catch {
-              close();
-              usedLocalRedirect = false;
-              // Fallback: user pastes code manually
-              const manualCode = await vscode.window.showInputBox({
+
+            const manualCodePromise = new Promise<string | undefined>((resolve) => {
+              // Show fallback notification + input box immediately
+              if (consoleUrlStr) {
+                vscode.window.showInformationMessage(
+                  "If the browser didn't open, click below to login manually.",
+                  "Open Login Link"
+                ).then((choice) => {
+                  if (choice === "Open Login Link") {
+                    vscode.env.openExternal(vscode.Uri.parse(consoleUrlStr));
+                  }
+                });
+              }
+              vscode.window.showInputBox({
                 title: "OAuth Authorization",
-                prompt: "Auto-capture failed — paste the authorization code from the browser",
-                placeHolder: "Authorization code...",
+                prompt: "Waiting for auto-capture... or paste the code here manually",
+                placeHolder: "Authorization code (or wait for auto-capture)...",
                 ignoreFocusOut: true,
-              });
-              if (!manualCode) { this.oauthCodeVerifier = null; break; }
-              code = manualCode;
+              }).then(resolve);
+            });
+
+            // Race: auto-capture from localhost OR manual paste from input box
+            const result = await Promise.race([
+              codePromise.then((c) => ({ source: "auto" as const, code: c })),
+              manualCodePromise.then((c) => ({ source: "manual" as const, code: c })),
+            ]);
+
+            close();
+
+            if (result.source === "auto") {
+              code = result.code;
+            } else {
+              usedLocalRedirect = false;
+              if (!result.code) { this.oauthCodeVerifier = null; break; }
+              code = result.code;
             }
 
             try {
@@ -289,7 +319,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
                 code,
                 this.oauthCodeVerifier!,
                 provider,
-                usedLocalRedirect ? localRedirectUri : undefined,
+                usedLocalRedirect ? localRedirectUri : consoleCallbackUri,
                 usedLocalRedirect ? state : undefined,
               );
               this.oauthCodeVerifier = null;
