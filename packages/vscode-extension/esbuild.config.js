@@ -29,7 +29,7 @@ const extensionBuild = {
   entryPoints: [path.resolve(__dirname, "src/extension.ts")],
   bundle: true,
   outfile: path.resolve(__dirname, "dist/extension.js"),
-  external: ["vscode"],   // VS Code provides this module at runtime
+  external: ["vscode", "better-sqlite3"],   // vscode = provided at runtime, better-sqlite3 = native module
   format: "cjs",           // CommonJS — required by VS Code extensions
   platform: "node",        // Node.js APIs available
   target: "node18",

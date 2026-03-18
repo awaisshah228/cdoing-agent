@@ -11,6 +11,7 @@ import chalk from "chalk";
 import figlet from "figlet";
 import { loadConfig, saveConfig, getStoredConfigDisplay, updateStoredConfig } from "./config";
 import { getApiKeyEnvVar } from "@cdoing/ai";
+import { CodebaseIndexer } from "@cdoing/core";
 
 const CONFIG_DIR = path.join(os.homedir(), ".cdoing");
 const PROJECT_CONFIG_DIR = ".cdoing";
@@ -184,6 +185,7 @@ _cdoing() {
         'init:Initialize project with .cdoing/config.md'
         'doctor:Diagnose setup and configuration'
         'completions:Generate shell completion script'
+        'index:Index codebase for fast search'
       )
       _describe 'subcommand' cmds
       ;;
@@ -234,7 +236,7 @@ _cdoing_completion() {
     prev="\${COMP_WORDS[COMP_CWORD-1]}"
   }
 
-  local subcommands="config init doctor completions"
+  local subcommands="config init doctor completions index"
   local flags="--model --provider --base-url --api-key --mode --dir --login --logout --print --resume --continue --max-turns --output-format --verbose --system-prompt --allowed-tools --disallowed-tools --help --version"
   local models="claude-sonnet-4-6 claude-opus-4-6 claude-haiku-4-5 gpt-4o gpt-4o-mini o3-mini gemini-2.0-flash gemini-1.5-pro llama3.1 mistral codellama"
 
@@ -422,4 +424,65 @@ export function handleDoctor(): void {
     console.log(chalk.hex("#FFB74D")(`  ⚠️  ${passed} passed, ${issues} issue(s) found`));
   }
   console.log();
+}
+
+/**
+ * Handle `cdoing index` — index the codebase for fast FTS search.
+ */
+export async function handleIndex(options: { full?: boolean; dir?: string; stats?: boolean }): Promise<void> {
+  const workingDir = path.resolve(options.dir || process.cwd());
+
+  console.log();
+  console.log(chalk.hex("#4FC3F7").bold("  📇 Codebase Indexer"));
+  console.log(chalk.hex("#78909C")("  ─────────────────────────────────────"));
+  console.log(chalk.hex("#90A4AE")(`  Directory: ${workingDir}`));
+  console.log();
+
+  const indexer = new CodebaseIndexer(workingDir);
+
+  // --stats: just show statistics
+  if (options.stats) {
+    const stats = indexer.getStats();
+    console.log(chalk.hex("#B0BEC5")(`  Files indexed:    ${stats.totalFiles}`));
+    console.log(chalk.hex("#B0BEC5")(`  Total chunks:     ${stats.totalChunks}`));
+    console.log(chalk.hex("#B0BEC5")(`  FTS entries:      ${stats.ftsEntries}`));
+    console.log(chalk.hex("#B0BEC5")(`  Embeddings:       ${stats.embeddingEntries}`));
+    console.log(chalk.hex("#B0BEC5")(`  Index size:       ${(stats.indexSizeBytes / 1024).toFixed(1)} KB`));
+    if (stats.lastIndexed > 0) {
+      const ago = Math.round((Date.now() - stats.lastIndexed) / 60000);
+      console.log(chalk.hex("#B0BEC5")(`  Last indexed:     ${ago} min ago`));
+    } else {
+      console.log(chalk.hex("#78909C")(`  Last indexed:     never`));
+    }
+    console.log();
+    indexer.close();
+    return;
+  }
+
+  // --full: clear existing index first
+  if (options.full) {
+    console.log(chalk.hex("#FFB74D")("  Clearing existing index..."));
+    indexer.clearIndex();
+  }
+
+  // Run indexing with progress
+  const result = await indexer.index((progress) => {
+    const bar = progress.total > 0
+      ? ` [${progress.current}/${progress.total}]`
+      : "";
+    process.stdout.write(`\r  ${chalk.hex("#78909C")(progress.phase)}${bar} ${chalk.hex("#90A4AE")(progress.message)}          `);
+  });
+
+  process.stdout.write("\r" + " ".repeat(80) + "\r"); // clear progress line
+
+  console.log(chalk.hex("#81C784")(`  ✓ Added:    ${result.added} files`));
+  console.log(chalk.hex("#4FC3F7")(`  ✓ Updated:  ${result.updated} files`));
+  console.log(chalk.hex("#EF5350")(`  ✓ Deleted:  ${result.deleted} files`));
+  console.log(chalk.hex("#B0BEC5")(`  ✓ Chunks:   ${result.totalChunks} total`));
+
+  const stats = indexer.getStats();
+  console.log(chalk.hex("#78909C")(`  Index size: ${(stats.indexSizeBytes / 1024).toFixed(1)} KB`));
+  console.log();
+
+  indexer.close();
 }

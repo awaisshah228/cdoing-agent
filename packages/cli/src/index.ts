@@ -14,7 +14,7 @@ import { createToolRegistry } from "./tools";
 import { createOneShotCallbacks, createPrintCallbacks, createJsonCallbacks, createStreamJsonCallbacks } from "./callbacks";
 import chalk from "chalk";
 import { oauthLogin, oauthLogout } from "./oauth";
-import { handleConfigCommand, handleInit, handleDoctor, handleCompletions } from "./commands";
+import { handleConfigCommand, handleInit, handleDoctor, handleCompletions, handleIndex } from "./commands";
 import { loadConversation, loadLastConversation } from "./history";
 
 const program = new Command();
@@ -68,6 +68,14 @@ program
   .description("Generate shell completion script (zsh, bash)")
   .argument("[shell]", "Shell type: zsh or bash")
   .action(handleCompletions);
+
+program
+  .command("index")
+  .description("Index the codebase for faster searches (FTS5 + optional embeddings)")
+  .option("--full", "Rebuild index from scratch (clear existing index first)")
+  .option("-d, --dir <directory>", "Directory to index", process.cwd())
+  .option("--stats", "Show index statistics without re-indexing")
+  .action(handleIndex);
 
 /** Create a sub-agent factory: spawns a child agent without sub_agent tool */
 function createSubAgentFactory(

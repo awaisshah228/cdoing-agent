@@ -145,19 +145,21 @@ export class IndexDatabase {
   /**
    * Full-text search with BM25 ranking.
    * Path matches get a 10x boost.
+   * Results below bm25Threshold are filtered out (BM25 scores are negative; closer to 0 = better).
    */
-  searchFts(query: string, limit = 25, directory?: string): SearchResult[] {
+  searchFts(query: string, limit = 25, directory?: string, bm25Threshold = -2.5): SearchResult[] {
     // Escape special FTS5 characters
     const escaped = query.replace(/[?"]/g, "");
     if (!escaped.trim()) return [];
 
     let sql = `
       SELECT fts_metadata.chunkId, fts_metadata.path, fts.content,
-             rank AS score, chunks.startLine, chunks.endLine
+             bm25(fts, 10.0) AS score, chunks.startLine, chunks.endLine
       FROM fts
       JOIN fts_metadata ON fts.rowid = fts_metadata.id
       JOIN chunks ON fts_metadata.chunkId = chunks.id
       WHERE fts MATCH ?
+        AND bm25(fts, 10.0) < 0
     `;
 
     const params: any[] = [escaped];
@@ -166,6 +168,10 @@ export class IndexDatabase {
       sql += " AND fts_metadata.path LIKE ?";
       params.push(directory + "%");
     }
+
+    // Filter out low-quality results (BM25 scores are negative; more negative = worse)
+    sql += " AND bm25(fts, 10.0) >= ?";
+    params.push(bm25Threshold);
 
     sql += " ORDER BY bm25(fts, 10.0) LIMIT ?";
     params.push(limit);

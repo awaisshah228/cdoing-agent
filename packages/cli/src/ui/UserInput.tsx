@@ -39,6 +39,7 @@ const SLASH_COMMANDS = [
   { cmd: "/theme",       desc: "Switch theme (dark/light/auto)" },
   { cmd: "/setup",       desc: "View & change provider / model / API key" },
   { cmd: "/doctor",      desc: "Check system health" },
+  { cmd: "/index",       desc: "Index codebase for search" },
   { cmd: "/init",        desc: "Initialize project" },
   { cmd: "/login",       desc: "Open setup wizard to authenticate" },
   { cmd: "/logout",      desc: "Clear OAuth tokens" },

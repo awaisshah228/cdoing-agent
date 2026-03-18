@@ -150,6 +150,19 @@
       {
         "command": "cdoing.toggleAutocomplete",
         "title": "Cdoing: Toggle Autocomplete"
+      },
+      {
+        "command": "cdoing.indexCodebase",
+        "title": "Cdoing: Index Codebase",
+        "icon": "$(database)"
+      },
+      {
+        "command": "cdoing.indexCodebaseStats",
+        "title": "Cdoing: Show Index Stats"
+      },
+      {
+        "command": "cdoing.indexCodebaseFull",
+        "title": "Cdoing: Rebuild Index (Full)"
       }
     ],
     "menus": {
@@ -314,6 +327,11 @@
         "key": "ctrl+shift+k",
         "mac": "cmd+shift+k",
         "when": "editorIsOpen"
+      },
+      {
+        "command": "cdoing.indexCodebase",
+        "key": "ctrl+shift+i",
+        "mac": "cmd+shift+i"
       }
     ]
   },

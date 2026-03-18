@@ -42,6 +42,7 @@ import {
   ShellExecTool,
   getOAuthProvider,
   PermissionMode,
+  CodebaseIndexer,
 } from "@cdoing/core";
 import type {
   ToolRegistry,
@@ -1095,6 +1096,48 @@ export function useChat(opts: UseChatOptions) {
           }
           const result = setTheme(arg as any);
           return result;
+        }
+
+        case "/index": {
+          const indexer = new CodebaseIndexer(workingDir);
+
+          if (arg === "stats") {
+            const s = indexer.getStats();
+            const ago = s.lastIndexed > 0 ? `${Math.round((Date.now() - s.lastIndexed) / 60000)} min ago` : "never";
+            indexer.close();
+            return [
+              chalk.hex("#4FC3F7").bold("📇 Index Stats"),
+              `  Files:      ${s.totalFiles}`,
+              `  Chunks:     ${s.totalChunks}`,
+              `  FTS:        ${s.ftsEntries}`,
+              `  Embeddings: ${s.embeddingEntries}`,
+              `  Size:       ${(s.indexSizeBytes / 1024).toFixed(1)} KB`,
+              `  Last index: ${ago}`,
+            ].join("\n");
+          }
+
+          if (arg === "clear") {
+            indexer.clearIndex();
+            indexer.close();
+            return chalk.hex("#81C784")("Index cleared.");
+          }
+
+          // Default: run incremental index (--full if arg is "full")
+          if (arg === "full") indexer.clearIndex();
+
+          addSystemMessage(chalk.hex("#78909C")("Indexing codebase..."));
+          indexer.index().then((result) => {
+            const msg = [
+              chalk.hex("#81C784")(`✓ Indexed: +${result.added} new, ~${result.updated} updated, -${result.deleted} deleted`),
+              chalk.hex("#B0BEC5")(`  ${result.totalChunks} chunks total`),
+            ].join("\n");
+            addSystemMessage(msg);
+            indexer.close();
+          }).catch((err) => {
+            addSystemMessage(chalk.hex("#EF5350")(`Index error: ${(err as Error).message}`));
+            indexer.close();
+          });
+          return null;
         }
 
         case "/doctor":

@@ -1,267 +1,424 @@
-# Codebase Indexing System
+# Codebase Indexing & Agent Integration Architecture
 
 ## Overview
 
-The indexing system provides fast, ranked code search across the entire codebase using **SQLite FTS5** (full-text search with BM25 ranking) and optional **vector embeddings** (cosine similarity). It powers both the `codebase_search` tool and the `@codebase` context provider.
+The indexing system provides fast, ranked code search across the entire codebase. It powers both the `codebase_search` tool (called by the agent) and the `@codebase` context provider (used by the user).
 
-## Architecture
+Three retrieval sources are combined in a hybrid pipeline:
 
-```
-┌──────────────────────────────────────────────────┐
-│                 CodebaseIndexer                    │
-│                                                    │
-│  1. Scan files (respects .gitignore)               │
-│  2. SHA-256 cache key per file                     │
-│  3. Diff against catalog (incremental updates)     │
-│  4. Chunk files (code-aware / basic / markdown)    │
-│  5. Insert into SQLite                             │
-│  6. Build FTS5 index (trigram tokenizer)            │
-│  7. Optional: compute embeddings                   │
-│                                                    │
-│  ┌──────────┐  ┌───────────┐  ┌──────────────┐   │
-│  │  Chunks   │  │  FTS5     │  │  Embeddings  │   │
-│  │  (SQLite) │  │  (BM25)   │  │  (Vectors)   │   │
-│  └──────────┘  └───────────┘  └──────────────┘   │
-│       │              │               │             │
-│       └──────────────┴───────────────┘             │
-│                      │                             │
-│              search(query)                         │
-│           FTS(35%) + Embeddings(65%)                │
-│              → deduplicated results                │
-└──────────────────────────────────────────────────┘
-```
+| Source | Weight | What it does |
+|---|---|---|
+| Recently edited files | 25% | LRU cache of files the agent/user just touched |
+| Full-text search (FTS5) | 25% | SQLite trigram index with BM25 ranking |
+| Embeddings | 50% | Cosine similarity on vector embeddings (optional) |
 
-## How It Works
+If embeddings are not configured, FTS and recent files split the results.
 
-### 1. File Scanning
+---
 
-- Recursively scans the working directory
-- Respects `.gitignore` patterns
-- Skips: `node_modules`, `.git`, `dist`, `build`, `__pycache__`, `coverage`, etc.
-- Skips files > 1MB
-- Supports 40+ file extensions (code, config, docs)
-
-### 2. Incremental Updates
-
-Files are tracked in a `index_catalog` table with SHA-256 content hashes:
+## Full Wiring Diagram
 
 ```
-index_catalog:
-  path, cacheKey (SHA-256), lastUpdated, directory
+┌─────────────────────────────────────────────────────────────────────────┐
+│ CLI (packages/cli/src/index.ts)                                        │
+│                                                                         │
+│  1. Parse args, resolve workingDir                                     │
+│  2. createToolRegistry(workingDir, { managers... })                     │
+│         ↓                                                               │
+│  3. registerAllTools(registry, groupOpts)                               │
+│         ↓                                                               │
+│  4. new AgentRunner(modelConfig, toolRegistry, permMgr, hookMgr, opts) │
+│         ↓                                                               │
+│  5. Agent loop: stream LLM → extract tool calls → execute → feed back │
+└─────────────────────────────────────────────────────────────────────────┘
+         │                                    │
+         ▼                                    ▼
+┌─────────────────────┐          ┌───────────────────────────┐
+│ ToolRegistry         │          │ Context Providers          │
+│ (core/tools/)        │          │ (core/context-providers/)  │
+│                      │          │                            │
+│ ┌──────────────────┐ │          │ ┌────────────────────────┐ │
+│ │ codebase_search  │ │          │ │ @codebase provider     │ │
+│ │                  │ │          │ │                        │ │
+│ │ Lazy-inits       │ │          │ │ Lazy-inits             │ │
+│ │ CodebaseIndexer  │ │          │ │ CodebaseIndexer        │ │
+│ │ on first call    │ │          │ │ on first use           │ │
+│ └────────┬─────────┘ │          │ └────────┬───────────────┘ │
+└──────────┼───────────┘          └──────────┼─────────────────┘
+           │                                  │
+           ▼                                  ▼
+   ┌───────────────────────────────────────────────────┐
+   │              CodebaseIndexer                       │
+   │              (core/indexing/indexer.ts)             │
+   │                                                    │
+   │  ┌──────────────┐ ┌──────────┐ ┌───────────────┐  │
+   │  │RecentEdits   │ │ FTS5     │ │  Embeddings   │  │
+   │  │Cache (LRU)   │ │ (BM25)   │ │  (Vectors)    │  │
+   │  │ 25% weight   │ │ 25%      │ │  50%          │  │
+   │  └──────┬───────┘ └────┬─────┘ └──────┬────────┘  │
+   │         └──────────────┼──────────────┘            │
+   │                        ▼                           │
+   │              search(query, limit)                  │
+   │              → deduplicate by path:line             │
+   │              → return top-k SearchResult[]         │
+   └────────────────────────┬──────────────────────────┘
+                            │
+                            ▼
+   ┌────────────────────────────────────────────────────┐
+   │           IndexDatabase (SQLite)                   │
+   │           (core/indexing/database.ts)               │
+   │                                                    │
+   │  ~/.cdoing/index.sqlite                            │
+   │                                                    │
+   │  Tables: chunks, fts, fts_metadata,                │
+   │          embeddings, index_catalog                  │
+   └────────────────────────────────────────────────────┘
 ```
 
-On each index run:
-- **New files** → chunk + index
-- **Modified files** (hash changed) → delete old chunks, re-index
-- **Deleted files** → remove from all tables
-- **Unchanged files** → skip entirely
+---
 
-This makes re-indexing fast — only changed files are processed.
+## Component Details
 
-### 3. Chunking Strategies
+### 1. Tool Registration (CLI → Tools)
 
-Three strategies based on file type:
-
-#### Code-Aware Chunking (`.ts`, `.js`, `.py`, `.go`, `.rs`, etc.)
-Splits on function/class boundaries using regex patterns:
-- Function declarations, arrow functions, class definitions
-- Method declarations, interfaces, type aliases, enums
-- Python `def`/`class`, Go `func`, Rust `fn`/`struct`/`impl`
-
-Falls back to line-based splitting if a chunk exceeds size limits.
-
-#### Markdown Chunking (`.md`, `.mdx`)
-Splits on header boundaries (`# H1`, `## H2`, `### H3`), keeping each section as a chunk.
-
-#### Basic Chunking (everything else)
-Line-based splitting with ~17 lines per chunk (targeting ~384 tokens) and 3-line overlap between chunks.
-
-All strategies:
-- Target ~384 tokens per chunk (~1400 chars)
-- Merge tiny chunks (< 100 chars) with neighbors
-- Track `startLine` and `endLine` for source mapping
-
-### 4. SQLite FTS5 Full-Text Search
-
-Uses SQLite's FTS5 extension with **trigram tokenizer** for substring matching:
-
-```sql
-CREATE VIRTUAL TABLE fts USING fts5(
-  path,
-  content,
-  tokenize = 'trigram'
-);
-```
-
-**How trigram works:** Text is broken into overlapping 3-character sequences. "function" → "fun", "unc", "nct", "cti", "tio", "ion". This enables substring matching without word boundaries.
-
-**BM25 ranking** with 10x path boost:
-```sql
-ORDER BY bm25(fts, 10.0)
-```
-Matches in file paths (e.g., searching "auth" matches `src/auth/middleware.ts`) rank 10x higher than matches in content only.
-
-### 5. Vector Embeddings (Optional)
-
-When an `EmbeddingProvider` is configured:
-
-1. Each chunk's text is sent to the embedding model (batched)
-2. Vectors stored in SQLite as JSON arrays
-3. Search uses **cosine similarity** computed in-process:
-
-```typescript
-cosine_similarity(query_vector, chunk_vector) = dot(a,b) / (|a| * |b|)
-```
-
-No external vector database needed — all stored in the same SQLite file.
-
-### 6. Combined Search Pipeline
-
-When `search(query)` is called:
+**File:** `packages/cli/src/tools.ts`
 
 ```
-query
-  ├─ FTS5 search (35% of results)
-  │   └─ BM25 ranking with path boost
+createToolRegistry(workingDir)
+  → registerAllTools(registry, { workingDir, ... })
+    → registerSearchTools(registry, opts)
+      → new CodebaseSearchTool(workingDir)   // ← indexer lives here
+      → new GlobSearchTool(workingDir)
+      → new GrepSearchTool(workingDir)
+```
+
+Key point: **workingDir flows from CLI → tool factory → tool constructor**. Each tool stores its own `workingDir`. The AgentRunner never touches the indexer directly.
+
+**File:** `packages/core/src/tools/groups.ts` — `registerSearchTools()`
+
+### 2. Agent Runner (LLM ↔ Tools)
+
+**File:** `packages/ai/src/agent-runner.ts`
+
+```
+AgentRunner receives:
+  - modelConfig (which LLM to use)
+  - toolRegistry (fully initialized, has all tools)
+  - permissionManager
+  - hookManager
+  - options { workingDir }  ← only used for system prompt, NOT passed to tools
+
+Loop:
+  1. Stream LLM response
+  2. Extract tool_use blocks
+  3. Check permissions (permissionManager)
+  4. Execute: toolRegistry.execute(toolName, input)
+  5. Feed tool result back to LLM
+  6. Repeat until LLM stops calling tools
+```
+
+The AgentRunner is **tool-agnostic** — it doesn't know about indexing. It just calls `toolRegistry.execute()` and the CodebaseSearchTool handles the rest internally.
+
+### 3. codebase_search Tool
+
+**File:** `packages/core/src/tools/search/codebase-search.ts`
+
+This is what the LLM calls when it needs to find code:
+
+```
+Agent says: codebase_search({ query: "authentication", directory: "src/" })
+                    │
+                    ▼
+           ensureIndex()
+              │
+              ├── First call? → new CodebaseIndexer(workingDir)
+              │                 → indexer.index()  (scan, chunk, insert)
+              │
+              ├── Index stale (>1hr)? → re-index
+              │
+              └── Index ready? → skip
+                    │
+                    ▼
+           indexer.search(query, limit, directory)
+              │
+              ├── searchRecent()     → 25% of results
+              ├── searchFts()        → 25% of results
+              └── searchSemantic()   → 50% of results
+                    │
+                    ▼
+           Deduplicate + return formatted output
+```
+
+### 4. @codebase Context Provider
+
+**File:** `packages/core/src/context-providers/codebase.ts`
+
+This is what runs when the user types `@codebase auth middleware` in the chat:
+
+```
+User types: @codebase authentication flow
+                    │
+                    ▼
+           searchWithIndex(query, workingDir)
+              │
+              ├── Lazy-init CodebaseIndexer (same pattern as tool)
+              ├── indexer.search(query, MAX_RESULTS)
+              └── Format as markdown code blocks
+                    │
+                    ▼ (if index fails)
+           searchWithRipgrep(query, workingDir)
+              │
+              └── rg --ignore-case --context=3 ...
+                    │
+                    ▼
+           Return ContextResult { label, content, metadata }
+```
+
+**Important:** Both the tool and the context provider create their **own** CodebaseIndexer instances. They share the same SQLite database file (`~/.cdoing/index.sqlite`), so indexing done by one benefits the other.
+
+### 5. Indexing Pipeline
+
+**File:** `packages/core/src/indexing/indexer.ts`
+
+```
+indexer.index()
   │
-  ├─ Embedding search (65% of results)
-  │   └─ Cosine similarity ranking
+  ├── 1. scanFiles()
+  │      glob("**/*") → filter by extension, size, skip dirs
+  │      respects .gitignore
   │
-  └─ Deduplicate by (path + startLine)
-      └─ Return top-k results
+  ├── 2. Compute SHA-256 cache keys
+  │      crypto.createHash("sha256").update(content)
+  │
+  ├── 3. Diff against catalog
+  │      Compare current files vs index_catalog table
+  │      → toAdd[], toUpdate[], toDelete[]
+  │
+  ├── 4. Delete removed/modified chunks
+  │      DELETE FROM chunks/fts/embeddings WHERE path = ?
+  │
+  ├── 5. Process new + modified files (batch size: 200)
+  │      For each file:
+  │        ├── chunkDocument(filePath, content)  → Chunk[]
+  │        ├── db.insertChunks(chunks)           → chunk IDs
+  │        ├── db.insertFts(chunkId, path, content, cacheKey)
+  │        └── db.updateCatalog(filePath, cacheKey, dir)
+  │
+  └── 6. Optional: computeEmbeddings()
+         Batch embed chunks → db.insertEmbedding()
 ```
 
-If no embedding provider is configured, falls back to FTS-only.
+### 6. Chunking (How Files Become Chunks)
+
+**File:** `packages/core/src/indexing/chunker.ts`
+
+Three strategies, chosen by file extension:
+
+```
+chunkDocument(filePath, content)
+  │
+  ├── Code files (.ts, .py, .go, .rs, ...) → codeChunker()
+  │     Split on function/class boundaries (regex patterns)
+  │     If a section > 2x token target → sub-split with basicChunker
+  │     Merge tiny chunks (<100 chars) with neighbors
+  │
+  ├── Markdown (.md, .mdx) → markdownChunker()
+  │     Split on # headers
+  │     Merge tiny sections
+  │
+  └── Everything else → basicChunker()
+        Accumulate lines until token limit (384 tokens)
+        3-line overlap between chunks
+```
+
+**Token-based sizing:** Chunks target 384 tokens using `estimateTokens()` (~3.5 chars/token). This matches embedding model sweet spots and ensures consistent LLM context usage.
+
+### 7. Search Pipeline (3-Source Hybrid)
+
+**File:** `packages/core/src/indexing/indexer.ts` — `search()`
+
+```
+search(query, limit=25, directory?)
+  │
+  │  Allocate slots:
+  │    recentLimit = ceil(25 * 0.25) = 7
+  │    ftsLimit    = ceil(25 * 0.25) = 7
+  │    embLimit    = ceil(25 * 0.50) = 13
+  │
+  ├── searchRecent(query, 7)       ← RecentEditsCache
+  │     Path match: +5 score
+  │     Content matches: +1 each (max +5)
+  │     Recency boost: +2 if <30min ago
+  │
+  ├── searchFts(query, 7)          ← SQLite FTS5
+  │     trigram MATCH
+  │     BM25 ranking, path 10x boost
+  │     Threshold: -2.5 (drop low quality)
+  │
+  └── searchSemantic(query, 13)    ← Embeddings (if configured)
+        Embed query → cosine similarity vs all chunk vectors
+        Sort by similarity descending
+  │
+  ▼
+  Deduplicate by "path:startLine"
+  Priority order: recent > embeddings > FTS
+  Return top-k
+```
+
+### 8. RecentEditsCache
+
+**File:** `packages/core/src/indexing/recent-edits-cache.ts`
+
+An LRU cache (max 50 files) that tracks files the agent recently edited:
+
+```
+RecentEditsCache
+  │
+  ├── put(filePath, content, summary)   ← Called when agent edits a file
+  │     Moves file to front of LRU
+  │     Tracks editCount and editedAt
+  │
+  ├── getRecent(limit)                  ← Used by searchRecent()
+  │     Returns most recently edited files
+  │
+  └── searchContent(pattern)            ← Content-level search
+        Regex match against cached file contents
+```
+
+**Current wiring status:** The cache class exists and the indexer accepts it via `setRecentEditsCache()`, but **it is not yet populated by file_write/file_edit tools**. This is a TODO — see "What's Missing" below.
+
+---
 
 ## Database Schema
 
+**Location:** `~/.cdoing/index.sqlite` (WAL mode)
+
 ```sql
--- File chunks with line ranges
+-- File chunks with content and line ranges
 chunks (
-  id INTEGER PRIMARY KEY,
-  path TEXT,           -- relative file path
-  cacheKey TEXT,       -- SHA-256 hash of file content
-  content TEXT,        -- chunk text
-  startLine INTEGER,
-  endLine INTEGER,
-  idx INTEGER          -- chunk index within file
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  path TEXT NOT NULL,           -- relative file path
+  cacheKey TEXT NOT NULL,       -- SHA-256(file content), first 16 hex chars
+  content TEXT NOT NULL,        -- chunk text
+  startLine INTEGER NOT NULL,
+  endLine INTEGER NOT NULL,
+  idx INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(path, cacheKey, startLine, endLine)
 )
 
 -- FTS5 virtual table (trigram tokenizer, BM25 ranking)
-fts (path, content)
+-- Trigram = every 3-char sequence indexed for substring matching
+fts USING fts5(path, content, tokenize = 'trigram')
 
--- Links FTS entries to chunks
+-- Links FTS entries back to chunks
 fts_metadata (
-  id INTEGER PRIMARY KEY,  -- matches fts rowid
-  path TEXT,
-  cacheKey TEXT,
-  chunkId INTEGER → chunks(id)
+  id INTEGER PRIMARY KEY,      -- matches fts rowid
+  path TEXT NOT NULL,
+  cacheKey TEXT NOT NULL,
+  chunkId INTEGER NOT NULL → chunks(id)
 )
 
--- Vector embeddings
+-- Vector embeddings (optional)
 embeddings (
-  id INTEGER PRIMARY KEY,
-  chunkId INTEGER → chunks(id),
-  path TEXT,
-  cacheKey TEXT,
-  vector TEXT,    -- JSON array of floats
-  model TEXT      -- embedding model identifier
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chunkId INTEGER NOT NULL → chunks(id),
+  path TEXT NOT NULL,
+  cacheKey TEXT NOT NULL,
+  vector TEXT NOT NULL,        -- JSON array of floats
+  model TEXT NOT NULL,         -- embedding model ID
+  UNIQUE(chunkId, model)
 )
 
--- Tracks indexed files for incremental updates
+-- Tracks which files have been indexed (for incremental updates)
 index_catalog (
-  path TEXT,
-  cacheKey TEXT,     -- SHA-256 of file content
-  lastUpdated INTEGER,
-  directory TEXT
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  path TEXT NOT NULL,
+  cacheKey TEXT NOT NULL,
+  lastUpdated INTEGER NOT NULL,
+  directory TEXT NOT NULL,
+  UNIQUE(path, directory)
 )
 ```
 
-Storage location: `~/.cdoing/index.sqlite`
+---
 
-## Usage
+## What's Working
 
-### As a Tool (`codebase_search`)
+- [x] SQLite FTS5 with trigram tokenizer + BM25 ranking
+- [x] Token-based chunk sizing (384 tokens target)
+- [x] Code-aware chunking (regex boundary detection)
+- [x] Incremental indexing (SHA-256 diffing)
+- [x] BM25 threshold filtering (-2.5) to drop low-quality results
+- [x] 3-source hybrid search (recent 25% + FTS 25% + embeddings 50%)
+- [x] @codebase provider uses FTS index (ripgrep as fallback)
+- [x] RecentEditsCache class with LRU eviction
+- [x] Optional embedding provider support
+- [x] Lazy index initialization (built on first use)
 
-The LLM calls this tool to search the codebase:
+## What's Missing (TODOs)
 
-```
-codebase_search({ query: "authentication middleware" })
-codebase_search({ query: "sendEmail function", directory: "src/services" })
-```
+### High Priority
 
-The index is built lazily on first use and refreshed if stale (>1 hour).
+1. **Wire RecentEditsCache into file_write/file_edit tools**
+   - When the agent edits a file, call `recentEditsCache.put(filePath, newContent, summary)`
+   - Need to pass a shared `RecentEditsCache` instance through tool registration
+   - Files: `packages/core/src/tools/file/file_write.ts`, `file_edit.ts`
+   - Wire through: `packages/cli/src/tools.ts` → `registerFileTools()`
 
-### As a Context Provider (`@codebase`)
+2. **Share RecentEditsCache between CodebaseSearchTool and @codebase provider**
+   - Currently both create independent CodebaseIndexer instances
+   - Need a shared cache instance passed at registration time
+   - Could add to `groupOpts` in `createToolRegistry()`
 
-Users type `@codebase auth middleware` to attach relevant code to their message.
+3. **FTS query preprocessing**
+   - Continue does: stemming → stop word removal → trigram extraction
+   - We just escape quotes and pass raw query to FTS MATCH
+   - Would improve recall for natural language queries
 
-### Programmatic API
+### Medium Priority
 
-```typescript
-import { CodebaseIndexer } from "@cdoing/core";
+4. **Tree-sitter chunking** (instead of regex)
+   - More accurate function/class boundary detection
+   - Can collapse function bodies for overview chunks
+   - Trade-off: adds ~2MB WASM per language
 
-const indexer = new CodebaseIndexer("/path/to/project");
+5. **LLM-based reranking pipeline**
+   - Retrieve 2x results, then rerank with a small LLM
+   - Continue does this optionally with `RerankerRetrievalPipeline`
+   - Trade-off: adds latency + cost per search
 
-// Index (incremental)
-await indexer.index((progress) => {
-  console.log(`${progress.phase}: ${progress.message}`);
-});
+6. **Cross-branch content deduplication**
+   - Content-addressed storage: same chunk content = same ID regardless of branch
+   - Continue uses a tag system for branch awareness
 
-// Search
-const results = await indexer.search("authentication", 20);
-for (const r of results) {
-  console.log(`${r.path}:${r.startLine} (${r.source}, score: ${r.score})`);
-  console.log(r.content);
-}
+### Low Priority
 
-// With embeddings
-import { CodebaseIndexer, type EmbeddingProvider } from "@cdoing/core";
+7. **LanceDB for embeddings** (instead of JSON-in-SQLite)
+   - Native vector search, no in-process cosine sim
+   - Trade-off: platform-specific binary dependency
 
-const embedder: EmbeddingProvider = {
-  modelId: "text-embedding-3-small",
-  embed: async (texts) => {
-    // Call OpenAI/Ollama/etc.
-    return vectors;
-  },
-};
+8. **Embedding expansion**
+   - Continue expands top FTS results with nearby embedding matches
+   - `nResultsToExpandWithEmbeddings: 5, nEmbeddingsExpandTo: 5`
 
-const indexer = new CodebaseIndexer("/path/to/project", embedder);
-await indexer.index();
-const results = await indexer.search("how does auth work?"); // Uses both FTS + embeddings
-```
+---
 
-## Comparison with Continue.dev
+## Comparison with Other Tools
 
-| Feature | Cdoing | Continue |
-|---|---|---|
-| Storage | Single SQLite file | SQLite + LanceDB (separate) |
-| FTS | FTS5 with trigram tokenizer | FTS5 with trigram tokenizer |
-| BM25 path boost | 10x | 10x |
-| Chunking | Regex boundary detection | Tree-sitter AST |
-| Code structure | Heuristic (function/class patterns) | Full AST parsing (15+ languages) |
-| Embeddings | SQLite JSON + in-process cosine sim | LanceDB native vector search |
-| Incremental updates | SHA-256 content hashing | SHA-256 with cross-branch dedup |
-| Cross-branch cache | Not yet | Content-addressed global cache |
-| Search pipeline | FTS(35%) + Embeddings(65%) | FTS(25%) + Embeddings(50%) + Recent(25%) |
-| Dependencies | better-sqlite3 only | better-sqlite3 + LanceDB native |
+| Feature | Cdoing (us) | Continue | OpenCode |
+|---|---|---|---|
+| **Chunking** | Regex boundaries | Tree-Sitter AST | None |
+| **Chunk sizing** | Token-based (384) | Token-based (384) | N/A |
+| **FTS** | SQLite FTS5 trigram | SQLite FTS5 trigram | None |
+| **BM25 threshold** | -2.5 | -2.5 | N/A |
+| **Embeddings** | JSON in SQLite | LanceDB | Exa API (external) |
+| **Recent files** | 25% (LRU cache) | 25% (LRU cache) | None |
+| **Reranking** | Not yet | Optional LLM reranker | None |
+| **Offline** | Yes | Yes | No (needs Exa) |
+| **Dependencies** | better-sqlite3 | better-sqlite3 + LanceDB | Exa API key |
 
-### Design Trade-offs
+### Why we chose our approach
 
-**Why SQLite for embeddings instead of LanceDB?**
-- Zero additional native dependencies (LanceDB requires platform-specific binaries)
-- Single file for all index data
-- In-process cosine similarity is fast enough for codebases < 100k chunks
-- Simpler deployment and no platform compatibility issues
-
-**Why regex chunking instead of tree-sitter?**
-- Tree-sitter requires per-language WASM binaries (~2MB each)
-- Regex patterns cover 90% of function/class boundary detection
-- Falls back gracefully to line-based chunking
-- Much smaller package size
-
-**Future improvements:**
-- Add tree-sitter for more accurate code structure analysis
-- Add recently-edited file cache as a retrieval source
-- Add cross-branch content deduplication
-- Add reranking model support for the retrieval pipeline
+- **Regex > tree-sitter**: 90% accuracy with zero native deps, falls back to line-based
+- **SQLite > LanceDB**: Single file, no platform binaries, fast enough for <100k chunks
+- **Built-in > external API**: Works offline, no API keys, no latency

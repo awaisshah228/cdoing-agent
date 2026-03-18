@@ -99,6 +99,11 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { cmd: "/memory", hint: "View persistent memory" },
   { cmd: "/hooks", hint: "View configured hooks" },
   { cmd: "/queue", hint: "View message queue" },
+  { cmd: "/index", hint: "Index codebase for search", args: [
+    { value: "full", label: "full", hint: "rebuild index from scratch" },
+    { value: "stats", label: "stats", hint: "show index statistics" },
+    { value: "clear", label: "clear", hint: "clear the index" },
+  ]},
   { cmd: "/help", hint: "Show available commands" },
   { cmd: "/settings", hint: "Open settings panel" },
   { cmd: "/delete", hint: "Delete a conversation" },

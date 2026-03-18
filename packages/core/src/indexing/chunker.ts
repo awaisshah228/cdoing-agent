@@ -17,11 +17,25 @@ export interface Chunk {
   endLine: number;
 }
 
-/** Max tokens per chunk (~3.5 chars/token, target 384 tokens) */
-const MAX_CHUNK_CHARS = 1400;
+/** Target tokens per chunk (matches embedding model sweet spot) */
+const MAX_CHUNK_TOKENS = 384;
+
+/** Approximate chars per token (~3.5 for Claude, ~4 for OpenAI) */
+const CHARS_PER_TOKEN = 3.5;
+
+/** Max chars per chunk (derived from token target) */
+const MAX_CHUNK_CHARS = Math.ceil(MAX_CHUNK_TOKENS * CHARS_PER_TOKEN);
 
 /** Overlap between chunks (lines) */
 const OVERLAP_LINES = 3;
+
+/**
+ * Estimate token count for a string.
+ * Uses ~3.5 chars/token heuristic (consistent with context-manager.ts).
+ */
+export function estimateTokens(text: string): number {
+  return Math.ceil(text.length / CHARS_PER_TOKEN);
+}
 
 /** File extensions that support code-aware chunking */
 const CODE_EXTENSIONS = new Set([
@@ -107,8 +121,8 @@ function codeChunker(content: string): Chunk[] {
 
     if (!chunkContent) continue;
 
-    // If chunk is too large, split it further
-    if (chunkContent.length > MAX_CHUNK_CHARS * 2) {
+    // If chunk exceeds 2x token target, split it further
+    if (estimateTokens(chunkContent) > MAX_CHUNK_TOKENS * 2) {
       const subChunks = basicChunkerFromLines(chunkLines, start);
       chunks.push(...subChunks);
     } else {
@@ -160,10 +174,18 @@ function basicChunker(content: string): Chunk[] {
 
 function basicChunkerFromLines(lines: string[], lineOffset: number): Chunk[] {
   const chunks: Chunk[] = [];
-  const targetLines = Math.ceil(MAX_CHUNK_CHARS / 80); // ~80 chars per line
+  let i = 0;
 
-  for (let i = 0; i < lines.length; i += targetLines - OVERLAP_LINES) {
-    const end = Math.min(i + targetLines, lines.length);
+  while (i < lines.length) {
+    let tokenCount = 0;
+    let end = i;
+
+    // Accumulate lines until we hit the token limit
+    while (end < lines.length && tokenCount < MAX_CHUNK_TOKENS) {
+      tokenCount += estimateTokens(lines[end] + "\n");
+      end++;
+    }
+
     const chunkLines = lines.slice(i, end);
     const content = chunkLines.join("\n").trim();
 
@@ -176,6 +198,9 @@ function basicChunkerFromLines(lines: string[], lineOffset: number): Chunk[] {
     }
 
     if (end >= lines.length) break;
+
+    // Step back by overlap lines for context continuity
+    i = Math.max(i + 1, end - OVERLAP_LINES);
   }
 
   return chunks;

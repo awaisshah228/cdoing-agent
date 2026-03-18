@@ -19,7 +19,8 @@ import { glob } from "glob";
 import { IndexDatabase } from "./database";
 import { chunkDocument, shouldChunk } from "./chunker";
 import { loadIgnorePatterns } from "../utils/gitignore";
-import type { ChunkWithMeta, IndexingProgress, IndexingProgressCallback } from "./types";
+import type { RecentEditsCache } from "./recent-edits-cache";
+import type { ChunkWithMeta, SearchResult, IndexStats, IndexingProgressCallback } from "./types";
 
 /** File extensions to index */
 const INDEXABLE_EXTENSIONS = new Set([
@@ -58,11 +59,25 @@ export class CodebaseIndexer {
   private db: IndexDatabase;
   private workingDir: string;
   private embeddingProvider?: EmbeddingProvider;
+  private recentEditsCache?: RecentEditsCache;
 
-  constructor(workingDir: string, embeddingProvider?: EmbeddingProvider, dbPath?: string) {
+  constructor(
+    workingDir: string,
+    embeddingProvider?: EmbeddingProvider,
+    dbPath?: string,
+    recentEditsCache?: RecentEditsCache,
+  ) {
     this.workingDir = path.resolve(workingDir);
     this.db = new IndexDatabase(dbPath);
     this.embeddingProvider = embeddingProvider;
+    this.recentEditsCache = recentEditsCache;
+  }
+
+  /**
+   * Attach a RecentEditsCache after construction.
+   */
+  setRecentEditsCache(cache: RecentEditsCache): void {
+    this.recentEditsCache = cache;
   }
 
   /**
@@ -195,7 +210,7 @@ export class CodebaseIndexer {
   /**
    * Search the index using full-text search (BM25).
    */
-  searchFts(query: string, limit = 25, directory?: string): import("./types").SearchResult[] {
+  searchFts(query: string, limit = 25, directory?: string): SearchResult[] {
     return this.db.searchFts(query, limit, directory);
   }
 
@@ -203,7 +218,7 @@ export class CodebaseIndexer {
    * Search using vector similarity (cosine similarity).
    * Requires an embedding provider.
    */
-  async searchSemantic(query: string, limit = 25, directory?: string): Promise<import("./types").SearchResult[]> {
+  async searchSemantic(query: string, limit = 25, directory?: string): Promise<SearchResult[]> {
     if (!this.embeddingProvider) return [];
 
     const [queryVector] = await this.embeddingProvider.embed([query]);
@@ -232,22 +247,97 @@ export class CodebaseIndexer {
   }
 
   /**
-   * Combined search: FTS (25%) + Embeddings (75%), deduplicated.
+   * Search recently edited files for query matches.
+   * Recently edited files are highly relevant — the user/agent was just working on them.
    */
-  async search(query: string, limit = 25, directory?: string): Promise<import("./types").SearchResult[]> {
-    const ftsLimit = Math.ceil(limit * 0.35);
-    const embLimit = Math.ceil(limit * 0.65);
+  searchRecent(query: string, limit = 10, directory?: string): SearchResult[] {
+    if (!this.recentEditsCache) return [];
 
-    const [ftsResults, embResults] = await Promise.all([
+    const recentFiles = this.recentEditsCache.getRecent(limit * 2);
+    if (recentFiles.length === 0) return [];
+
+    const queryLower = query.toLowerCase();
+    const results: SearchResult[] = [];
+
+    for (const entry of recentFiles) {
+      const relPath = path.relative(this.workingDir, entry.filePath);
+
+      // Filter by directory if specified
+      if (directory && !relPath.startsWith(directory)) continue;
+
+      const contentLower = entry.content.toLowerCase();
+      const pathLower = relPath.toLowerCase();
+
+      // Score: path match (high) + content match (medium) + recency boost
+      let score = 0;
+      if (pathLower.includes(queryLower)) score += 5;
+
+      const contentMatches = contentLower.split(queryLower).length - 1;
+      if (contentMatches > 0) score += Math.min(contentMatches, 5);
+
+      // Recency boost: more recent = higher score (max +2)
+      const ageMinutes = (Date.now() - entry.editedAt) / 60000;
+      score += Math.max(0, 2 - ageMinutes / 30);
+
+      if (score <= 0) continue;
+
+      // Extract a snippet around the first match
+      const matchIndex = contentLower.indexOf(queryLower);
+      let snippet: string;
+      if (matchIndex >= 0) {
+        const lines = entry.content.split("\n");
+        const linesBefore = entry.content.substring(0, matchIndex).split("\n");
+        const matchLine = linesBefore.length - 1;
+        const start = Math.max(0, matchLine - 3);
+        const end = Math.min(lines.length, matchLine + 10);
+        snippet = lines.slice(start, end).join("\n");
+        results.push({
+          path: relPath,
+          content: snippet,
+          startLine: start + 1,
+          endLine: end,
+          score,
+          source: "recent" as const,
+        });
+      } else if (pathLower.includes(queryLower)) {
+        // Path matched but not content — include file header
+        const lines = entry.content.split("\n");
+        snippet = lines.slice(0, Math.min(15, lines.length)).join("\n");
+        results.push({
+          path: relPath,
+          content: snippet,
+          startLine: 1,
+          endLine: Math.min(15, lines.length),
+          score,
+          source: "recent" as const,
+        });
+      }
+    }
+
+    results.sort((a, b) => b.score - a.score);
+    return results.slice(0, limit);
+  }
+
+  /**
+   * Combined 3-source search: Recent (25%) + FTS (25%) + Embeddings (50%), deduplicated.
+   * Matches Continue's hybrid retrieval pipeline.
+   */
+  async search(query: string, limit = 25, directory?: string): Promise<SearchResult[]> {
+    const recentLimit = Math.ceil(limit * 0.25);
+    const ftsLimit = Math.ceil(limit * 0.25);
+    const embLimit = Math.ceil(limit * 0.50);
+
+    const [recentResults, ftsResults, embResults] = await Promise.all([
+      Promise.resolve(this.searchRecent(query, recentLimit, directory)),
       Promise.resolve(this.searchFts(query, ftsLimit, directory)),
       this.searchSemantic(query, embLimit, directory),
     ]);
 
-    // Deduplicate by path + startLine
+    // Deduplicate by path + startLine, priority: recent > embeddings > FTS
     const seen = new Set<string>();
-    const combined: import("./types").SearchResult[] = [];
+    const combined: SearchResult[] = [];
 
-    for (const r of [...embResults, ...ftsResults]) {
+    for (const r of [...recentResults, ...embResults, ...ftsResults]) {
       const key = `${r.path}:${r.startLine}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -260,7 +350,7 @@ export class CodebaseIndexer {
   /**
    * Get index statistics.
    */
-  getStats(): import("./types").IndexStats {
+  getStats(): IndexStats {
     return this.db.getStats();
   }
 

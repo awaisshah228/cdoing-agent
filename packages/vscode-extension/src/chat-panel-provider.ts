@@ -18,7 +18,7 @@ import {
   getOAuthProviders,
   ShellExecTool,
 } from "@cdoing/core";
-import { ProcessManager, TodoStore } from "@cdoing/core";
+import { ProcessManager, TodoStore, CodebaseIndexer } from "@cdoing/core";
 import type { ToolCategory } from "@cdoing/core";
 import {
   AgentRunner,
@@ -1761,6 +1761,31 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         break;
       }
 
+      case "/index": {
+        const workDir = this.getWorkingDir();
+
+        if (arg === "stats") {
+          const indexer = new CodebaseIndexer(workDir);
+          const s = indexer.getStats();
+          const ago = s.lastIndexed > 0 ? `${Math.round((Date.now() - s.lastIndexed) / 60000)} min ago` : "never";
+          indexer.close();
+          this.postMessage({ type: "systemMessage", text: `**Index Stats:**\n- Files: ${s.totalFiles}\n- Chunks: ${s.totalChunks}\n- FTS: ${s.ftsEntries}\n- Embeddings: ${s.embeddingEntries}\n- Size: ${(s.indexSizeBytes / 1024).toFixed(1)} KB\n- Last indexed: ${ago}` });
+          break;
+        }
+
+        if (arg === "clear") {
+          const indexer = new CodebaseIndexer(workDir);
+          indexer.clearIndex();
+          indexer.close();
+          this.postMessage({ type: "systemMessage", text: "Index cleared." });
+          break;
+        }
+
+        // Run indexing (full rebuild if arg === "full")
+        vscode.commands.executeCommand(arg === "full" ? "cdoing.indexCodebaseFull" : "cdoing.indexCodebase");
+        break;
+      }
+
       case "/help":
         this.postMessage({
           type: "systemMessage",
@@ -1787,6 +1812,12 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 - \`/plan show\` — Show current plan
 - \`/plan off\` — Cancel plan mode
 
+**Index:**
+- \`/index\` — Index codebase (incremental)
+- \`/index full\` — Rebuild index from scratch
+- \`/index stats\` — Show index statistics
+- \`/index clear\` — Clear the index
+
 **Info:**
 - \`/config\` — Configuration
 - \`/usage\` — Token usage
@@ -1797,7 +1828,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 - \`/settings\` — VS Code settings
 
 **Tabs:** Click \`+\` for new tab, \`×\` to close.
-**Shortcuts:** \`Cmd+Shift+L\` new chat, \`Cmd+Shift+Enter\` send selection.`,
+**Shortcuts:** \`Cmd+Shift+L\` new chat, \`Cmd+Shift+I\` index codebase, \`Cmd+Shift+Enter\` send selection.`,
         });
         break;
 

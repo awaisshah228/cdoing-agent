@@ -3,7 +3,7 @@ export { RecentEditsCache } from "./recent-edits-cache";
 export type { CachedEdit } from "./recent-edits-cache";
 export type { EmbeddingProvider } from "./indexer";
 export { IndexDatabase } from "./database";
-export { chunkDocument, shouldChunk } from "./chunker";
+export { chunkDocument, shouldChunk, estimateTokens } from "./chunker";
 export type { Chunk } from "./chunker";
 export type {
   IndexTag,

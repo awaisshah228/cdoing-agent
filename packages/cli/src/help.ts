@@ -82,6 +82,7 @@ export function printHelp(): void {
     ["/tasks", "Show agent task list"],
     ["/queue", "Show message queue"],
     ["/doctor", "Check system health"],
+    ["/index [full|stats|clear]", "Index codebase for search"],
     ["/init", "Initialize project config"],
     ["/dir <path>", "Change working directory"],
     ["/exit", "Exit"],

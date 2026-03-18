@@ -22,6 +22,7 @@ import { ChatPanelProvider } from "./chat-panel-provider";
 import { getWebviewContent } from "./webview-content";
 import { registerInlineEdit } from "./inline-edit";
 import { registerInlineAutocomplete } from "./inline-autocomplete";
+import { CodebaseIndexer } from "@cdoing/core";
 import type { ModelConfig } from "@cdoing/ai";
 
 /** Sidebar chat provider instance */
@@ -329,6 +330,30 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("cdoing.showDiff", async (filePath: string, originalContent: string, newContent: string) => {
       await showInlineDiff(filePath, originalContent, newContent);
     }),
+
+    // ── Index Codebase (Cmd+Shift+I) ──
+    vscode.commands.registerCommand("cdoing.indexCodebase", () => {
+      runIndexCommand(false);
+    }),
+
+    vscode.commands.registerCommand("cdoing.indexCodebaseFull", () => {
+      runIndexCommand(true);
+    }),
+
+    vscode.commands.registerCommand("cdoing.indexCodebaseStats", async () => {
+      const workingDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!workingDir) {
+        vscode.window.showWarningMessage("No workspace folder open.");
+        return;
+      }
+      const indexer = new CodebaseIndexer(workingDir);
+      const stats = indexer.getStats();
+      const ago = stats.lastIndexed > 0 ? `${Math.round((Date.now() - stats.lastIndexed) / 60000)} min ago` : "never";
+      indexer.close();
+      vscode.window.showInformationMessage(
+        `Index: ${stats.totalFiles} files, ${stats.totalChunks} chunks, ${stats.ftsEntries} FTS entries, ${(stats.indexSizeBytes / 1024).toFixed(1)} KB, last indexed ${ago}`
+      );
+    }),
   );
 
   // ── Register Inline Edit Mode (Cmd+I / Ctrl+I) ────────
@@ -454,6 +479,44 @@ class CdoingCodeActionProvider implements vscode.CodeActionProvider {
 
     return actions;
   }
+}
+
+// ── Index Codebase ───────────────────────────────────────
+
+/**
+ * Run codebase indexing with a VS Code progress notification.
+ */
+function runIndexCommand(full: boolean) {
+  const workingDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!workingDir) {
+    vscode.window.showWarningMessage("No workspace folder open.");
+    return;
+  }
+
+  vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: full ? "Rebuilding codebase index..." : "Indexing codebase...",
+      cancellable: false,
+    },
+    async (progress) => {
+      const indexer = new CodebaseIndexer(workingDir);
+
+      if (full) {
+        indexer.clearIndex();
+      }
+
+      const result = await indexer.index((p) => {
+        progress.report({ message: p.message });
+      });
+
+      indexer.close();
+
+      vscode.window.showInformationMessage(
+        `Indexed: +${result.added} new, ~${result.updated} updated, -${result.deleted} deleted (${result.totalChunks} chunks)`
+      );
+    },
+  );
 }
 
 // ── Editor Panel (opens alongside code) ─────────────────
