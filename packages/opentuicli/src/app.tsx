@@ -16,7 +16,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { createRoot, useKeyboard, useTerminalDimensions } from "@opentui/react";
+import { createRoot, useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react";
 import { createCliRenderer, TextAttributes, RGBA } from "@opentui/core";
 import { useState, useRef, useCallback } from "react";
 import {
@@ -51,6 +51,7 @@ import { SessionBrowser } from "./components/session-browser";
 import { SetupWizard } from "./components/setup-wizard";
 import { DialogStatus } from "./components/dialog-status";
 import { setTerminalTitle, resetTerminalTitle } from "./lib/terminal-title";
+import { copySelection } from "./lib/selection";
 import type { Conversation } from "./lib/history";
 
 // ── Types ────────────────────────────────────────────────
@@ -203,27 +204,26 @@ function AppShell(props: {
 
   // ── Global Keyboard ──────────────────────────────────
 
+  const renderer = useRenderer();
+
   useKeyboard((key: any) => {
+    // Ctrl+C — if text is selected, copy to clipboard; otherwise quit
+    if (key.ctrl && key.name === "c") {
+      if (copySelection(renderer)) return;
+      const cleanup = (globalThis as any).__cdoingCleanup;
+      if (cleanup) cleanup();
+      else process.exit(0);
+      return;
+    }
+
     // Don't intercept keys when a dialog is open (let the dialog handle them)
-    // Exception: Ctrl+C and Escape should always work
+    // Exception: Escape should always work
     if (dialog !== "none") {
-      if (key.ctrl && key.name === "c") {
-        const cleanup = (globalThis as any).__cdoingCleanup;
-        if (cleanup) cleanup();
-        process.exit(0);
-      }
       if (key.name === "escape") {
         setDialog("none");
         setRoute("home");
       }
       return;
-    }
-
-    // Ctrl+C — graceful quit
-    if (key.ctrl && key.name === "c") {
-      const cleanup = (globalThis as any).__cdoingCleanup;
-      if (cleanup) cleanup();
-      else process.exit(0);
     }
     // Ctrl+N — new session
     if (key.ctrl && key.name === "n") {

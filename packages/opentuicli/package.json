@@ -1,6 +1,6 @@
 {
   "name": "@cdoing/opentuicli",
-  "version": "0.1.44",
+  "version": "0.1.47",
   "description": "OpenTUI-based terminal interface for cdoing agent (inspired by opencode's TUI)",
   "type": "module",
   "main": "dist/index.js",
@@ -37,6 +37,7 @@
     "commander": "^13.1.0",
     "esbuild": "^0.25.0",
     "react": "^19.1.0",
+    "react-reconciler": "^0.32.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.2",
     "zustand": "^5.0.12"

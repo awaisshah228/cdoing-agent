@@ -1,23 +1,26 @@
 /**
- * InputArea — rich input with autocomplete, ghost text, image paste
+ * InputArea — rich textarea input with autocomplete, ghost text, image paste
  *
  * Features:
+ *   - Full textarea keybindings: cursor movement, selection, word nav,
+ *     undo/redo, delete operations, home/end, buffer start/end
+ *   - Multi-line input (Shift+Enter or Meta+Enter for newline)
  *   - Slash command autocomplete dropdown (/ prefix)
  *   - @mention autocomplete dropdown (@ prefix)
  *   - Tool subcommand suggestions (npm, git, etc.)
- *   - Ghost text inline completion (Tab/→ to accept)
+ *   - Ghost text inline completion (→ to accept)
  *   - Ctrl+V paste text or images (macOS clipboard)
- *   - Ctrl+U clear line, Ctrl+W delete word
  *   - Up/Down navigate suggestions, Enter to select
  *   - Escape to close dropdown
  */
 
-import { TextAttributes, RGBA } from "@opentui/core";
-import { useState, useRef, useMemo } from "react";
+import { TextAttributes, RGBA, type TextareaRenderable } from "@opentui/core";
+import { useState, useRef, useMemo, useCallback } from "react";
 import { useKeyboard } from "@opentui/react";
-import { execSync } from "child_process";
 import { useTheme } from "../context/theme";
+import { readClipboard, readClipboardImage } from "../lib/clipboard";
 import { getCompletions, getGhostText } from "../lib/autocomplete";
+import { TEXTAREA_KEYBINDINGS } from "./textarea-keybindings";
 import type { ImageAttachment } from "@cdoing/ai";
 
 export type AgentMode = "build" | "plan";
@@ -37,51 +40,53 @@ export interface InputAreaProps {
   modelLabel?: string;
 }
 
-function readClipboard(): string {
-  try {
-    if (process.platform === "darwin") return execSync("pbpaste", { encoding: "utf-8" });
-    try { return execSync("xclip -selection clipboard -o", { encoding: "utf-8" }); }
-    catch { return execSync("xsel --clipboard --output", { encoding: "utf-8" }); }
-  } catch { return ""; }
-}
-
-function readClipboardImage(): ImageAttachment | null {
-  if (process.platform !== "darwin") return null;
-  try {
-    const hasImage = execSync(
-      `osascript -e 'clipboard info' 2>/dev/null | grep -q "TIFF\\|PNG\\|JPEG" && echo "yes" || echo "no"`,
-      { encoding: "utf-8", timeout: 1000 },
-    ).trim();
-    if (hasImage !== "yes") return null;
-    const base64 = execSync(
-      `osascript -e 'set theImage to the clipboard as «class PNGf»' -e 'return theImage' 2>/dev/null | base64`,
-      { encoding: "utf-8", timeout: 3000, maxBuffer: 20 * 1024 * 1024 },
-    ).trim();
-    if (base64 && base64.length > 100) return { data: base64, mimeType: "image/png" };
-  } catch {}
-  return null;
-}
-
 const MAX_VISIBLE = 6;
+const MAX_INPUT_LINES = 8;
 
 export function InputArea(props: InputAreaProps) {
   const { theme, customBg } = useTheme();
   const t = theme;
+  const textareaRef = useRef<TextareaRenderable>(null);
   const [value, setValue] = useState("");
   const [pendingImages, setPendingImages] = useState<ImageAttachment[]>([]);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const valueRef = useRef(value);
-  valueRef.current = value;
   const imageCountRef = useRef(0);
 
-  // Compute suggestions based on current input, with a leading "(none)" option for path completions
+  // Sync textarea text → React state for autocomplete computation
+  const syncText = useCallback(() => {
+    const text = textareaRef.current?.plainText ?? "";
+    setValue(text);
+    return text;
+  }, []);
+
+  // Update dropdown state based on current text
+  const updateDropdown = useCallback(
+    (text: string) => {
+      if (
+        text.startsWith("/") ||
+        text.includes("@") ||
+        getCompletions(text, props.workingDir).length > 0
+      ) {
+        setDropdownOpen(true);
+        setSelectedIdx(0);
+      } else {
+        setDropdownOpen(false);
+      }
+    },
+    [props.workingDir],
+  );
+
+  // Compute suggestions based on current input
   const suggestions = useMemo(() => {
     if (!value) return [];
     const completions = getCompletions(value, props.workingDir);
     // Add a "none" option at the top for file/subcommand completions so user can submit as-is
     if (completions.length > 0 && completions[0].type === "file") {
-      return [{ text: value, description: "submit as typed", type: "file" as const }, ...completions];
+      return [
+        { text: value, description: "submit as typed", type: "file" as const },
+        ...completions,
+      ];
     }
     return completions;
   }, [value, props.workingDir]);
@@ -92,14 +97,36 @@ export function InputArea(props: InputAreaProps) {
     return getGhostText(value, props.workingDir);
   }, [value, props.workingDir, dropdownOpen, suggestions.length]);
 
-  // Auto-open dropdown when suggestions exist
   const showDropdown = dropdownOpen && suggestions.length > 0;
 
-  useKeyboard((key: any) => {
-    // Suppress all input when a dialog overlay is open
-    if (props.suppressInput) return;
+  // Called when textarea content changes (via keybindings)
+  const handleContentChange = useCallback(() => {
+    const text = syncText();
+    updateDropdown(text);
+  }, [syncText, updateDropdown]);
 
-    // Allow typing even when disabled (streaming) — submit handler decides what to do
+  // Called when textarea fires "submit" action (Enter key)
+  const handleSubmit = useCallback(() => {
+    // If dropdown is open, submit is handled by useKeyboard dropdown handler
+    if (showDropdown) return;
+
+    const text = (textareaRef.current?.plainText ?? "").trim();
+    if (text || pendingImages.length > 0) {
+      props.onSubmit(
+        text || "Describe this image.",
+        pendingImages.length > 0 ? [...pendingImages] : undefined,
+      );
+      textareaRef.current?.clear();
+      setValue("");
+      setPendingImages([]);
+      setDropdownOpen(false);
+    }
+  }, [props.onSubmit, pendingImages, showDropdown]);
+
+  // useKeyboard handles: Tab (mode switch), Ctrl+V (paste), dropdown navigation,
+  // and text input forwarding when dropdown is open
+  useKeyboard((key: any) => {
+    if (props.suppressInput) return;
 
     // ── Tab — always switch mode (build ↔ plan) ──
     if (key.name === "tab" && props.onModeChange && props.mode) {
@@ -107,7 +134,26 @@ export function InputArea(props: InputAreaProps) {
       return;
     }
 
-    // ── Dropdown navigation ──
+    // ── Ctrl+V — paste image or text ──
+    if (key.ctrl && key.name === "v") {
+      const img = readClipboardImage();
+      if (img) {
+        imageCountRef.current += 1;
+        setPendingImages((prev) => [...prev, img]);
+        textareaRef.current?.insertText(`[Image #${imageCountRef.current}] `);
+        syncText();
+        return;
+      }
+      const clip = readClipboard().trim();
+      if (clip) {
+        textareaRef.current?.insertText(clip);
+        const text = syncText();
+        updateDropdown(text);
+      }
+      return;
+    }
+
+    // ── Dropdown navigation (only when dropdown is open) ──
     if (showDropdown) {
       if (key.name === "up") {
         setSelectedIdx((i) => (i <= 0 ? suggestions.length - 1 : i - 1));
@@ -122,7 +168,11 @@ export function InputArea(props: InputAreaProps) {
         if (s) {
           const text = s.text.trim();
           if (text) {
-            props.onSubmit(text, pendingImages.length > 0 ? [...pendingImages] : undefined);
+            props.onSubmit(
+              text,
+              pendingImages.length > 0 ? [...pendingImages] : undefined,
+            );
+            textareaRef.current?.clear();
             setValue("");
             setPendingImages([]);
           }
@@ -135,11 +185,13 @@ export function InputArea(props: InputAreaProps) {
         setDropdownOpen(false);
         return;
       }
-      // Arrow right — accept selected autocomplete suggestion
+      // Arrow right — accept selected autocomplete suggestion into textarea
       if (key.name === "right") {
         const s = suggestions[selectedIdx];
         if (s) {
-          setValue(s.text + " ");
+          textareaRef.current?.clear();
+          textareaRef.current?.insertText(s.text + " ");
+          syncText();
           setDropdownOpen(false);
           setSelectedIdx(0);
         }
@@ -147,115 +199,40 @@ export function InputArea(props: InputAreaProps) {
       }
     }
 
-    // ── Ghost text accept (arrow right) ──
-    if (ghost && key.name === "right") {
-      setValue((v) => v + ghost);
-      return;
-    }
-
-    // Ctrl+V — paste image or text
-    if (key.ctrl && key.name === "v") {
-      const img = readClipboardImage();
-      if (img) {
-        imageCountRef.current += 1;
-        setPendingImages((prev) => [...prev, img]);
-        setValue((v) => v + `[Image #${imageCountRef.current}] `);
-        return;
-      }
-      const clip = readClipboard().trim();
-      if (clip) {
-        const firstLine = clip.split("\n")[0] || "";
-        setValue((v) => v + firstLine);
-      }
-      return;
-    }
-
-    // Ctrl+U — clear line
-    if (key.ctrl && key.name === "u") {
-      setValue("");
-      setPendingImages([]);
-      setDropdownOpen(false);
-      return;
-    }
-
-    // Ctrl+W — delete last word
-    if (key.ctrl && key.name === "w") {
-      setValue((v) => v.replace(/\S+\s*$/, ""));
-      return;
-    }
-
-    // Enter — submit
-    if (key.name === "return" && !key.shift) {
-      const text = valueRef.current.trim();
-      if (text || pendingImages.length > 0) {
-        props.onSubmit(text || "Describe this image.", pendingImages.length > 0 ? [...pendingImages] : undefined);
-        setValue("");
-        setPendingImages([]);
-        setDropdownOpen(false);
-      }
-      return;
-    }
-
-    // Backspace
-    if (key.name === "backspace") {
-      setValue((v) => {
-        const next = v.slice(0, -1);
-        // Re-evaluate dropdown
-        if (next.startsWith("/") || next.includes("@") || getCompletions(next, props.workingDir).length > 0) {
-          setDropdownOpen(true);
-          setSelectedIdx(0);
-        } else {
-          setDropdownOpen(false);
+    // ── Ghost text accept (arrow right when at end of text) ──
+    if (ghost && key.name === "right" && !key.ctrl && !key.meta && !key.shift) {
+      const ta = textareaRef.current;
+      if (ta) {
+        // Only accept ghost text if cursor is at end of buffer
+        const text = ta.plainText ?? "";
+        if (ta.cursorOffset >= text.length) {
+          ta.insertText(ghost);
+          syncText();
+          return;
         }
-        return next;
-      });
-      return;
-    }
-
-    // Escape — only consume if dropdown is open
-    if (key.name === "escape" && dropdownOpen) {
-      setDropdownOpen(false);
-      return;
-    }
-
-    // Space
-    if (key.name === "space") {
-      setValue((v) => {
-        const next = v + " ";
-        // Close dropdown on space for slash commands, but check for path completions
-        if (v.startsWith("/")) {
-          setDropdownOpen(false);
-        } else if (getCompletions(next, props.workingDir).length > 0) {
-          setDropdownOpen(true);
-          setSelectedIdx(0);
-        }
-        return next;
-      });
-      return;
-    }
-
-    // Regular character
-    if (key.name && key.name.length === 1 && !key.ctrl && !key.meta) {
-      setValue((v) => {
-        const next = v + key.name;
-        // Auto-open dropdown for /, @, and path completions
-        if (next.startsWith("/") || next.includes("@")) {
-          setDropdownOpen(true);
-          setSelectedIdx(0);
-        } else if (getCompletions(next, props.workingDir).length > 0) {
-          setDropdownOpen(true);
-          setSelectedIdx(0);
-        }
-        return next;
-      });
+      }
     }
   });
 
   const isSlashCommand = value.startsWith("/");
 
+  // Dynamic height: 1 line base + extra lines for multiline, capped
+  const lineCount = Math.max(1, (value.match(/\n/g) || []).length + 1);
+  const visibleLines = Math.min(lineCount, MAX_INPUT_LINES);
+  const inputHeight = visibleLines + 2; // +2 for border
+
   // Window the suggestions for display
-  const windowStart = Math.max(0, Math.min(selectedIdx - Math.floor(MAX_VISIBLE / 2), suggestions.length - MAX_VISIBLE));
-  const visibleSuggestions = suggestions.slice(windowStart, windowStart + MAX_VISIBLE);
+  const windowStart = Math.max(
+    0,
+    Math.min(
+      selectedIdx - Math.floor(MAX_VISIBLE / 2),
+      suggestions.length - MAX_VISIBLE,
+    ),
+  );
+  const visibleSuggestions = suggestions.slice(
+    windowStart,
+    windowStart + MAX_VISIBLE,
+  );
   const hasAbove = windowStart > 0;
   const hasBelow = windowStart + MAX_VISIBLE < suggestions.length;
 
@@ -267,18 +244,27 @@ export function InputArea(props: InputAreaProps) {
       {showDropdown && (
         <box flexDirection="column" paddingX={1} backgroundColor={bgColor}>
           {hasAbove && (
-            <box><text fg={t.textDim}>{`  ▲ ${windowStart} more`}</text></box>
+            <box>
+              <text fg={t.textDim}>{`  ▲ ${windowStart} more`}</text>
+            </box>
           )}
           {visibleSuggestions.map((s, i) => {
             const realIdx = windowStart + i;
             const isSelected = realIdx === selectedIdx;
-            const color = s.type === "command" ? t.warning
-              : s.type === "mention" ? t.info
-              : s.type === "file" ? t.success
-              : t.textMuted;
+            const color =
+              s.type === "command"
+                ? t.warning
+                : s.type === "mention"
+                  ? t.info
+                  : s.type === "file"
+                    ? t.success
+                    : t.textMuted;
             return (
               <box key={s.text} flexDirection="row">
-                <text fg={isSelected ? t.primary : color} attributes={isSelected ? TextAttributes.BOLD : undefined}>
+                <text
+                  fg={isSelected ? t.primary : color}
+                  attributes={isSelected ? TextAttributes.BOLD : undefined}
+                >
                   {isSelected ? " ❯ " : "   "}
                 </text>
                 <text fg={isSelected ? t.text : color}>{s.text}</text>
@@ -289,7 +275,9 @@ export function InputArea(props: InputAreaProps) {
             );
           })}
           {hasBelow && (
-            <box><text fg={t.textDim}>{`  ▼ ${suggestions.length - windowStart - MAX_VISIBLE} more`}</text></box>
+            <box>
+              <text fg={t.textDim}>{`  ▼ ${suggestions.length - windowStart - MAX_VISIBLE} more`}</text>
+            </box>
           )}
         </box>
       )}
@@ -303,14 +291,13 @@ export function InputArea(props: InputAreaProps) {
         </box>
       )}
 
-      {/* Input box */}
+      {/* Input box with native textarea */}
       <box
-        height={3}
+        height={inputHeight}
         borderStyle="single"
         borderColor={t.borderFocused}
         backgroundColor={bgColor}
         flexDirection="row"
-        alignItems="center"
         paddingX={1}
       >
         <text
@@ -320,40 +307,67 @@ export function InputArea(props: InputAreaProps) {
           {isSlashCommand ? " / " : " > "}
         </text>
 
-        {value ? (
-          <>
-            <text fg={t.text}>{value}</text>
-            {ghost ? (
-              <text fg={t.textDim}>{ghost}</text>
-            ) : (
-              <text fg={t.primary}>{"▊"}</text>
-            )}
-          </>
-        ) : (
-          <text fg={t.textDim}>
-            {props.placeholder || "Type a message... (^V paste, / commands, @ context, → accept)"}
-          </text>
-        )}
+        <textarea
+          ref={textareaRef}
+          focused={!props.suppressInput}
+          keyBindings={TEXTAREA_KEYBINDINGS}
+          placeholder={
+            props.placeholder ||
+            "Type a message... (^V paste, / commands, @ context, → accept)"
+          }
+          placeholderColor={t.textDim}
+          textColor={t.text}
+          backgroundColor={bgColor}
+          cursorColor={t.primary}
+          cursorStyle={{ style: "block", blinking: true }}
+          selectionBg={t.primary}
+          selectionFg={t.bg}
+          wrapMode="word"
+          showCursor={true}
+          flexGrow={1}
+          onContentChange={handleContentChange}
+          onSubmit={handleSubmit}
+        />
+
+        {/* Ghost text hint (shown after textarea when no dropdown) */}
+        {ghost && !showDropdown ? (
+          <text fg={t.textDim}>{ghost}</text>
+        ) : null}
       </box>
 
       {/* Mode tab bar (Build / Plan) + model label + shortcuts */}
       {props.mode && (
-        <box height={1} flexDirection="row" backgroundColor={bgColor} paddingX={1}>
+        <box
+          height={1}
+          flexDirection="row"
+          backgroundColor={bgColor}
+          paddingX={1}
+        >
           {/* Build tab */}
-          <box backgroundColor={props.mode === "build" ? t.primary : undefined}>
+          <box
+            backgroundColor={props.mode === "build" ? t.primary : undefined}
+          >
             <text
               fg={props.mode === "build" ? t.bg : t.textMuted}
-              attributes={props.mode === "build" ? TextAttributes.BOLD : undefined}
+              attributes={
+                props.mode === "build" ? TextAttributes.BOLD : undefined
+              }
             >
               {" Build "}
             </text>
           </box>
           <text fg={t.textDim}>{" "}</text>
           {/* Plan tab */}
-          <box backgroundColor={props.mode === "plan" ? t.secondary : undefined}>
+          <box
+            backgroundColor={
+              props.mode === "plan" ? t.secondary : undefined
+            }
+          >
             <text
               fg={props.mode === "plan" ? t.bg : t.textMuted}
-              attributes={props.mode === "plan" ? TextAttributes.BOLD : undefined}
+              attributes={
+                props.mode === "plan" ? TextAttributes.BOLD : undefined
+              }
             >
               {" Plan "}
             </text>
@@ -372,7 +386,8 @@ export function InputArea(props: InputAreaProps) {
           {/* Right-aligned shortcut hints */}
           <box flexGrow={1} />
           <text fg={t.textDim}>{"tab mode  "}</text>
-          <text fg={t.textDim}>{"ctrl+p commands"}</text>
+          <text fg={t.textDim}>{"^Z undo  "}</text>
+          <text fg={t.textDim}>{"^V paste"}</text>
         </box>
       )}
     </box>

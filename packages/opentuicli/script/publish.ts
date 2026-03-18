@@ -112,15 +112,17 @@ const publishTasks = Object.keys(binaries).map(async (name) => {
     console.log(`  [dry-run] Would publish ${name}@${version}`)
   } else {
     await $`npm pack`.cwd(pkgDir)
-    await $`npm publish *.tgz --access public --tag ${tag}`.cwd(pkgDir)
+    await $`npm publish *.tgz --access public --tag ${tag} --registry https://registry.npmjs.org/`.cwd(pkgDir)
   }
 })
 
 await Promise.all(publishTasks)
 
 // Clean any leftover .tgz from previous runs
-for (const f of fs.readdirSync(mainPkgDir)) {
-  if (f.endsWith(".tgz")) fs.unlinkSync(path.join(mainPkgDir, f))
+if (fs.existsSync(mainPkgDir)) {
+  for (const f of fs.readdirSync(mainPkgDir)) {
+    if (f.endsWith(".tgz")) fs.unlinkSync(path.join(mainPkgDir, f))
+  }
 }
 
 // Publish the main wrapper package
@@ -130,7 +132,7 @@ if (dryRun) {
   console.log(`  [dry-run] Would publish ${pkg.name}@${version}`)
 } else {
   await $`npm pack`.cwd(mainPkgDir)
-  await $`npm publish *.tgz --access public --tag ${tag}`.cwd(mainPkgDir)
+  await $`npm publish *.tgz --access public --tag ${tag} --registry https://registry.npmjs.org/`.cwd(mainPkgDir)
 }
 
 console.log("\nPublish complete!")

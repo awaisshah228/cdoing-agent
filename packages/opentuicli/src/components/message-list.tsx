@@ -110,7 +110,7 @@ function RenderMarkdown(props: { text: string; theme: Theme }) {
     // ── Headers ──
     if (line.startsWith("### ")) {
       rendered.push(
-        <text key={i} fg={t.info} attributes={TextAttributes.BOLD}>
+        <text key={i} fg={t.info} attributes={TextAttributes.BOLD} selectable>
           {`  ▸ ${stripInlineMarkdown(line.slice(4))}`}
         </text>
       );
@@ -119,7 +119,7 @@ function RenderMarkdown(props: { text: string; theme: Theme }) {
     }
     if (line.startsWith("## ")) {
       rendered.push(
-        <text key={i} fg={t.primary} attributes={TextAttributes.BOLD}>
+        <text key={i} fg={t.primary} attributes={TextAttributes.BOLD} selectable>
           {` ▸▸ ${stripInlineMarkdown(line.slice(3))}`}
         </text>
       );
@@ -128,7 +128,7 @@ function RenderMarkdown(props: { text: string; theme: Theme }) {
     }
     if (line.startsWith("# ")) {
       rendered.push(
-        <text key={i} fg={t.primary} attributes={TextAttributes.BOLD}>
+        <text key={i} fg={t.primary} attributes={TextAttributes.BOLD} selectable>
           {`▸▸▸ ${stripInlineMarkdown(line.slice(2))}`}
         </text>
       );
@@ -139,7 +139,7 @@ function RenderMarkdown(props: { text: string; theme: Theme }) {
     // ── Horizontal rule ──
     if (/^---+$/.test(line) || /^===+$/.test(line) || /^\*\*\*+$/.test(line)) {
       rendered.push(
-        <text key={i} fg={t.textDim}>{"─".repeat(40)}</text>
+        <text key={i} fg={t.textDim} selectable>{"─".repeat(40)}</text>
       );
       i++;
       continue;
@@ -151,7 +151,7 @@ function RenderMarkdown(props: { text: string; theme: Theme }) {
       const indent = bulletMatch[1] || "";
       const content = stripInlineMarkdown(bulletMatch[2]);
       rendered.push(
-        <text key={i}>{`${indent}● ${content}`}</text>
+        <text key={i} selectable>{`${indent}● ${content}`}</text>
       );
       i++;
       continue;
@@ -162,7 +162,7 @@ function RenderMarkdown(props: { text: string; theme: Theme }) {
     if (numMatch) {
       const content = stripInlineMarkdown(numMatch[3]);
       rendered.push(
-        <text key={i}>{`${numMatch[1]}${numMatch[2]}. ${content}`}</text>
+        <text key={i} selectable>{`${numMatch[1]}${numMatch[2]}. ${content}`}</text>
       );
       i++;
       continue;
@@ -171,7 +171,7 @@ function RenderMarkdown(props: { text: string; theme: Theme }) {
     // ── Blockquote ──
     if (line.startsWith("> ")) {
       rendered.push(
-        <text key={i} fg={t.textMuted}>{`│ ${stripInlineMarkdown(line.slice(2))}`}</text>
+        <text key={i} fg={t.textMuted} selectable>{`│ ${stripInlineMarkdown(line.slice(2))}`}</text>
       );
       i++;
       continue;
@@ -186,7 +186,7 @@ function RenderMarkdown(props: { text: string; theme: Theme }) {
 
     // ── Plain text — strip markdown syntax ──
     rendered.push(
-      <text key={i}>{stripInlineMarkdown(line)}</text>
+      <text key={i} selectable>{stripInlineMarkdown(line)}</text>
     );
     i++;
   }
@@ -237,7 +237,7 @@ export function MessageList(props: {
               <text fg={t.userText} attributes={TextAttributes.BOLD}>
                 {"❯ "}
               </text>
-              <text fg={t.userText} flexGrow={1}>{msg.content}</text>
+              <text fg={t.userText} flexGrow={1} selectable>{msg.content}</text>
               {props.showTimestamps && msg.timestamp && (
                 <text fg={t.textDim}>{`  ${formatTimestamp(msg.timestamp)}`}</text>
               )}
@@ -266,7 +266,7 @@ export function MessageList(props: {
         if (msg.role === "system") {
           return (
             <box key={msg.id} paddingX={1} flexDirection="row">
-              <text fg={t.systemText} flexGrow={1}>{`⚡ ${msg.content}`}</text>
+              <text fg={t.systemText} flexGrow={1} selectable>{`⚡ ${msg.content}`}</text>
               {props.showTimestamps && msg.timestamp && (
                 <text fg={t.textDim}>{`  ${formatTimestamp(msg.timestamp)}`}</text>
               )}
@@ -496,7 +496,7 @@ function ToolCallRow(props: {
           </box>
           {previewLines.map((line, i) => (
             <box key={i} height={1}>
-              <text fg={t.textDim}>{`  │ ${trimText(line, 55)}`}</text>
+              <text fg={t.textDim} selectable>{`  │ ${trimText(line, 55)}`}</text>
             </box>
           ))}
           {hasMoreLines && (

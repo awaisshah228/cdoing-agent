@@ -11,14 +11,14 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { execSync } from "child_process";
+import { readClipboard } from "../lib/clipboard";
 import open from "open";
 import { TextAttributes } from "@opentui/core";
 import { useState, useRef, useEffect } from "react";
 import { useKeyboard } from "@opentui/react";
 import { useTheme } from "../context/theme";
 import { getProviders } from "@cdoing/ai";
-import { getOAuthProvider, supportsOAuth } from "@cdoing/core";
+import { getOAuthProvider, supportsOAuth, startLocalOAuthServer, exchangeOAuthCode } from "@cdoing/core";
 
 export interface SetupWizardProps {
   onComplete: (config: { provider: string; model: string; apiKey?: string; oauthToken?: string }) => void;
@@ -71,13 +71,6 @@ for (const p of _catalog as Array<{ id: string; envVar?: string; keyUrl?: string
 
 type Step = "provider" | "auth-method" | "model" | "apikey" | "oauth-paste" | "oauth-exchanging";
 
-function readClipboard(): string {
-  try {
-    if (process.platform === "darwin") return execSync("pbpaste", { encoding: "utf-8" });
-    try { return execSync("xclip -selection clipboard -o", { encoding: "utf-8" }); }
-    catch { return execSync("xsel --clipboard --output", { encoding: "utf-8" }); }
-  } catch { return ""; }
-}
 
 function openBrowser(url: string): void {
   open(url).catch(() => {});
@@ -107,34 +100,84 @@ export function SetupWizard(props: SetupWizardProps) {
   const [oauthUrl, setOauthUrl] = useState("");
   const [consoleUrl, setConsoleUrl] = useState("");
   const [oauthVerifier, setOauthVerifier] = useState("");
+  const [oauthState, setOauthState] = useState("");
+  const [oauthPort, setOauthPort] = useState(0);
   const [oauthCodeInput, setOauthCodeInput] = useState("");
   const [showCode, setShowCode] = useState(false);
   const [oauthError, setOauthError] = useState("");
+  const [oauthListening, setOauthListening] = useState(false);
   const exchangingRef = useRef(false);
+  const oauthServerRef = useRef<{ close: () => void } | null>(null);
 
   const provider = PROVIDERS[selectedProvider];
   const models = authMethod === "oauth" ? getOAuthModels(chosenProviderId) : (MODELS[chosenProviderId] || []);
 
-  // Generate OAuth URLs when entering oauth-paste step
+  // Start local OAuth server when entering oauth-paste step
   useEffect(() => {
     if (step !== "oauth-paste") return;
-    try {
-      const { generateOAuthUrl } = require("@cdoing/core");
-      const { url, codeVerifier } = generateOAuthUrl(chosenProviderId);
-      // Local URL — opens in browser, redirects to localhost for auto-capture
-      setOauthUrl(url);
-      setOauthVerifier(codeVerifier);
-      setOauthCodeInput("");
-      setOauthError("");
-      openBrowser(url);
+    let serverCancelled = false;
 
-      // Console URL — fallback that shows the code in browser for manual copy
-      const authUrl = new URL(url);
-      authUrl.searchParams.set("redirect_uri", "https://console.anthropic.com/oauth/code/callback");
-      setConsoleUrl(authUrl.toString());
-    } catch {
-      setOauthError("OAuth not available. Install @cdoing/core with OAuth support.");
-    }
+    (async () => {
+      try {
+        const server = await startLocalOAuthServer(chosenProviderId);
+        if (serverCancelled) { server.close(); return; }
+
+        oauthServerRef.current = server;
+        setOauthUrl(server.url);
+        setOauthVerifier(server.codeVerifier);
+        setOauthState(server.state);
+        setOauthPort(server.port);
+        setOauthCodeInput("");
+        setOauthError("");
+        setOauthListening(true);
+
+        // Console URL — fallback that shows the code in browser for manual copy
+        const authUrl = new URL(server.url);
+        authUrl.searchParams.set("redirect_uri", "https://console.anthropic.com/oauth/code/callback");
+        setConsoleUrl(authUrl.toString());
+
+        // Open browser with the localhost-redirect URL for auto-capture
+        openBrowser(server.url);
+
+        // Wait for auto-capture from local server
+        const code = await server.codePromise;
+        if (serverCancelled) return;
+
+        // Auto-captured! Exchange immediately.
+        // Once we have the code, do NOT bail on cleanup — the exchange must complete.
+        exchangingRef.current = true;
+        setStep("oauth-exchanging");
+        const localRedirectUri = `http://localhost:${server.port}/callback`;
+        const tokens = await exchangeOAuthCode(code, server.codeVerifier, chosenProviderId, localRedirectUri, server.state);
+
+        const cfgDir = path.join(os.homedir(), ".cdoing");
+        const cfgPath = path.join(cfgDir, "config.json");
+        let cfg: Record<string, any> = {};
+        try { if (fs.existsSync(cfgPath)) cfg = JSON.parse(fs.readFileSync(cfgPath, "utf-8")); } catch {}
+        cfg.provider = chosenProviderId;
+        cfg.model = chosenModelId;
+        if (!fs.existsSync(cfgDir)) fs.mkdirSync(cfgDir, { recursive: true });
+        fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), "utf-8");
+        props.onComplete({ provider: chosenProviderId, model: chosenModelId, oauthToken: tokens.access_token });
+      } catch (err: any) {
+        if (serverCancelled) return;
+        // Server failed or timed out — user can still paste manually
+        setOauthListening(false);
+        if (err?.message?.includes("timed out")) {
+          setOauthError("Auto-capture timed out. Paste the code manually.");
+        }
+      }
+    })();
+
+    return () => {
+      serverCancelled = true;
+      // Only close the server if we haven't already captured the code
+      if (!exchangingRef.current) {
+        oauthServerRef.current?.close();
+        oauthServerRef.current = null;
+      }
+      setOauthListening(false);
+    };
   }, [step, chosenProviderId]);
 
   useKeyboard((key: any) => {
@@ -279,44 +322,37 @@ export function SetupWizard(props: SetupWizardProps) {
       return;
     }
 
-    // ── Step 4b: OAuth code paste ──
+    // ── Step 4b: OAuth code paste (manual fallback) ──
     if (step === "oauth-paste") {
       if (key.name === "return") {
         const code = oauthCodeInput.trim();
         if (!code || exchangingRef.current) return;
         exchangingRef.current = true;
         setStep("oauth-exchanging");
-        try {
-          const { exchangeOAuthCode } = require("@cdoing/core");
-          exchangeOAuthCode(code, oauthVerifier, chosenProviderId, "https://console.anthropic.com/oauth/code/callback")
-            .then((tokens: any) => {
-              // Save config file (provider + model) directly — don't use saveAndComplete
-              // because it calls onComplete without the oauthToken
-              const cfgDir = path.join(os.homedir(), ".cdoing");
-              const cfgPath = path.join(cfgDir, "config.json");
-              let cfg: Record<string, any> = {};
-              try { if (fs.existsSync(cfgPath)) cfg = JSON.parse(fs.readFileSync(cfgPath, "utf-8")); } catch {}
-              cfg.provider = chosenProviderId;
-              cfg.model = chosenModelId;
-              if (!fs.existsSync(cfgDir)) fs.mkdirSync(cfgDir, { recursive: true });
-              fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), "utf-8");
-              // Call onComplete once with the token
-              props.onComplete({
-                provider: chosenProviderId,
-                model: chosenModelId,
-                oauthToken: tokens.access_token,
-              });
-            })
-            .catch((err: Error) => {
-              exchangingRef.current = false;
-              setOauthError(err.message);
-              setStep("oauth-paste");
+        // Close the local server — user pasted manually via console URL
+        oauthServerRef.current?.close();
+        oauthServerRef.current = null;
+        exchangeOAuthCode(code, oauthVerifier, chosenProviderId, "https://console.anthropic.com/oauth/code/callback")
+          .then((tokens) => {
+            const cfgDir = path.join(os.homedir(), ".cdoing");
+            const cfgPath = path.join(cfgDir, "config.json");
+            let cfg: Record<string, any> = {};
+            try { if (fs.existsSync(cfgPath)) cfg = JSON.parse(fs.readFileSync(cfgPath, "utf-8")); } catch {}
+            cfg.provider = chosenProviderId;
+            cfg.model = chosenModelId;
+            if (!fs.existsSync(cfgDir)) fs.mkdirSync(cfgDir, { recursive: true });
+            fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), "utf-8");
+            props.onComplete({
+              provider: chosenProviderId,
+              model: chosenModelId,
+              oauthToken: tokens.access_token,
             });
-        } catch {
-          exchangingRef.current = false;
-          setOauthError("OAuth exchange failed");
-          setStep("oauth-paste");
-        }
+          })
+          .catch((err: Error) => {
+            exchangingRef.current = false;
+            setOauthError(err.message);
+            setStep("oauth-paste");
+          });
         return;
       }
       if ((key.ctrl || key.meta) && key.name === "v") {
@@ -521,11 +557,16 @@ export function SetupWizard(props: SetupWizardProps) {
           <text>{""}</text>
           <text fg={t.text}>{"  1. Browser should open to Claude login"}</text>
           <text fg={t.text}>{"  2. Log in and approve access"}</text>
-          <text fg={t.text}>{"  3. Copy the code and paste below"}</text>
+          <text fg={t.text}>{oauthListening
+            ? "  3. Code will be captured automatically, or paste below"
+            : "  3. Copy the code and paste below"}</text>
           <text>{""}</text>
+          {oauthListening && oauthPort ? (
+            <text fg={t.success || t.primary}>{`  Listening on http://localhost:${oauthPort}/callback ...`}</text>
+          ) : null}
           {consoleUrl ? (
             <>
-              <text fg={t.textDim}>{"  If browser didn't open, click this link:"}</text>
+              <text fg={t.textDim}>{"  If browser didn't open, use this link (shows code to copy):"}</text>
               <text
                 fg={t.primary}
                 onMouseUp={() => { openBrowser(consoleUrl); }}
