@@ -1,0 +1,117 @@
+name: Publish opentuicli Platform Binaries
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/opentuicli/**'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (no actual publish)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          LOCAL=$(node -p "require('./packages/opentuicli/package.json').version")
+          NPM=$(npm view @cdoing/opentuicli version 2>/dev/null || echo "0.0.0")
+          echo "version=$LOCAL" >> $GITHUB_OUTPUT
+          if [ "$LOCAL" != "$NPM" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+          echo "Local: $LOCAL, npm: $NPM"
+
+  build-and-publish-platform:
+    needs: check-version
+    if: needs.check-version.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+          - os: ubuntu-24.04-arm
+            platform: linux
+            arch: arm64
+          - os: macos-latest
+            platform: darwin
+            arch: arm64
+          - os: macos-13
+            platform: darwin
+            arch: x64
+          - os: windows-latest
+            platform: win32
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: yarn install --ignore-engines
+
+      - name: Build binary
+        working-directory: packages/opentuicli
+        run: bun run build
+
+      - name: Publish platform package
+        working-directory: packages/opentuicli
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            node scripts/publish-platform.mjs --dry-run
+          else
+            node scripts/publish-platform.mjs
+          fi
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-main:
+    needs: [check-version, build-and-publish-platform]
+    if: needs.check-version.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: yarn install --ignore-engines
+
+      - name: Build (for dist structure)
+        working-directory: packages/opentuicli
+        run: bun run build
+
+      - name: Publish main package
+        working-directory: packages/opentuicli
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            npm publish --access public --dry-run
+          else
+            npm publish --access public
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
