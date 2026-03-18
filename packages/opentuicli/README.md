@@ -5,20 +5,16 @@
 
 Lightweight terminal interface for [Cdoing Agent](https://github.com/awaisshah228/cdoing-agent) — built on the OpenTUI framework. An open-source, multi-provider AI coding assistant.
 
-## Requirements
-
-**[Bun](https://bun.sh) is required.** This package uses the OpenTUI framework which relies on Bun-native terminal rendering APIs and does not work with Node.js.
-
-If you need Node.js compatibility, use [`@cdoing/cli`](https://www.npmjs.com/package/@cdoing/cli) instead (same agent, Ink-based UI).
-
 ## Installation
 
 ```bash
-# Bun (required)
-bun install -g @cdoing/opentuicli
+# Install globally (no Bun required — standalone binary with embedded runtime)
+npm install -g @cdoing/opentuicli
 
-# Install Bun if you don't have it
-curl -fsSL https://bun.sh/install | bash
+# Or with other package managers
+yarn global add @cdoing/opentuicli
+pnpm add -g @cdoing/opentuicli
+bun install -g @cdoing/opentuicli
 ```
 
 ## Quick Start
@@ -34,15 +30,28 @@ cdoing-tui "refactor this function to use async/await"
 cdoing-tui --provider openrouter --model anthropic/claude-sonnet-4
 ```
 
+## How It Works
+
+The published package includes a **standalone compiled binary** with the Bun runtime embedded — no Bun, Node.js, or any runtime needed to run it. This is the same approach used by [opencode](https://github.com/opencode-ai/opencode).
+
+For development, you need [Bun](https://bun.sh) to build from source:
+
+```bash
+# Build for current platform
+bun run build
+
+# Build for all platforms (linux, macOS, windows × arm64/x64)
+bun run build:all
+```
+
 ## Why OpenTUI?
 
 This is the **lightweight alternative** to `@cdoing/cli`. While the main CLI uses Ink + React for a rich terminal UI, this package uses the OpenTUI framework for a minimal, fast, keyboard-driven experience.
 
 | | `@cdoing/cli` | `@cdoing/opentuicli` |
 |---|---|---|
-| **Runtime** | Node.js (npm/yarn/pnpm) | **Bun only** |
-| **UI Framework** | Ink + React | OpenTUI |
-| **Bundle size** | Larger | Smaller |
+| **Runtime** | Node.js | **Standalone binary** |
+| **UI Framework** | Ink + React | OpenTUI + React |
 | **Startup time** | ~1s | ~0.5s |
 | **Features** | Full (tabs, history) | Essential |
 | **Best for** | Daily use | Quick tasks, low-resource |
