@@ -266,6 +266,16 @@ export function useChatState() {
           if (tokenBufferRef.current) flushTokenBuffer();
           streamingRef.current = null;
           break;
+        case "clearStreamingText":
+          // Local models (Ollama) emitted tool call JSON as text — remove it
+          if (rafRef.current !== null) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+          tokenBufferRef.current = "";
+          if (streamingRef.current) {
+            const sid = streamingRef.current;
+            setEntries((prev) => prev.filter((e) => e.id !== sid));
+            streamingRef.current = null;
+          }
+          break;
         case "toolCall":
           addToolCall(msg.name, msg.input, (msg as any).description);
           break;

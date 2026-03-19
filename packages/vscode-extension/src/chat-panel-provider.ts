@@ -1224,6 +1224,10 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       onToken: (token) => {
         this.postTabMessage(tabId, { type: "token", text: token });
       },
+      onTextToolCallDetected: () => {
+        // Local models (Ollama) may stream tool calls as text — clear the raw JSON from UI
+        this.postTabMessage(tabId, { type: "clearStreamingText" });
+      },
       onToolCall: (name, input) => {
         // Finalize any streamed text so it stays visible above the tool calls
         this.postTabMessage(tabId, { type: "finalizeStreaming" });

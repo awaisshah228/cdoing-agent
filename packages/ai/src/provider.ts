@@ -337,16 +337,26 @@ export function createModel(config: Partial<ModelConfig> = {}) {
         maxOutputTokens: maxTokens,
       });
 
-    case ModelProvider.OLLAMA:
+    case ModelProvider.OLLAMA: {
+      // Model-specific temperature defaults for local models (inspired by OpenCode)
+      // Qwen models work better with slightly higher temperature
+      const ollamaTemp = config.temperature ?? (
+        modelName.includes("qwen") ? 0.55 :
+        modelName.includes("deepseek") ? 0.6 :
+        0.3  // Lower default for local models — more deterministic tool calls
+      );
       return new ChatOpenAI({
         model: modelName,
         openAIApiKey: config.apiKey || process.env.OLLAMA_API_KEY || "ollama", // Ollama doesn't require a key
-        temperature,
+        temperature: ollamaTemp,
         maxTokens,
         configuration: {
           baseURL: config.baseURL || "http://localhost:11434/v1",
         },
+        // Ollama models need higher num_predict to avoid truncating tool call JSON
+        modelKwargs: { num_predict: maxTokens },
       });
+    }
 
     case ModelProvider.AZURE: {
       const endpoint = config.baseURL || process.env.AZURE_OPENAI_ENDPOINT;

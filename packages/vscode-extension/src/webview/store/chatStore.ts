@@ -485,6 +485,20 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
           streamingId = null;
           break;
 
+        case "clearStreamingText":
+          // Local models (Ollama) emitted tool call JSON as text — remove it
+          // Cancel any pending RAF flush so cleared buffer doesn't reappear
+          if (rafHandle !== null) { cancelAnimationFrame(rafHandle); rafHandle = null; }
+          tokenBuffer = "";
+          if (streamingId) {
+            const sid = streamingId;
+            set((state) => ({
+              entries: state.entries.filter((e) => e.id !== sid),
+            }));
+            streamingId = null;
+          }
+          break;
+
         case "toolCall":
           addToolCall(msg.name, msg.input, (msg as any).description);
           break;

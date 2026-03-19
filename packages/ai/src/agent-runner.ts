@@ -52,6 +52,8 @@ export interface AgentCallbacks {
   onCompactStart?: (contextPercent: number) => void;
   /** Emitted when context compaction finishes */
   onCompactEnd?: (savedTokens: number, newPercent: number) => void;
+  /** Emitted when text-based tool calls are detected — UI should clear the streamed JSON text */
+  onTextToolCallDetected?: () => void;
 }
 
 export interface AgentRunnerOptions {
@@ -122,6 +124,8 @@ export class AgentRunner {
         workingDir,
         projectConfig: options?.projectConfig || undefined,
         memory: options?.memory || undefined,
+        provider: this.provider,
+        model: this.modelName,
       });
     }
 
@@ -366,9 +370,15 @@ export class AgentRunner {
   /**
    * Extract tool calls from the accumulated AIMessageChunk.
    * After streaming is complete, the concatenated chunk has fully-formed tool_calls.
+   *
+   * Uses a 3-tier fallback strategy (inspired by Continue + OpenCode):
+   *   1. LangChain structured tool_calls (native API support)
+   *   2. OpenAI-style additional_kwargs.tool_calls
+   *   3. Text-based fallback: parse JSON tool calls from model text output
+   *      (for local models like Ollama that may emit tool calls as text)
    */
   private extractToolCalls(accumulated: AIMessageChunk): Array<{ id: string; name: string; args: Record<string, unknown> }> {
-    // LangChain concatenates tool_call_chunks into tool_calls
+    // 1. LangChain concatenates tool_call_chunks into tool_calls
     if (accumulated.tool_calls && accumulated.tool_calls.length > 0) {
       return accumulated.tool_calls
         .filter((tc) => tc.name)
@@ -379,7 +389,7 @@ export class AgentRunner {
         }));
     }
 
-    // Fallback: check additional_kwargs for OpenAI-style raw tool calls
+    // 2. Fallback: check additional_kwargs for OpenAI-style raw tool calls
     const raw = (accumulated as any).additional_kwargs?.tool_calls;
     if (raw?.length > 0) {
       return raw.map((rtc: any) => {
@@ -393,7 +403,224 @@ export class AgentRunner {
       }).filter((c: { name: string }) => c.name);
     }
 
+    // 3. Text-based fallback: extract tool calls from model text output
+    const text = this.extractChunkText(accumulated);
+    if (text) {
+      const textToolCalls = this.extractToolCallsFromText(text);
+      if (textToolCalls.length > 0) return textToolCalls;
+    }
+
     return [];
+  }
+
+  /**
+   * Fallback parser: extract tool calls from raw text output.
+   *
+   * Some local models (Ollama) emit tool calls as text instead of structured
+   * tool_calls. This handles multiple formats:
+   *
+   * Format 1 — Raw JSON object(s):
+   *   {"name": "tool_name", "arguments": {...}}
+   *
+   * Format 2 — OpenAI-style function call:
+   *   {"type": "function", "function": {"name": "tool_name", "arguments": {...}}}
+   *
+   * Format 3 — JSON in markdown code blocks:
+   *   ```json
+   *   {"name": "tool_name", "arguments": {...}}
+   *   ```
+   *
+   * Also applies case-insensitive tool name repair (inspired by OpenCode).
+   */
+  private extractToolCallsFromText(text: string): Array<{ id: string; name: string; args: Record<string, unknown> }> {
+    const knownTools = new Set(this.toolRegistry.getAll().map((t) => t.definition.name));
+    const results: Array<{ id: string; name: string; args: Record<string, unknown> }> = [];
+
+    // Strip markdown code fences if present
+    const stripped = text.replace(/```(?:json|tool)?\s*\n?([\s\S]*?)```/g, "$1");
+
+    // Find all JSON objects in the text
+    const jsonObjects = this.extractJsonObjects(stripped);
+
+    for (const obj of jsonObjects) {
+      let toolName: string | undefined;
+      let args: Record<string, unknown> = {};
+
+      // Format 1: {"name": "...", "arguments": {...}}
+      if (obj.name && typeof obj.name === "string") {
+        toolName = obj.name;
+        args = (typeof obj.arguments === "object" && obj.arguments !== null)
+          ? obj.arguments as Record<string, unknown>
+          : (typeof obj.parameters === "object" && obj.parameters !== null)
+            ? obj.parameters as Record<string, unknown>
+            : {};
+      }
+
+      // Format 2: {"type": "function", "function": {"name": "...", "arguments": {...}}}
+      if (!toolName && obj.function && typeof obj.function === "object") {
+        const fn = obj.function as any;
+        toolName = fn.name;
+        args = typeof fn.arguments === "string"
+          ? (() => { try { return JSON.parse(fn.arguments); } catch { return {}; } })()
+          : (fn.arguments || {});
+      }
+
+      if (!toolName) continue;
+
+      // Case-insensitive tool name repair (OpenCode pattern)
+      if (!knownTools.has(toolName)) {
+        const lower = toolName.toLowerCase();
+        const match = Array.from(knownTools).find((t) => t.toLowerCase() === lower);
+        if (match) {
+          toolName = match;
+        } else {
+          continue; // Unknown tool, skip
+        }
+      }
+
+      results.push({
+        id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        name: toolName,
+        args,
+      });
+    }
+
+    return results;
+  }
+
+  /**
+   * Extract JSON objects from a string, handling nested braces.
+   * Returns parsed objects, skipping any malformed JSON.
+   */
+  private extractJsonObjects(text: string): Record<string, unknown>[] {
+    const results: Record<string, unknown>[] = [];
+    let i = 0;
+
+    while (i < text.length) {
+      if (text[i] === "{") {
+        let depth = 0;
+        let start = i;
+        let inString = false;
+        let escaped = false;
+        let completed = false;
+
+        for (let j = i; j < text.length; j++) {
+          const ch = text[j];
+          if (escaped) { escaped = false; continue; }
+          if (ch === "\\") { escaped = true; continue; }
+          if (ch === '"') { inString = !inString; continue; }
+          if (inString) continue;
+          if (ch === "{") depth++;
+          if (ch === "}") {
+            depth--;
+            if (depth === 0) {
+              const candidate = text.substring(start, j + 1);
+              try {
+                const parsed = JSON.parse(candidate);
+                if (typeof parsed === "object" && parsed !== null) {
+                  results.push(parsed);
+                }
+              } catch { /* skip malformed JSON */ }
+              i = j + 1;
+              completed = true;
+              break;
+            }
+          }
+          if (j === text.length - 1) { i = j + 1; }
+        }
+
+        // Repair truncated JSON: if we hit end-of-text with unclosed braces,
+        // try closing open strings and braces to recover the object.
+        // This handles Ollama models that hit output limits mid-tool-call.
+        if (!completed && depth > 0) {
+          const truncated = text.substring(start);
+          const repaired = this.repairTruncatedJson(truncated);
+          if (repaired) results.push(repaired);
+        }
+      } else {
+        i++;
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Attempt to repair truncated JSON from models that hit output limits.
+   * Closes open strings and braces to recover a parseable object.
+   */
+  private repairTruncatedJson(text: string): Record<string, unknown> | null {
+    // Only attempt repair on text that looks like a tool call
+    if (!text.includes('"name"') || (!text.includes('"arguments"') && !text.includes('"parameters"'))) {
+      return null;
+    }
+
+    let repaired = text;
+
+    // Close open string (if we're inside a quoted value)
+    let inString = false;
+    let escaped = false;
+    for (const ch of repaired) {
+      if (escaped) { escaped = false; continue; }
+      if (ch === "\\") { escaped = true; continue; }
+      if (ch === '"') { inString = !inString; }
+    }
+    if (inString) repaired += '"';
+
+    // Count unclosed braces and close them
+    let openBraces = 0;
+    inString = false;
+    escaped = false;
+    for (const ch of repaired) {
+      if (escaped) { escaped = false; continue; }
+      if (ch === "\\") { escaped = true; continue; }
+      if (ch === '"') { inString = !inString; continue; }
+      if (inString) continue;
+      if (ch === "{") openBraces++;
+      if (ch === "}") openBraces--;
+    }
+    for (let b = 0; b < openBraces; b++) repaired += "}";
+
+    try {
+      const parsed = JSON.parse(repaired);
+      if (typeof parsed === "object" && parsed !== null && parsed.name) {
+        return parsed;
+      }
+    } catch { /* repair failed */ }
+
+    return null;
+  }
+
+  /**
+   * Strip tool call JSON from text content so history doesn't contain raw JSON.
+   * Removes matched JSON objects and surrounding markdown code fences.
+   */
+  private stripToolCallJsonFromText(
+    text: string,
+    toolCalls: Array<{ name: string; args: Record<string, unknown> }>,
+  ): string {
+    if (!text || toolCalls.length === 0) return text;
+
+    let cleaned = text;
+
+    // Remove markdown-fenced JSON blocks containing tool calls
+    cleaned = cleaned.replace(/```(?:json|tool)?\s*\n?\s*\{[\s\S]*?\}\s*\n?\s*```/g, "");
+
+    // Remove bare JSON objects that match extracted tool call names
+    for (const tc of toolCalls) {
+      // Match JSON objects containing this tool name
+      const nameEscaped = tc.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const pattern = new RegExp(
+        `\\{[\\s\\S]*?["']name["']\\s*:\\s*["']${nameEscaped}["'][\\s\\S]*?\\}`,
+        "g",
+      );
+      cleaned = cleaned.replace(pattern, "");
+    }
+
+    // Clean up leftover whitespace
+    cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
+
+    return cleaned;
   }
 
   /**
@@ -696,7 +923,24 @@ export class AgentRunner {
         const toolCalls = this.extractToolCalls(accumulated);
 
         // Get full text (already streamed to user, but need for history)
-        const fullText = this.extractChunkText(accumulated);
+        let fullText = this.extractChunkText(accumulated);
+
+        // Detect if tool calls were extracted from text (fallback path).
+        // When local models (Ollama) emit tool calls as text, we need to:
+        //   1. Notify UI to clear the streamed JSON text
+        //   2. Strip the JSON from the text content for history
+        const hasNativeToolCalls = (accumulated.tool_calls && accumulated.tool_calls.length > 0)
+          || (accumulated as any).additional_kwargs?.tool_calls?.length > 0;
+        const hasTextToolCalls = toolCalls.length > 0 && !hasNativeToolCalls;
+
+        if (hasTextToolCalls) {
+          // Tell UI to clear the raw JSON that was streamed as text
+          if (callbacks.onTextToolCallDetected) {
+            callbacks.onTextToolCallDetected();
+          }
+          // Strip the tool call JSON from text so history is clean
+          fullText = this.stripToolCallJsonFromText(fullText, toolCalls);
+        }
 
         // Doom loop detection: if last N tool calls are identical, break
         if (toolCalls.length > 0) {
@@ -733,11 +977,13 @@ export class AgentRunner {
         }
 
         // Check LLM finish reason — more robust than just checking tool calls.
-        // If the model explicitly signaled end_turn/stop, it's done regardless.
+        // IMPORTANT: When tool calls are extracted from text (fallback path), ignore
+        // finish_reason — Ollama sends "stop" for text output even when the text
+        // contains tool calls that should be executed.
         const finishReason = accumulated.response_metadata?.finish_reason
           || accumulated.response_metadata?.stop_reason;
         const isModelDone = toolCalls.length === 0
-          || (finishReason && finishReason !== "tool_calls" && finishReason !== "tool_use" && finishReason !== "unknown");
+          || (!hasTextToolCalls && finishReason && finishReason !== "tool_calls" && finishReason !== "tool_use" && finishReason !== "unknown");
 
         if (isModelDone) {
           this.messages.push(new AIMessage(fullText));

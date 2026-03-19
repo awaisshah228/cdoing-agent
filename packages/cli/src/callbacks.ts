@@ -129,6 +129,13 @@ export function createInteractiveCallbacks(spinner: Ora): AgentCallbacks {
       buffer = lines[lines.length - 1];
     },
 
+    onTextToolCallDetected: () => {
+      // Local model emitted tool call as text — clear the buffer (raw JSON)
+      buffer = "";
+      // Move cursor up and clear lines to remove already-printed JSON
+      process.stdout.write("\x1b[1A\x1b[2K");
+    },
+
     onToolCall: (name, input) => {
       // Flush buffer
       if (buffer) {
