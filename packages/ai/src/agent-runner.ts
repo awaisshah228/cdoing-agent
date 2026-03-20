@@ -473,9 +473,9 @@ export class AgentRunner {
         const match = Array.from(knownTools).find((t) => t.toLowerCase() === lower);
         if (match) {
           toolName = match;
-        } else {
-          continue; // Unknown tool, skip
         }
+        // If no match, keep the hallucinated name — it will be rejected
+        // by executeToolCalls with a helpful error message listing valid tools
       }
 
       results.push({
@@ -1003,14 +1003,23 @@ export class AgentRunner {
         }));
         fullResponse += fullText;
 
-        // Handle get_tool meta-calls (fetch tool schema on demand)
+        // Handle get_tool meta-calls and reject unknown/hallucinated tool names
         const realToolCalls: typeof toolCalls = [];
+        const allToolNames = new Set(this.toolRegistry.getAll().map(t => t.definition.name));
+        allToolNames.add("get_tool"); // meta-tool
         for (const tc of toolCalls) {
           if (tc.name === "get_tool") {
             callbacks.onToolCall(tc.name, tc.args);
             const result = this.handleGetTool(tc.args);
             this.messages.push(new ToolMessage({ content: result, tool_call_id: tc.id }));
             callbacks.onToolResult(tc.name, result, false);
+          } else if (!allToolNames.has(tc.name)) {
+            // Hallucinated tool name — reject and tell the model which tools exist
+            const available = Array.from(allToolNames).filter(n => n !== "get_tool").sort().join(", ");
+            const errorMsg = `Error: "${tc.name}" is not a valid tool. You can ONLY use these tools: ${available}. Do NOT invent tool names.`;
+            callbacks.onToolCall(tc.name, tc.args);
+            this.messages.push(new ToolMessage({ content: errorMsg, tool_call_id: tc.id }));
+            callbacks.onToolResult(tc.name, errorMsg, true);
           } else {
             realToolCalls.push(tc);
             // Auto-activate used tools so they persist across turns
