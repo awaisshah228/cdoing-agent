@@ -10,6 +10,7 @@ import { ChatAnthropic } from "@langchain/anthropic";
 import { ChatOpenAI } from "@langchain/openai";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { getOAuthProvider } from "@cdoing/core";
+import { ChatOllamaNative } from "./ollama-native";
 
 export enum ModelProvider {
   ANTHROPIC = "anthropic",
@@ -345,17 +346,15 @@ export function createModel(config: Partial<ModelConfig> = {}) {
         modelName.includes("deepseek") ? 0.6 :
         0.3  // Lower default for local models — more deterministic tool calls
       );
-      return new ChatOpenAI({
+      // Use native /api/chat endpoint (like Continue) so tool calls come as
+      // structured data, not streamed text. Fixes the "JSON flash" rendering bug.
+      return new ChatOllamaNative({
         model: modelName,
-        openAIApiKey: config.apiKey || process.env.OLLAMA_API_KEY || "ollama", // Ollama doesn't require a key
+        baseURL: config.baseURL || "http://localhost:11434",
         temperature: ollamaTemp,
         maxTokens,
-        configuration: {
-          baseURL: config.baseURL || "http://localhost:11434/v1",
-        },
-        // Ollama models need higher num_predict to avoid truncating tool call JSON
-        modelKwargs: { num_predict: maxTokens },
-      });
+        apiKey: config.apiKey || process.env.OLLAMA_API_KEY || "",
+      }) as any; // duck-typed LangChain interface (bindTools + stream)
     }
 
     case ModelProvider.AZURE: {

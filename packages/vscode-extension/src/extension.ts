@@ -129,7 +129,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (provider === "custom") {
         const baseURL = await vscode.window.showInputBox({
           prompt: "Enter base URL for custom provider",
-          placeHolder: "http://localhost:11434/v1",
+          placeHolder: "http://localhost:11434",
           value: config.get<string>("customBaseURL") || "",
         });
         if (baseURL) {

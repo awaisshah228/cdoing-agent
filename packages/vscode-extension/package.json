@@ -2,7 +2,7 @@
   "name": "cdoing-vscode",
   "displayName": "Cdoing Agent",
   "description": "AI-powered coding assistant with multi-model support — chat, instruct, and run commands right from VS Code",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "publisher": "awaisshah228",
   "engines": {
     "vscode": "^1.95.0"
@@ -248,7 +248,7 @@
         "cdoing.customBaseURL": {
           "type": "string",
           "default": "",
-          "description": "Base URL for custom provider (e.g., http://localhost:11434/v1)"
+          "description": "Base URL for custom provider (e.g., http://localhost:11434)"
         },
         "cdoing.apiKey": {
           "type": "string",

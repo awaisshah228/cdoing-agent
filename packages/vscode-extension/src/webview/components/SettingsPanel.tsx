@@ -291,7 +291,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   className="settings-input"
                   value={customBaseURL}
                   onChange={(e) => setCustomBaseURL(e.target.value)}
-                  placeholder="http://localhost:11434/v1"
+                  placeholder="http://localhost:11434"
                 />
                 {customProviderName && CUSTOM_PROVIDER_URLS[customProviderName] && customBaseURL === CUSTOM_PROVIDER_URLS[customProviderName] && (
                   <span className="settings-hint"><span style={{ color: "var(--success)" }}>●</span> Auto-filled for {customProviderName}</span>
