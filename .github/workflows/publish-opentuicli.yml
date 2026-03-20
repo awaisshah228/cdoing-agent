@@ -21,6 +21,9 @@ jobs:
       version: ${{ steps.check.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+      - name: Auto-bump version (if needed)
+        run: bash .github/scripts/auto-bump.sh packages/opentuicli
+
       - id: check
         run: |
           LOCAL=$(node -p "require('./packages/opentuicli/package.json').version")

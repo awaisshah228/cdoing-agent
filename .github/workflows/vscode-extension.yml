@@ -32,6 +32,9 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
+      - name: Auto-bump versions (if needed)
+        run: bash .github/scripts/auto-bump.sh packages/vscode-extension
+
       - name: Check if extension version bumped
         id: check_version
         run: |

@@ -43,6 +43,9 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
+      - name: Auto-bump versions (if needed)
+        run: bash .github/scripts/auto-bump.sh packages/core packages/ai packages/cli
+
       - name: Check version bumps
         id: check_versions
         run: |
