@@ -424,7 +424,9 @@ export class CodebaseIndexer {
       const cacheKey = cacheKeys.get(filePath)!;
 
       // Get chunks for this file
-      const rows = this.db["db"].prepare(
+      const dbInner = this.db["db"] as any;
+      if (!dbInner) continue;
+      const rows = dbInner.prepare(
         "SELECT id, content FROM chunks WHERE path = ? AND cacheKey = ?"
       ).all(relPath, cacheKey) as { id: number; content: string }[];
 
