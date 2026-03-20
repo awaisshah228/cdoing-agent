@@ -19,39 +19,59 @@ import type { ChunkWithMeta, SearchResult, IndexStats } from "./types";
 // Lazy-load better-sqlite3 — it's a native module that may not be available
 // in all environments (e.g., VS Code extension VSIX bundles).
 let _Database: typeof BetterSqlite3 | undefined;
-function loadDatabase(): typeof BetterSqlite3 {
+let _loadFailed = false;
+function loadDatabase(): typeof BetterSqlite3 | null {
+  if (_loadFailed) return null;
   if (!_Database) {
     try {
       _Database = require("better-sqlite3");
     } catch {
-      throw new Error(
-        "better-sqlite3 is not available. Codebase indexing requires better-sqlite3 to be installed."
-      );
+      _loadFailed = true;
+      console.warn("[cdoing] better-sqlite3 not available — codebase indexing disabled");
+      return null;
     }
   }
   return _Database!;
+}
+
+/** Returns true if better-sqlite3 is available in the current environment */
+export function isSqliteAvailable(): boolean {
+  return loadDatabase() !== null;
 }
 
 const INDEX_DIR = path.join(os.homedir(), ".cdoing");
 const INDEX_FILE = path.join(INDEX_DIR, "index.sqlite");
 
 export class IndexDatabase {
-  private db: BetterSqlite3.Database;
+  private db: BetterSqlite3.Database | null = null;
 
   constructor(dbPath?: string) {
+    const Database = loadDatabase();
+    if (!Database) return; // better-sqlite3 not available — all methods will no-op
+
     const filePath = dbPath || INDEX_FILE;
     const dir = path.dirname(filePath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
-    const Database = loadDatabase();
     this.db = new Database(filePath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("synchronous = NORMAL");
     this.initTables();
   }
 
+  /** Returns true if the database is available and operational */
+  get available(): boolean {
+    return this.db !== null;
+  }
+
+  /** Asserts db is available — used internally by methods that need it */
+  private requireDb(): BetterSqlite3.Database {
+    if (!this.db) throw new Error("Database not available");
+    return this.db;
+  }
+
   private initTables(): void {
-    this.db.exec(`
+    this.requireDb().exec(`
       CREATE TABLE IF NOT EXISTS chunks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         path TEXT NOT NULL,
@@ -111,6 +131,7 @@ export class IndexDatabase {
   // ── Chunk operations ──────────────────────────────────────────────────────
 
   insertChunks(chunks: ChunkWithMeta[]): number[] {
+    if (!this.db) return [];
     const insert = this.db.prepare(
       `INSERT OR IGNORE INTO chunks (path, cacheKey, content, startLine, endLine, idx) VALUES (?, ?, ?, ?, ?, ?)`
     );
@@ -128,18 +149,18 @@ export class IndexDatabase {
   }
 
   deleteChunksByPath(filePath: string): void {
-    // Get chunk IDs first for cascading cleanup
+    if (!this.db) return;
     const chunkIds = this.db.prepare("SELECT id FROM chunks WHERE path = ?").all(filePath) as { id: number }[];
     if (chunkIds.length === 0) return;
 
-    const tx = this.db.transaction(() => {
+    const db = this.db;
+    const tx = db.transaction(() => {
       for (const { id } of chunkIds) {
-        this.db.prepare("DELETE FROM fts_metadata WHERE chunkId = ?").run(id);
-        this.db.prepare("DELETE FROM embeddings WHERE chunkId = ?").run(id);
+        db.prepare("DELETE FROM fts_metadata WHERE chunkId = ?").run(id);
+        db.prepare("DELETE FROM embeddings WHERE chunkId = ?").run(id);
       }
-      this.db.prepare("DELETE FROM chunks WHERE path = ?").run(filePath);
-      // FTS cleanup — delete by path
-      this.db.prepare("DELETE FROM fts WHERE path = ?").run(filePath);
+      db.prepare("DELETE FROM chunks WHERE path = ?").run(filePath);
+      db.prepare("DELETE FROM fts WHERE path = ?").run(filePath);
     });
     tx();
   }
@@ -147,7 +168,7 @@ export class IndexDatabase {
   // ── FTS operations ────────────────────────────────────────────────────────
 
   insertFts(chunkId: number, filePath: string, content: string, cacheKey: string): void {
-    // Insert into FTS virtual table
+    if (!this.db) return;
     const ftsInsert = this.db.prepare("INSERT INTO fts (rowid, path, content) VALUES (?, ?, ?)");
     const metaInsert = this.db.prepare(
       "INSERT INTO fts_metadata (id, path, cacheKey, chunkId) VALUES (?, ?, ?, ?)"
@@ -194,6 +215,7 @@ export class IndexDatabase {
     params.push(limit);
 
     try {
+      if (!this.db) return [];
       const rows = this.db.prepare(sql).all(...params) as any[];
       return rows.map((r) => ({
         path: r.path,
@@ -212,6 +234,7 @@ export class IndexDatabase {
   // ── Embedding operations ──────────────────────────────────────────────────
 
   insertEmbedding(chunkId: number, filePath: string, cacheKey: string, vector: number[], model: string): void {
+    if (!this.db) return;
     this.db.prepare(
       "INSERT OR REPLACE INTO embeddings (chunkId, path, cacheKey, vector, model) VALUES (?, ?, ?, ?, ?)"
     ).run(chunkId, filePath, cacheKey, JSON.stringify(vector), model);
@@ -242,6 +265,7 @@ export class IndexDatabase {
       params.push(directory + "%");
     }
 
+    if (!this.db) return [];
     const rows = this.db.prepare(sql).all(...params) as any[];
     return rows.map((r) => ({
       ...r,
@@ -252,6 +276,7 @@ export class IndexDatabase {
   // ── Catalog operations (incremental updates) ─────────────────────────────
 
   getCatalogEntry(filePath: string, directory: string): { cacheKey: string; lastUpdated: number } | null {
+    if (!this.db) return null;
     const row = this.db.prepare(
       "SELECT cacheKey, lastUpdated FROM index_catalog WHERE path = ? AND directory = ?"
     ).get(filePath, directory) as any;
@@ -259,6 +284,7 @@ export class IndexDatabase {
   }
 
   updateCatalog(filePath: string, cacheKey: string, directory: string): void {
+    if (!this.db) return;
     this.db.prepare(
       `INSERT OR REPLACE INTO index_catalog (path, cacheKey, lastUpdated, directory)
        VALUES (?, ?, ?, ?)`
@@ -266,10 +292,12 @@ export class IndexDatabase {
   }
 
   removeCatalogEntry(filePath: string, directory: string): void {
+    if (!this.db) return;
     this.db.prepare("DELETE FROM index_catalog WHERE path = ? AND directory = ?").run(filePath, directory);
   }
 
   getCatalogPaths(directory: string): Map<string, string> {
+    if (!this.db) return new Map();
     const rows = this.db.prepare(
       "SELECT path, cacheKey FROM index_catalog WHERE directory = ?"
     ).all(directory) as { path: string; cacheKey: string }[];
@@ -282,6 +310,7 @@ export class IndexDatabase {
   // ── Stats ─────────────────────────────────────────────────────────────────
 
   getStats(): IndexStats {
+    if (!this.db) return { totalFiles: 0, totalChunks: 0, ftsEntries: 0, embeddingEntries: 0, lastIndexed: 0, indexSizeBytes: 0 };
     const chunks = (this.db.prepare("SELECT COUNT(*) as c FROM chunks").get() as any)?.c || 0;
     const fts = (this.db.prepare("SELECT COUNT(*) as c FROM fts_metadata").get() as any)?.c || 0;
     const emb = (this.db.prepare("SELECT COUNT(*) as c FROM embeddings").get() as any)?.c || 0;
@@ -307,10 +336,11 @@ export class IndexDatabase {
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   close(): void {
-    this.db.close();
+    this.db?.close();
   }
 
   clearAll(): void {
+    if (!this.db) return;
     this.db.exec(`
       DELETE FROM embeddings;
       DELETE FROM fts_metadata;
