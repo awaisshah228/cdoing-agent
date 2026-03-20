@@ -9,24 +9,41 @@
  *   - index_catalog: tracks which files have been indexed (for incremental updates)
  */
 
-import Database from "better-sqlite3";
+import type BetterSqlite3 from "better-sqlite3";
 import * as path from "path";
 import * as os from "os";
 import * as fs from "fs";
 import * as crypto from "crypto";
 import type { ChunkWithMeta, SearchResult, IndexStats } from "./types";
 
+// Lazy-load better-sqlite3 — it's a native module that may not be available
+// in all environments (e.g., VS Code extension VSIX bundles).
+let _Database: typeof BetterSqlite3 | undefined;
+function loadDatabase(): typeof BetterSqlite3 {
+  if (!_Database) {
+    try {
+      _Database = require("better-sqlite3");
+    } catch {
+      throw new Error(
+        "better-sqlite3 is not available. Codebase indexing requires better-sqlite3 to be installed."
+      );
+    }
+  }
+  return _Database!;
+}
+
 const INDEX_DIR = path.join(os.homedir(), ".cdoing");
 const INDEX_FILE = path.join(INDEX_DIR, "index.sqlite");
 
 export class IndexDatabase {
-  private db: Database.Database;
+  private db: BetterSqlite3.Database;
 
   constructor(dbPath?: string) {
     const filePath = dbPath || INDEX_FILE;
     const dir = path.dirname(filePath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
+    const Database = loadDatabase();
     this.db = new Database(filePath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("synchronous = NORMAL");
