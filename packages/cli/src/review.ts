@@ -162,15 +162,19 @@ export async function runReview(opts: ReviewOptions): Promise<void> {
   const projectConfig = loadProjectConfig(opts.dir);
 
   const toolRegistry = await createToolRegistry(opts.dir);
+  const isGitRepo = require("fs").existsSync(require("path").join(opts.dir, ".git"));
+
   const agent = new AgentRunner(
     modelConfig,
     toolRegistry,
     permissionManager,
     hookManager,
     {
+      workingDir: opts.dir,
       systemPrompt: REVIEW_SYSTEM_PROMPT,
       projectConfig: projectConfig || undefined,
       memory: memoryStore.formatForPrompt() || undefined,
+      isGitRepo,
     },
   );
 

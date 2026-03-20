@@ -16,6 +16,8 @@ import chalk from "chalk";
 import { oauthLogin, oauthLogout } from "./oauth";
 import { handleConfigCommand, handleInit, handleDoctor, handleCompletions, handleIndex } from "./commands";
 import { loadConversation, loadLastConversation } from "./history";
+import fs from "fs";
+import path from "path";
 
 const program = new Command();
 
@@ -143,9 +145,14 @@ async function run(prompt: string | undefined, options: CLIOptions) {
   const todoStore = new TodoStore();
   const projectConfig = loadProjectConfig(options.dir);
 
+  // Detect git repo for environment context
+  const isGitRepo = fs.existsSync(path.join(options.dir, ".git"));
+
   const agentOptions: import("@cdoing/ai").AgentRunnerOptions = {
+    workingDir: options.dir,
     projectConfig: projectConfig || undefined,
     memory: memoryStore.formatForPrompt() || undefined,
+    isGitRepo,
   };
 
   // Handle custom system prompt

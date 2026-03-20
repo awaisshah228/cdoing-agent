@@ -698,8 +698,12 @@ export async function startTUI(options: TUIOptions): Promise<void> {
     maxTokens: 8096,
   };
 
-  // Create agent
-  const agent = new AgentRunner(modelConfig, registry, pm);
+  // Create agent with environment context
+  const isGitRepo = require("fs").existsSync(require("path").join(options.workingDir, ".git"));
+  const agent = new AgentRunner(modelConfig, registry, pm, undefined, {
+    workingDir: options.workingDir,
+    isGitRepo,
+  });
 
   // Detect terminal background color before rendering (async OSC 11 query)
   let detectedMode: "dark" | "light" | undefined;

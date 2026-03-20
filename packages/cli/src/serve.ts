@@ -81,9 +81,13 @@ export async function startServer(opts: ServeOptions): Promise<void> {
   const memoryStore = new MemoryStore(opts.dir);
   const projectConfig = loadProjectConfig(opts.dir);
 
+  const isGitRepo = require("fs").existsSync(require("path").join(opts.dir, ".git"));
+
   const agentOptions = {
+    workingDir: opts.dir,
     projectConfig: projectConfig || undefined,
     memory: memoryStore.formatForPrompt() || undefined,
+    isGitRepo,
   };
 
   const server = http.createServer(async (req, res) => {
