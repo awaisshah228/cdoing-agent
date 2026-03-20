@@ -144,6 +144,10 @@ export function useAgent(opts: UseAgentOptions) {
       .filter(Boolean)
       .join("\n\n");
 
+    // Detect git repo for environment context (like OpenCode's SystemPrompt.environment())
+    let isGitRepo = false;
+    try { isGitRepo = require("fs").existsSync(require("path").join(dir, ".git")); } catch {}
+
     return new AgentRunner(
       modelConfigRef.current,
       toolRegistryRef.current,
@@ -155,6 +159,7 @@ export function useAgent(opts: UseAgentOptions) {
         memory:        opts.memoryStore.formatForPrompt() || undefined,
         subAgentManager: opts.subAgentManager,
         processManager:  opts.processManager,
+        isGitRepo,
       },
     );
   }

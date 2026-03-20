@@ -674,14 +674,23 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     const workingDir = this.getWorkingDir();
     const projectConfig = loadProjectConfig(workingDir);
 
+    // Detect git repo and workspace root for environment context
+    const fs = require("fs");
+    const path = require("path");
+    const isGitRepo = fs.existsSync(path.join(workingDir, ".git"));
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
     return new AgentRunner(
       modelConfig,
       this.toolRegistry!,
       this.permissionManager!,
       this.hookManager || undefined,
       {
+        workingDir,
         projectConfig: projectConfig || undefined,
         memory: this.memoryStore?.formatForPrompt() || undefined,
+        isGitRepo,
+        workspaceRoot: workspaceRoot !== workingDir ? workspaceRoot : undefined,
       },
     );
   }

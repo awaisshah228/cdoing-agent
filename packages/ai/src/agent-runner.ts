@@ -64,6 +64,10 @@ export interface AgentRunnerOptions {
   systemPrompt?: string;
   maxTurns?: number;
   workingDir?: string;
+  /** Whether the working directory is a git repository */
+  isGitRepo?: boolean;
+  /** Workspace root folder (may differ from workingDir in monorepos) */
+  workspaceRoot?: string;
   /** SubAgentManager — used to report running background agents on interrupt */
   subAgentManager?: SubAgentManager;
   /** ProcessManager — used to report running background processes on interrupt */
@@ -126,6 +130,8 @@ export class AgentRunner {
         memory: options?.memory || undefined,
         provider: this.provider,
         model: this.modelName,
+        isGitRepo: options?.isGitRepo,
+        workspaceRoot: options?.workspaceRoot,
       });
     }
 

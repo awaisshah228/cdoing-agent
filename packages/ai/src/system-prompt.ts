@@ -31,6 +31,10 @@ export function buildSystemPrompt(options: {
   provider?: string;
   /** Model name — used for model-specific prompt optimization */
   model?: string;
+  /** Whether the working directory is a git repository */
+  isGitRepo?: boolean;
+  /** Workspace root folder (may differ from workingDir in monorepos) */
+  workspaceRoot?: string;
 }): string {
   const basePrompt = selectPrompt(options.provider, options.model);
   const parts: string[] = [basePrompt];
@@ -39,8 +43,25 @@ export function buildSystemPrompt(options: {
   const osName = isWindows ? "Windows" : process.platform === "darwin" ? "macOS" : "Linux";
   const shellName = isWindows ? "cmd.exe / PowerShell" : process.env.SHELL || "/bin/sh";
 
-  const modelInfo = options.model ? `\n- Model: ${options.model}` : "";
-  parts.push(`\n# Environment\n- **Active project directory: \`${options.workingDir}\`** — ALL file paths are relative to this directory. NEVER ask the user which directory to work in.\n- **OS: ${osName}** — Use ${osName}-appropriate shell commands. ${isWindows ? "Use Windows commands (dir, type, del, copy, move, cls) NOT Unix commands (ls, cat, rm, cp, mv, clear)." : "Use Unix commands (ls, cat, rm, cp, mv, clear)."}\n- Shell: ${shellName}\n- Node version: ${process.version}${modelInfo}`);
+  // Build environment block similar to OpenCode's SystemPrompt.environment()
+  const envLines: string[] = [];
+  if (options.model && options.provider) {
+    envLines.push(`You are powered by the model ${options.model}. Provider: ${options.provider}.`);
+  }
+  envLines.push(`Here is useful information about the environment you are running in:`);
+  envLines.push(`<env>`);
+  envLines.push(`  Working directory: ${options.workingDir}`);
+  if (options.workspaceRoot && options.workspaceRoot !== options.workingDir) {
+    envLines.push(`  Workspace root: ${options.workspaceRoot}`);
+  }
+  envLines.push(`  Is git repo: ${options.isGitRepo ? "yes" : "no"}`);
+  envLines.push(`  Platform: ${osName}`);
+  envLines.push(`  Shell: ${shellName}`);
+  envLines.push(`  Node: ${process.version}`);
+  envLines.push(`  Today's date: ${new Date().toDateString()}`);
+  envLines.push(`</env>`);
+
+  parts.push(`\n# Environment\n${envLines.join("\n")}\n\n**ALL file paths are relative to the working directory.** NEVER ask the user which directory to work in.${isWindows ? "\nUse Windows commands (dir, type, del, copy, move, cls) NOT Unix commands." : ""}`);
 
   if (options.projectConfig) {
     parts.push(`\n# Project Configuration\nThe following project-specific instructions were loaded:\n\n${options.projectConfig}`);
