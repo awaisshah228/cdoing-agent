@@ -210,7 +210,18 @@ export class SystemInfoTool implements BaseTool {
     }
 
     // Escape hatch
-    lines.push(`dangerouslyDisableSandbox: ${config.allowUnsandboxedCommands ? "available (user allows)" : "DISABLED (blocked by user)"}`);
+    lines.push(`dangerouslyDisableSandbox: ${config.allowUnsandboxedCommands ? "available (user allows)" : "DISABLED (blocked by policy)"}`);
+    lines.push("");
+
+    // Security features
+    lines.push("### Security Features");
+    lines.push("- **SSRF protection**: Private/internal IPs (10.x, 172.16.x, 192.168.x, 169.254.x) are blocked");
+    lines.push("- **Symlink protection**: File paths are resolved through symlinks before access checks");
+    lines.push("- **Sensitive env stripping**: API keys and tokens are removed from subprocess environments");
+    lines.push("- **Interpreter detection**: Commands using python, node, ruby, etc. get elevated permission warnings");
+    lines.push("- **CWD-bypass blocking**: `cd /path && write-op` patterns are blocked");
+    lines.push("- **Compound command validation**: Each sub-command in `&&`/`||`/`;` chains is checked separately");
+    lines.push("- **Session approval expiry**: Tool approvals expire after 1 hour");
 
     return lines.join("\n");
   }
