@@ -440,6 +440,25 @@ export function useChat(opts: UseChatOptions) {
           }
         },
 
+        onTextToolCallDetected: () => {
+          if (!mountedRef.current) return;
+          // Local models (Ollama) may stream tool calls as text — clear the raw JSON
+          fullReply = "";
+          flushedPos = 0;
+          setStreamingContent("");
+        },
+
+        onToolCallStreaming: (name) => {
+          if (!mountedRef.current) return;
+          // Model is starting to generate a tool call — flush and show indicator
+          flushStreamingText();
+          const icon = TOOL_ICONS[name] || "⚡";
+          setMessages((prev) => [...prev, {
+            id: nextId(), role: "system",
+            content: chalk.dim(`  ◌ ${icon} ${name}…`),
+          }]);
+        },
+
         onToolCall: (name, input) => {
           if (!mountedRef.current) return;
           flushStreamingText();
@@ -454,6 +473,33 @@ export function useChat(opts: UseChatOptions) {
           setToolActivity({ name, preview, status: "running" });
         },
 
+        onToolProgress: (name, chunk) => {
+          if (!mountedRef.current) return;
+          // Stream shell output in real-time to the terminal
+          process.stdout.write(chalk.gray(chunk));
+        },
+
+        onDiffChunk: (chunk) => {
+          if (!mountedRef.current) return;
+          // Stream file diff chunks in real-time
+          const line = chunk.content;
+          switch (chunk.type) {
+            case "file-header":
+              process.stdout.write(chalk.bold.white(`\n  📄 ${line}\n`));
+              break;
+            case "add":
+              process.stdout.write(chalk.green(`  + ${line}\n`));
+              break;
+            case "remove":
+              process.stdout.write(chalk.red(`  - ${line}\n`));
+              break;
+            case "hunk-header":
+              process.stdout.write(chalk.cyan(`  ${line}\n`));
+              break;
+            // skip 'context' lines to keep output concise
+          }
+        },
+
         onToolResult: (_name, _result, isError) => {
           if (!mountedRef.current) return;
           const icon = TOOL_ICONS[_name] || "⚡";
@@ -461,7 +507,7 @@ export function useChat(opts: UseChatOptions) {
             ? chalk.red(`  ✗ ${icon} ${_name}`)
             : chalk.green("  ✓ ") + chalk.cyan(`${icon} ${_name}`);
           setMessages((prev) => [...prev, { id: nextId(), role: "system", content: line }]);
-          // Show diff for file edits/writes
+          // Show diff for file edits/writes (fallback if onDiffChunk wasn't triggered)
           if (!isError && (_name === "file_edit" || _name === "file_write")) {
             printFileDiff(_name, lastToolInputRef.current);
           }
@@ -471,12 +517,13 @@ export function useChat(opts: UseChatOptions) {
 
         onComplete: () => {
           if (!mountedRef.current) return;
+          // Flush any remaining un-flushed text to the UI
           const remaining = fullReply.slice(flushedPos);
           if (remaining.trim()) {
             setMessages((prev) => [...prev, { id: nextId(), role: "assistant", content: remaining }]);
-            addMessage(conversationRef.current, "assistant", remaining);
           }
-          if (flushedPos === 0 && fullReply.trim()) {
+          // Save the full reply to conversation history exactly once
+          if (fullReply.trim()) {
             addMessage(conversationRef.current, "assistant", fullReply);
           }
 

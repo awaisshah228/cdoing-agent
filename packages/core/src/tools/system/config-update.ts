@@ -35,6 +35,8 @@ function saveConfig(config: Record<string, unknown>): void {
 }
 
 export class ConfigUpdateTool implements BaseTool {
+  // ── Behavioral flags ──
+  // Sequential: modifies global configuration file
   definition: ToolDefinition = {
     name: "config_update",
     description:

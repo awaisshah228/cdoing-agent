@@ -32,27 +32,64 @@ interface ToolConfig {
 }
 
 const TOOL_CONFIG: Record<string, ToolConfig> = {
-  file_read:        { label: "Read",            icon: "◇", verb: "Reading" },
-  file_write:       { label: "Write",           icon: "◈", verb: "Writing" },
-  file_edit:        { label: "Edit",            icon: "◈", verb: "Editing" },
-  multi_edit:       { label: "MultiEdit",       icon: "◈", verb: "Editing" },
-  apply_patch:      { label: "Patch",           icon: "◈", verb: "Patching" },
-  shell_exec:       { label: "Bash",            icon: "$", verb: "Running" },
-  file_run:         { label: "Run",             icon: "▶", verb: "Running" },
-  glob_search:      { label: "Search files",    icon: "◎", verb: "Searching" },
-  grep_search:      { label: "Search",          icon: "◎", verb: "Searching" },
-  codebase_search:  { label: "Codebase",        icon: "◎", verb: "Searching" },
-  web_fetch:        { label: "Fetch",           icon: "◌", verb: "Fetching" },
-  web_search:       { label: "Web Search",      icon: "◌", verb: "Searching" },
-  sub_agent:        { label: "Agent",           icon: "◆", verb: "Running" },
-  todo:             { label: "Todo",            icon: "☐", verb: "Updating" },
-  list_dir:         { label: "List Dir",        icon: "├", verb: "Listing" },
-  view_diff:        { label: "Diff",            icon: "±", verb: "Viewing" },
-  view_repo_map:    { label: "Repo Map",        icon: "⊞", verb: "Mapping" },
-  code_verify:      { label: "Verify",          icon: "✓", verb: "Verifying" },
-  system_info:      { label: "System Info",     icon: "i", verb: "Checking" },
-  ast_edit:         { label: "AST Edit",        icon: "⌥", verb: "Editing" },
-  notebook_edit:    { label: "Notebook",        icon: "⊡", verb: "Editing" },
+  // File operations
+  file_read:          { label: "Read",            icon: "◇", verb: "Reading" },
+  file_write:         { label: "Write",           icon: "◈", verb: "Writing" },
+  file_edit:          { label: "Edit",            icon: "◈", verb: "Editing" },
+  multi_edit:         { label: "MultiEdit",       icon: "◈", verb: "Editing" },
+  apply_patch:        { label: "Patch",           icon: "◈", verb: "Patching" },
+  // Search
+  glob_search:        { label: "Search files",    icon: "◎", verb: "Searching" },
+  grep_search:        { label: "Search",          icon: "◎", verb: "Searching" },
+  codebase_search:    { label: "Codebase",        icon: "◎", verb: "Searching" },
+  list_dir:           { label: "List Dir",        icon: "├", verb: "Listing" },
+  // Execution
+  shell_exec:         { label: "Bash",            icon: "$", verb: "Running" },
+  file_run:           { label: "Run",             icon: "▶", verb: "Running" },
+  code_verify:        { label: "Verify",          icon: "✓", verb: "Verifying" },
+  powershell:         { label: "PowerShell",      icon: "$", verb: "Running" },
+  repl:               { label: "REPL",            icon: "▶", verb: "Running" },
+  // Web
+  web_fetch:          { label: "Fetch",           icon: "◌", verb: "Fetching" },
+  web_search:         { label: "Web Search",      icon: "◌", verb: "Searching" },
+  web_browser:        { label: "Browser",         icon: "◌", verb: "Browsing" },
+  // Agents
+  sub_agent:          { label: "Agent",           icon: "◆", verb: "Running" },
+  sub_agent_status:   { label: "Agent Status",    icon: "◆", verb: "Checking" },
+  sub_agent_terminate:{ label: "Agent Stop",      icon: "◆", verb: "Stopping" },
+  send_message:       { label: "Message",         icon: "◆", verb: "Sending" },
+  task_list:          { label: "Tasks",           icon: "◆", verb: "Listing" },
+  task_get:           { label: "Task",            icon: "◆", verb: "Getting" },
+  task_stop:          { label: "Task Stop",       icon: "◆", verb: "Stopping" },
+  // Session
+  todo:               { label: "Todo",            icon: "☐", verb: "Updating" },
+  question:           { label: "Question",        icon: "?", verb: "Asking" },
+  plan_exit:          { label: "Plan",            icon: "☐", verb: "Planning" },
+  batch:              { label: "Batch",           icon: "⊞", verb: "Batching" },
+  skill:              { label: "Skill",           icon: "⚡", verb: "Running" },
+  memory:             { label: "Memory",          icon: "◉", verb: "Saving" },
+  task_complete:      { label: "Done",            icon: "✓", verb: "Completing" },
+  send_user_message:  { label: "Message",         icon: "◇", verb: "Sending" },
+  enter_worktree:     { label: "Worktree",        icon: "⌥", verb: "Entering" },
+  exit_worktree:      { label: "Worktree",        icon: "⌥", verb: "Exiting" },
+  cron_create:        { label: "Cron",            icon: "⏲", verb: "Creating" },
+  cron_list:          { label: "Cron",            icon: "⏲", verb: "Listing" },
+  cron_delete:        { label: "Cron",            icon: "⏲", verb: "Deleting" },
+  sleep:              { label: "Sleep",           icon: "◌", verb: "Waiting" },
+  snip:               { label: "Snip",            icon: "✂", verb: "Compacting" },
+  // Editing
+  ast_edit:           { label: "AST Edit",        icon: "⌥", verb: "Editing" },
+  notebook_edit:      { label: "Notebook",        icon: "⊡", verb: "Editing" },
+  // Viewing
+  view_diff:          { label: "Diff",            icon: "±", verb: "Viewing" },
+  view_repo_map:      { label: "Repo Map",        icon: "⊞", verb: "Mapping" },
+  // System
+  system_info:        { label: "System Info",     icon: "i", verb: "Checking" },
+  lsp:                { label: "LSP",             icon: "⊡", verb: "Querying" },
+  config_update:      { label: "Config",          icon: "⚙", verb: "Updating" },
+  terminal_capture:   { label: "Terminal",        icon: "$", verb: "Capturing" },
+  list_mcp_resources: { label: "MCP Resources",   icon: "⊡", verb: "Listing" },
+  read_mcp_resource:  { label: "MCP Resource",    icon: "⊡", verb: "Reading" },
 };
 
 // ── Inline Markdown Helpers ──────────────────────────────
@@ -334,35 +371,83 @@ function countLines(s: string): number {
 /** Extract a short description from tool input, per tool type */
 function getToolDescription(name: string, input?: Record<string, any>): string {
   if (!input) return "";
+  const fp = () => input.file_path ? shortPath(input.file_path) : (input.path ? shortPath(input.path) : "");
   switch (name) {
+    // File operations
     case "file_read":
-      return input.file_path ? shortPath(input.file_path) : "";
     case "file_write":
-      return input.file_path ? shortPath(input.file_path) : "";
     case "file_edit":
     case "multi_edit":
     case "apply_patch":
-      return input.file_path ? shortPath(input.file_path) : "";
-    case "shell_exec":
-      return input.command ? trimText(input.command, 55) : "";
-    case "file_run":
-      return input.file_path ? shortPath(input.file_path) : "";
+    case "ast_edit":
+    case "notebook_edit":
+      return fp();
+    // Search
     case "glob_search":
       return input.pattern ? `"${trimText(input.pattern, 40)}"` : "";
     case "grep_search":
       return input.pattern ? `"${trimText(input.pattern, 30)}"${input.path ? ` in ${shortPath(input.path)}` : ""}` : "";
     case "codebase_search":
       return input.query ? `"${trimText(input.query, 40)}"` : "";
+    case "list_dir":
+      return input.path ? shortPath(input.path) : (input.directory ? shortPath(input.directory) : "");
+    // Execution
+    case "shell_exec":
+    case "powershell":
+      return input.command ? trimText(input.command, 55) : "";
+    case "file_run":
+      return fp();
+    case "repl":
+      return input.code ? trimText(input.code, 50) : "";
+    case "code_verify":
+      return fp();
+    // Web
     case "web_fetch":
+    case "web_browser":
       return input.url ? trimText(input.url, 50) : "";
     case "web_search":
       return input.query ? `"${trimText(input.query, 40)}"` : "";
+    // Agents
     case "sub_agent":
-      return input.description ? trimText(input.description, 50) : "";
-    case "list_dir":
+      return input.description || input.task ? trimText(input.description || input.task, 50) : "";
+    case "send_message":
+      return input.to ? trimText(input.to, 30) : "";
+    case "sub_agent_status":
+    case "sub_agent_terminate":
+    case "task_get":
+    case "task_stop":
+      return input.id ? String(input.id) : "";
+    // Session
+    case "memory":
+      return `${input.action || ""} ${trimText(input.key || input.query || "", 30)}`.trim();
+    case "skill":
+      return input.skill ? String(input.skill) : "";
+    case "todo":
+      return input.action ? String(input.action) : "";
+    case "cron_create":
+      return input.schedule ? trimText(input.schedule, 30) : "";
+    case "cron_delete":
+      return input.id ? String(input.id) : "";
+    case "sleep":
+      return input.seconds ? `${input.seconds}s` : (input.ms ? `${input.ms}ms` : "");
+    // Viewing
+    case "view_diff":
+    case "view_repo_map":
       return input.path ? shortPath(input.path) : "";
-    default:
-      return input.description || "";
+    // System
+    case "terminal_capture":
+      return input.lines ? `${input.lines} lines` : "";
+    case "config_update":
+      return input.key ? String(input.key) : "";
+    default: {
+      // Fallback: try common fields
+      if (input.description) return trimText(input.description, 50);
+      const f = fp();
+      if (f) return f;
+      const q = input.query || input.command || input.pattern;
+      if (q) return trimText(String(q), 40);
+      return "";
+    }
   }
 }
 
@@ -377,10 +462,14 @@ function getOutputSummary(name: string, output: string, isError?: boolean): stri
       return `${lines} lines`;
     case "shell_exec":
     case "file_run":
+    case "powershell":
+    case "repl":
+    case "code_verify":
       return lines > 1 ? `${lines} lines` : trimText(output, 40);
     case "grep_search":
     case "glob_search":
-    case "codebase_search": {
+    case "codebase_search":
+    case "list_dir": {
       const results = output.split("\n").filter((l) => l.trim()).length;
       return `${results} result${results !== 1 ? "s" : ""}`;
     }
@@ -388,6 +477,8 @@ function getOutputSummary(name: string, output: string, isError?: boolean): stri
     case "file_edit":
     case "multi_edit":
     case "apply_patch":
+    case "ast_edit":
+    case "notebook_edit":
       return output.includes("+") || output.includes("-") ? trimText(output, 40) : "done";
     default:
       return lines > 1 ? `${lines} lines` : trimText(output, 40);
@@ -420,20 +511,20 @@ function ToolCallRow(props: {
   const outputSummary = !isRunning ? getOutputSummary(props.name, props.content, isError) : "";
 
   // For shell commands, show the command inline
-  const isShell = props.name === "shell_exec" || props.name === "file_run";
-  const shellCmd = isShell && props.input?.command ? trimText(props.input.command, 55) : "";
+  const isShell = ["shell_exec", "file_run", "powershell", "repl"].includes(props.name);
+  const shellCmd = isShell && (props.input?.command || props.input?.code) ? trimText(props.input.command || props.input.code, 55) : "";
 
   // For file ops, show the path
-  const isFileOp = ["file_read", "file_write", "file_edit", "multi_edit", "apply_patch"].includes(props.name);
-  const filePath = isFileOp && props.input?.file_path ? shortPath(props.input.file_path) : "";
+  const isFileOp = ["file_read", "file_write", "file_edit", "multi_edit", "apply_patch", "ast_edit", "notebook_edit"].includes(props.name);
+  const filePath = isFileOp && (props.input?.file_path || props.input?.path) ? shortPath(props.input.file_path || props.input.path) : "";
 
   // For search ops, show the pattern
-  const isSearch = ["grep_search", "glob_search", "codebase_search"].includes(props.name);
-  const searchPattern = isSearch && (props.input?.pattern || props.input?.query) ?
-    trimText(props.input?.pattern || props.input?.query, 35) : "";
+  const isSearch = ["grep_search", "glob_search", "codebase_search", "list_dir"].includes(props.name);
+  const searchPattern = isSearch && (props.input?.pattern || props.input?.query || props.input?.path) ?
+    trimText(props.input?.pattern || props.input?.query || props.input?.path, 35) : "";
 
   // Diff preview for edits
-  const hasEditDiff = (props.name === "file_edit" || props.name === "multi_edit") &&
+  const hasEditDiff = (props.name === "file_edit" || props.name === "multi_edit" || props.name === "ast_edit") &&
     props.input?.old_string && props.input?.new_string;
   const oldStr = hasEditDiff ? trimText(props.input!.old_string, 50) : "";
   const newStr = hasEditDiff ? trimText(props.input!.new_string, 50) : "";

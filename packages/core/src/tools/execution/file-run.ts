@@ -21,6 +21,9 @@ const RUNNERS: Record<string, string> = {
 };
 
 export class FileRunTool implements BaseTool {
+  // ── Behavioral flags ──
+  // File execution has side effects — always sequential
+  getFilePath = (input: Record<string, unknown>) => input.file_path as string | undefined;
   definition: ToolDefinition = {
     name: "file_run",
     description:

@@ -12,6 +12,9 @@ import type { SandboxManager } from "../../sandbox";
 import type { ToolRegistry } from "../registry";
 
 export class SystemInfoTool implements BaseTool {
+  // ── Behavioral flags ──
+  isReadOnly = () => true;
+  concurrencyMode = () => "parallel" as const;
   definition: ToolDefinition = {
     name: "system_info",
     description:

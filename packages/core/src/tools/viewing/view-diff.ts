@@ -6,6 +6,9 @@ import { exec } from "child_process";
 import type { BaseTool, ToolDefinition, ToolResult } from "../types";
 
 export class ViewDiffTool implements BaseTool {
+  // ── Behavioral flags ──
+  isReadOnly = () => true;
+  concurrencyMode = () => "parallel" as const;
   definition: ToolDefinition = {
     name: "view_diff",
     description:

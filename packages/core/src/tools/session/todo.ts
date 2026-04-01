@@ -9,6 +9,8 @@ import type { BaseTool, ToolDefinition, ToolResult } from "../types";
 import { TodoStore, type TodoStatus } from "../../utils/todo";
 
 export class TodoTool implements BaseTool {
+  // ── Behavioral flags ──
+  concurrencyMode = () => "parallel" as const; // in-memory state, no file side effects
   definition: ToolDefinition = {
     name: "todo",
     description: `Manage tasks and subtasks for the current session. Use this to:

@@ -10,6 +10,9 @@ import * as path from "path";
 import type { BaseTool, ToolDefinition, ToolResult } from "../types";
 
 export class SkillTool implements BaseTool {
+  // ── Behavioral flags ──
+  isReadOnly = () => true; // just loads a markdown file
+  concurrencyMode = () => "parallel" as const;
   definition: ToolDefinition = {
     name: "skill",
     description:

@@ -4,6 +4,10 @@ import type { BaseTool, ToolDefinition, ToolResult } from "../types";
 import { loadIgnorePatterns } from "../../utils/gitignore";
 
 export class GlobSearchTool implements BaseTool {
+  // ── Behavioral flags ──
+  isReadOnly = () => true;
+  concurrencyMode = () => "parallel" as const;
+
   definition: ToolDefinition = {
     name: "glob_search",
     description:

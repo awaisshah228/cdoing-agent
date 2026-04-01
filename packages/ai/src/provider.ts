@@ -354,6 +354,8 @@ export function createModel(config: Partial<ModelConfig> = {}) {
         temperature: ollamaTemp,
         maxTokens,
         apiKey: config.apiKey || process.env.OLLAMA_API_KEY || "",
+        keepAlive: process.env.OLLAMA_KEEP_ALIVE || "10m",
+        numCtx: process.env.OLLAMA_NUM_CTX ? parseInt(process.env.OLLAMA_NUM_CTX, 10) : undefined,
       }) as any; // duck-typed LangChain interface (bindTools + stream)
     }
 

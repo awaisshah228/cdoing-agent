@@ -18,6 +18,7 @@
 import { createModel, type ModelConfig } from "./provider";
 import { buildSystemPrompt } from "./system-prompt";
 import { ContextManager, type TurnUsage } from "./context-manager";
+import { ChatOllamaNative } from "./ollama-native";
 import {
   HumanMessage,
   AIMessage,
@@ -54,6 +55,8 @@ export interface AgentCallbacks {
   onCompactEnd?: (savedTokens: number, newPercent: number) => void;
   /** Emitted when text-based tool calls are detected — UI should clear the streamed JSON text */
   onTextToolCallDetected?: () => void;
+  /** Emitted when the model starts streaming a tool call (before args are complete) — UI can show a generating indicator */
+  onToolCallStreaming?: (name: string) => void;
 }
 
 export interface AgentRunnerOptions {
@@ -139,12 +142,31 @@ export class AgentRunner {
     this.contextManager = new ContextManager(maxContext, modelConfig.model || "");
   }
 
+  /** Whether we've already attempted to detect the Ollama context length */
+  private ollamaContextDetected = false;
+
   private getMaxContext(provider?: string): number {
     switch (provider) {
       case "anthropic": return 200000;
       case "google": return 1000000;
-      case "ollama": return 32000; // most Ollama models default to 32k
+      case "ollama": return 8192; // conservative default — updated by detectOllamaContext()
       default: return 128000;
+    }
+  }
+
+  /**
+   * For Ollama models, query the actual context length from /api/show
+   * and update the context manager. Called once on first run().
+   */
+  private async detectOllamaContext(): Promise<void> {
+    if (this.ollamaContextDetected || this.provider !== "ollama") return;
+    this.ollamaContextDetected = true;
+
+    if (this.model instanceof ChatOllamaNative) {
+      const info = await this.model.getModelInfo();
+      if (info?.contextLength) {
+        this.contextManager.setMaxContextTokens(info.contextLength);
+      }
     }
   }
 
@@ -643,6 +665,7 @@ export class AgentRunner {
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
         let accumulated: AIMessageChunk | null = null;
+        const notifiedToolNames = new Set<string>();
 
         this.abortController = new AbortController();
         const stream = await modelWithTools.stream(allMessages, {
@@ -662,8 +685,20 @@ export class AgentRunner {
             accumulated = accumulated.concat(chunk as AIMessageChunk);
           }
 
+          // Detect native tool call chunks being streamed (e.g. file_write content)
+          // and notify UI so it can show a "Generating..." indicator
+          const aiChunk = chunk as AIMessageChunk;
+          if (callbacks.onToolCallStreaming && aiChunk.tool_call_chunks?.length) {
+            for (const tcc of aiChunk.tool_call_chunks) {
+              if (tcc.name && !notifiedToolNames.has(tcc.name)) {
+                notifiedToolNames.add(tcc.name);
+                callbacks.onToolCallStreaming(tcc.name);
+              }
+            }
+          }
+
           // Emit text tokens as they arrive
-          const text = this.extractChunkText(chunk as AIMessageChunk);
+          const text = this.extractChunkText(aiChunk);
           if (text) {
             callbacks.onToken(text);
           }
@@ -823,6 +858,9 @@ export class AgentRunner {
     }
     this.isCancelled = false;
 
+    // On first run, detect Ollama model's actual context length
+    await this.detectOllamaContext();
+
     // If the previous run was interrupted, inject real background work status
     if (this.wasInterrupted) {
       this.wasInterrupted = false;
@@ -868,20 +906,24 @@ export class AgentRunner {
           callbacks.onToken(`\n[Max turns (${this.maxTurns}) reached]`);
           break;
         }
-        // Compress context if needed
+        // Compress context if needed (LLM summarization when available, template fallback)
         const preCompressTokens = this.contextManager.estimateMessages(this.messages);
         const maxTokens = this.contextManager.getMaxContextTokens();
         const contextPercent = Math.round((preCompressTokens / maxTokens) * 100);
-        const needsCompact = contextPercent >= 70;
+        const needsCompact = contextPercent >= 75;
         try {
           if (needsCompact && callbacks.onCompactStart) {
             callbacks.onCompactStart(contextPercent);
           }
         } catch {}
-        this.messages = this.contextManager.compressIfNeeded(
-          this.messages,
-          this.systemPrompt,
-        );
+        if (needsCompact) {
+          // Pass the model for LLM-powered summarization (falls back to template)
+          this.messages = await this.contextManager.compressIfNeededAsync(
+            this.messages,
+            this.systemPrompt,
+            this.model as any,
+          );
+        }
         try {
           if (needsCompact && callbacks.onCompactEnd) {
             const postTokens = this.contextManager.estimateMessages(this.messages);
@@ -1060,23 +1102,10 @@ export class AgentRunner {
     return fullResponse;
   }
 
-  // ── Parallel Tool Execution (Claude Code approach) ──────
-
-  /** Tools that are always safe to run in parallel (read-only, no side effects) */
-  private static readonly ALWAYS_PARALLEL = new Set([
-    "file_read", "glob_search", "grep_search", "web_fetch", "web_search",
-    "sub_agent", "sub_agent_status", "sub_agent_terminate", "lsp",
-  ]);
-
-  /** Tools that can run in parallel IF they target different files */
-  private static readonly PARALLEL_IF_DIFFERENT_FILES = new Set([
-    "file_write", "file_edit", "multi_edit", "ast_edit", "apply_patch",
-  ]);
-
-  /** Tools that must always run sequentially (side effects, shared state) */
-  private static readonly ALWAYS_SEQUENTIAL = new Set([
-    "shell_exec", "file_run", "batch", "question", "skill", "plan_exit", "task_complete",
-  ]);
+  // ── Parallel Tool Execution ──────
+  // Concurrency is now determined per-tool via tool.concurrencyMode(input)
+  // instead of static name lists. Each tool declares its own safety level
+  // so new tools are automatically handled correctly (fail-closed: sequential).
 
   /** Execute a single tool call with hooks, permissions, and error handling */
   private async executeSingleTool(
@@ -1142,9 +1171,8 @@ export class AgentRunner {
       }
     }
 
-    // Execute tool — pass streaming callback for shell_exec so output streams in real-time
-    const isShell = tc.name === "shell_exec" || tc.name === "file_run";
-    const onProgress = isShell && callbacks.onToolProgress ? (chunk: string) => {
+    // Execute tool — pass streaming callback so output streams in real-time
+    const onProgress = callbacks.onToolProgress ? (chunk: string) => {
       callbacks.onToolProgress!(tc.name, chunk);
     } : undefined;
     const result = await this.toolRegistry.execute(tc.name, tc.args, onProgress);
@@ -1194,21 +1222,17 @@ export class AgentRunner {
   }
 
   /**
-   * Get the file path a tool call targets (if any).
-   */
-  private static getTargetFile(tc: { name: string; args: Record<string, unknown> }): string | null {
-    const path = tc.args.file_path || tc.args.path;
-    return typeof path === "string" ? path : null;
-  }
-
-  /**
-   * Execute tool calls with smart parallelism:
+   * Execute tool calls with smart parallelism driven by per-tool concurrency modes.
    *
-   *   1. Always-parallel tools (reads, searches, sub_agent) → all run concurrently
-   *   2. File write/edit → parallel IF targeting different files, sequential if same file
-   *   3. Shell/run → always sequential (shared state, side effects)
+   * Each tool declares its own concurrency safety via concurrencyMode(input):
+   *   - 'parallel'      → always safe to run concurrently (reads, searches)
+   *   - 'parallel-file' → safe IF targeting different files; same-file ops serialize
+   *   - 'sequential'    → must run one-at-a-time (side effects, shared state)
    *
-   * Results are matched to calls by tool_call_id — order doesn't matter.
+   * This replaces the old static name-based lists with per-tool intelligence,
+   * so new tools automatically get correct scheduling without updating lists.
+   *
+   * Output budgets use per-tool maxResultSizeChars, capped by context window budget.
    */
   private async executeToolCalls(
     toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }>,
@@ -1217,46 +1241,62 @@ export class AgentRunner {
     // Compute per-tool output budget from remaining context window
     const systemPromptTokens = Math.ceil(this.systemPrompt.length / 4);
     const totalBudgetChars = this.contextManager.getOutputBudgetChars(this.messages, systemPromptTokens);
-    const perToolBudget = Math.max(
+    const sharedBudget = Math.max(
       5000, // minimum 5k chars per tool
       Math.floor(totalBudgetChars / Math.max(toolCalls.length, 1))
     );
 
     if (toolCalls.length === 1) {
-      await this.executeSingleTool(toolCalls[0], callbacks, perToolBudget);
+      const toolBudget = Math.min(sharedBudget, this.toolRegistry.getMaxResultSizeChars(toolCalls[0].name));
+      await this.executeSingleTool(toolCalls[0], callbacks, toolBudget);
       return;
     }
 
-    // Categorize tool calls
-    const alwaysParallel: typeof toolCalls = [];
+    // Categorize tool calls using per-tool concurrency modes from the registry
+    const parallel: typeof toolCalls = [];
     const fileOps: typeof toolCalls = [];
-    const alwaysSequential: typeof toolCalls = [];
+    const sequential: typeof toolCalls = [];
 
     for (const tc of toolCalls) {
-      if (AgentRunner.ALWAYS_PARALLEL.has(tc.name)) {
-        alwaysParallel.push(tc);
-      } else if (AgentRunner.PARALLEL_IF_DIFFERENT_FILES.has(tc.name)) {
-        fileOps.push(tc);
-      } else {
-        alwaysSequential.push(tc);
+      const mode = this.toolRegistry.getConcurrencyMode(tc.name, tc.args);
+      switch (mode) {
+        case "parallel":
+          parallel.push(tc);
+          break;
+        case "parallel-file":
+          fileOps.push(tc);
+          break;
+        case "sequential":
+          sequential.push(tc);
+          break;
       }
     }
 
     // Group file ops by target file — same file = sequential, different files = parallel
     const fileGroups = new Map<string, typeof toolCalls>();
     for (const tc of fileOps) {
-      const file = AgentRunner.getTargetFile(tc) || `__unknown_${tc.id}`;
+      const file = this.toolRegistry.getFilePath(tc.name, tc.args) || `__unknown_${tc.id}`;
       const group = fileGroups.get(file) || [];
       group.push(tc);
       fileGroups.set(file, group);
     }
 
+    // Sibling abort controller — Bash errors cancel parallel siblings
+    // (inspired by Claude Code's StreamingToolExecutor)
+    const siblingAbort = new AbortController();
+    let _siblingErrored = false;
+
     // Build parallel batch: all reads + one op per unique file
     const parallelBatch: Array<Promise<void>> = [];
 
     // 1. All always-parallel tools run concurrently
-    for (const tc of alwaysParallel) {
-      parallelBatch.push(this.executeSingleTool(tc, callbacks, perToolBudget));
+    for (const tc of parallel) {
+      const toolBudget = Math.min(sharedBudget, this.toolRegistry.getMaxResultSizeChars(tc.name));
+      parallelBatch.push(
+        this.executeSingleTool(tc, callbacks, toolBudget).catch(() => {
+          // Parallel tool errors don't cancel siblings (reads are independent)
+        })
+      );
     }
 
     // 2. File ops: each file group runs its ops sequentially, but different files run in parallel
@@ -1264,7 +1304,9 @@ export class AgentRunner {
       parallelBatch.push(
         (async () => {
           for (const tc of group) {
-            await this.executeSingleTool(tc, callbacks, perToolBudget);
+            if (siblingAbort.signal.aborted) break;
+            const toolBudget = Math.min(sharedBudget, this.toolRegistry.getMaxResultSizeChars(tc.name));
+            await this.executeSingleTool(tc, callbacks, toolBudget);
           }
         })()
       );
@@ -1275,9 +1317,30 @@ export class AgentRunner {
       await Promise.all(parallelBatch);
     }
 
-    // 3. Shell/run tools always sequential (after all file ops are done)
-    for (const tc of alwaysSequential) {
-      await this.executeSingleTool(tc, callbacks, perToolBudget);
+    // 3. Sequential tools run after all parallel work is done
+    // Bash errors abort remaining sequential siblings (implicit dependency chain)
+    for (const tc of sequential) {
+      if (siblingAbort.signal.aborted) {
+        // Push a synthetic error result for aborted tools
+        this.messages.push(new ToolMessage({
+          content: `[Skipped — previous shell command failed]`,
+          tool_call_id: tc.id,
+        }));
+        callbacks.onToolResult(tc.name, "[Skipped — previous shell command failed]", true);
+        continue;
+      }
+      const toolBudget = Math.min(sharedBudget, this.toolRegistry.getMaxResultSizeChars(tc.name));
+      await this.executeSingleTool(tc, callbacks, toolBudget);
+
+      // Check if this was a shell command that failed — abort siblings
+      const lastMsg = this.messages[this.messages.length - 1];
+      if (tc.name === "shell_exec" && lastMsg) {
+        const content = typeof lastMsg.content === "string" ? lastMsg.content : "";
+        if (content.includes("Exit code:") && !content.includes("Exit code: 0")) {
+          _siblingErrored = true;
+          siblingAbort.abort("sibling_error");
+        }
+      }
     }
   }
 
@@ -1363,7 +1426,13 @@ const TOOL_SIGNALS: Array<{ keywords: RegExp; tools: string[] }> = [
   { keywords: /ast|tree.?sitter|parse|struct|node|rename func|rename class/i, tools: ["ast_edit"] },
   { keywords: /diff|git|commit|branch|status|log/i, tools: ["view_diff", "shell_exec"] },
   { keywords: /todo|task|plan|track/i, tools: ["todo", "plan_exit"] },
-  { keywords: /sub.?agent|parallel|background|delegate/i, tools: ["sub_agent", "sub_agent_status", "sub_agent_terminate"] },
+  { keywords: /sub.?agent|parallel|background|delegate|spawn|worker/i, tools: ["sub_agent", "sub_agent_status", "sub_agent_terminate", "send_message"] },
+  { keywords: /task|tasks|running|process|stop|kill|status/i, tools: ["task_list", "task_get", "task_stop"] },
+  { keywords: /worktree|isolat|branch.?copy|safe.?experiment/i, tools: ["enter_worktree", "exit_worktree"] },
+  { keywords: /mcp|resource|server|protocol/i, tools: ["list_mcp_resources", "read_mcp_resource"] },
+  { keywords: /repl|interactive|python|node.*run|eval/i, tools: ["repl"] },
+  { keywords: /powershell|pwsh|cmdlet|windows.*shell/i, tools: ["powershell"] },
+  { keywords: /brief|send.*message|attach|screenshot|report/i, tools: ["send_user_message"] },
   { keywords: /repo|map|structure|overview|architecture/i, tools: ["view_repo_map"] },
   { keywords: /system|info|permission|sandbox/i, tools: ["system_info"] },
   { keywords: /patch|apply.?diff|unified.?diff/i, tools: ["apply_patch"] },
@@ -1372,6 +1441,11 @@ const TOOL_SIGNALS: Array<{ keywords: RegExp; tools: string[] }> = [
   { keywords: /ask|question|choose|confirm|select/i, tools: ["question"] },
   { keywords: /batch|bulk|multiple.?tools/i, tools: ["batch"] },
   { keywords: /remember|forget|memory|recall|preference|learned/i, tools: ["memory"] },
+  { keywords: /cron|schedule|recurring|every\s+\d+\s+min|daily|weekly/i, tools: ["cron_create", "cron_list", "cron_delete"] },
+  { keywords: /sleep|wait|pause|delay|poll/i, tools: ["sleep"] },
+  { keywords: /snip|compress|free.*context|shrink.*history/i, tools: ["snip"] },
+  { keywords: /browser|screenshot|puppeteer|headless|navigate.*page|click.*button/i, tools: ["web_browser"] },
+  { keywords: /terminal|capture|screen|tmux|visible.*output/i, tools: ["terminal_capture"] },
 ];
 
 /**

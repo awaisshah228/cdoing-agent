@@ -11,6 +11,10 @@ interface GrepMatch {
 }
 
 export class GrepSearchTool implements BaseTool {
+  // ── Behavioral flags ──
+  isReadOnly = () => true;
+  concurrencyMode = () => "parallel" as const;
+
   definition: ToolDefinition = {
     name: "grep_search",
     description:

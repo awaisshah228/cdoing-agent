@@ -45,27 +45,64 @@ export function getContextWindowMax(provider: string, model: string): number {
  * Keeping this as a plain object (not a Map) makes it easy to extend.
  */
 export const TOOL_ICONS: Record<string, string> = {
-  file_read:       "📖",
-  file_write:      "✏️ ",
-  file_edit:       "🔧",
-  multi_edit:      "🔧",
-
-  ast_edit:        "🌳",
-  notebook_edit:   "📓",
-  glob_search:     "🔍",
-  grep_search:     "🔎",
-  codebase_search: "🔎",
-  shell_exec:      "💻",
-  file_run:        "▶",
-  web_fetch:       "🌐",
-  web_search:      "🔮",
-  sub_agent:       "🤖",
-  todo:            "📋",
-  list_dir:        "📁",
-  view_diff:       "📊",
-  view_repo_map:   "🗺️",
-  code_verify:     "✅",
-  system_info:     "ℹ️",
+  // File operations
+  file_read:          "📖",
+  file_write:         "✏️ ",
+  file_edit:          "🔧",
+  multi_edit:         "🔧",
+  apply_patch:        "🩹",
+  // Editing
+  ast_edit:           "🌳",
+  notebook_edit:      "📓",
+  // Search
+  glob_search:        "🔍",
+  grep_search:        "🔎",
+  codebase_search:    "🔎",
+  list_dir:           "📂",
+  // Execution
+  shell_exec:         "💻",
+  file_run:           "▶",
+  code_verify:        "✅",
+  powershell:         "💻",
+  repl:               "▶️ ",
+  // Web
+  web_fetch:          "🌐",
+  web_search:         "🔮",
+  web_browser:        "🌐",
+  // Agents
+  sub_agent:          "🤖",
+  sub_agent_status:   "🤖",
+  sub_agent_terminate:"🤖",
+  send_message:       "💬",
+  task_list:          "📋",
+  task_get:           "📋",
+  task_stop:          "🛑",
+  // Session
+  todo:               "📋",
+  question:           "❓",
+  plan_exit:          "📝",
+  batch:              "📦",
+  skill:              "⚡",
+  memory:             "🧠",
+  task_complete:      "✅",
+  send_user_message:  "💬",
+  enter_worktree:     "🌿",
+  exit_worktree:      "🌿",
+  cron_create:        "⏰",
+  cron_list:          "⏰",
+  cron_delete:        "⏰",
+  sleep:              "💤",
+  snip:               "✂️ ",
+  // Viewing
+  view_diff:          "📊",
+  view_repo_map:      "🗺️",
+  // System
+  system_info:        "ℹ️",
+  lsp:                "🔗",
+  config_update:      "⚙️ ",
+  terminal_capture:   "📺",
+  list_mcp_resources: "🔌",
+  read_mcp_resource:  "🔌",
 };
 
 /**
@@ -76,15 +113,63 @@ export function getToolHint(name: string, input: Record<string, unknown>): strin
   // Helper: get a string value from input, strip the cwd prefix for brevity
   const p = (k: string) => String(input[k] || "").replace(process.cwd() + "/", "");
   switch (name) {
-    case "file_read":   return p("file_path") || p("path");
-    case "file_write":  return p("file_path") || p("path");
-    case "file_edit":   return p("file_path") || p("path");
-    case "glob_search": return String(input.pattern || "");
-    case "grep_search": return String(input.pattern || "");
-    case "shell_exec":  return String(input.command || "").substring(0, 50);
-    case "web_fetch":   return String(input.url    || "").substring(0, 60);
-    case "web_search":  return String(input.query  || "").substring(0, 60);
-    default:            return "";
+    // File operations
+    case "file_read":
+    case "file_write":
+    case "file_edit":
+    case "multi_edit":
+    case "apply_patch":
+    case "ast_edit":
+    case "notebook_edit":
+      return p("file_path") || p("path");
+    // Search
+    case "glob_search":
+    case "grep_search":
+      return String(input.pattern || "");
+    case "codebase_search":
+      return String(input.query || "").substring(0, 50);
+    case "list_dir":
+      return p("path") || p("directory");
+    // Execution
+    case "shell_exec":
+    case "powershell":
+      return String(input.command || "").substring(0, 50);
+    case "file_run":
+      return p("file_path") || p("path");
+    case "repl":
+      return String(input.code || "").substring(0, 50);
+    case "code_verify":
+      return p("file_path") || p("path");
+    // Web
+    case "web_fetch":
+      return String(input.url || "").substring(0, 60);
+    case "web_search":
+      return String(input.query || "").substring(0, 60);
+    case "web_browser":
+      return String(input.url || input.action || "").substring(0, 60);
+    // Agents
+    case "sub_agent":
+      return String(input.task || input.prompt || "").substring(0, 50);
+    case "send_message":
+      return String(input.to || "").substring(0, 30);
+    // Session
+    case "memory":
+      return String(input.action || "") + " " + String(input.key || input.query || "");
+    case "skill":
+      return String(input.skill || "");
+    // Viewing
+    case "view_diff":
+      return p("path") || "";
+    case "view_repo_map":
+      return p("path") || "";
+    // System
+    case "terminal_capture":
+      return String(input.lines || "");
+    default:
+      // Fallback: try common input fields
+      const fp = p("file_path") || p("path");
+      const q = String(input.query || input.command || input.pattern || "").substring(0, 40);
+      return fp || q;
   }
 }
 

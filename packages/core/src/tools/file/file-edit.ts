@@ -21,6 +21,10 @@ function convertToLineEnding(text: string, ending: "\n" | "\r\n"): string {
 }
 
 export class FileEditTool implements BaseTool {
+  // ── Behavioral flags ──
+  concurrencyMode = () => "parallel-file" as const;
+  getFilePath = (input: Record<string, unknown>) => input.file_path as string | undefined;
+
   definition: ToolDefinition = {
     name: "file_edit",
     description:

@@ -55,6 +55,10 @@ const CHECKERS: Record<string, (filePath: string, cwd: string) => string> = {
 };
 
 export class CodeVerifyTool implements BaseTool {
+  // ── Behavioral flags ──
+  isReadOnly = () => true; // only checks syntax, no side effects
+  concurrencyMode = () => "parallel" as const;
+  getFilePath = (input: Record<string, unknown>) => input.file_path as string | undefined;
   definition: ToolDefinition = {
     name: "code_verify",
     description:

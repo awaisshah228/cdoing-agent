@@ -12,6 +12,10 @@ import type { SandboxManager } from "../../sandbox";
 const DEFAULT_MAX_ENTRIES = 500;
 
 export class ListDirTool implements BaseTool {
+  // ── Behavioral flags ──
+  isReadOnly = () => true;
+  concurrencyMode = () => "parallel" as const;
+
   definition: ToolDefinition = {
     name: "list_dir",
     description:

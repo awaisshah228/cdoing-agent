@@ -79,7 +79,7 @@ export async function registerSearchTools(registry: ToolRegistry, opts: ToolGrou
   registry.register(new ListDirTool(opts.workingDir, opts.sandboxManager));
 }
 
-/** Register execution tools: shell_exec, file_run, code_verify */
+/** Register execution tools: shell_exec, file_run, code_verify, powershell, repl */
 export async function registerExecutionTools(registry: ToolRegistry, opts: ToolGroupOptions): Promise<void> {
   const { ShellExecTool } = await import("./execution/shell-exec");
   const { FileRunTool } = await import("./execution/file-run");
@@ -90,15 +90,25 @@ export async function registerExecutionTools(registry: ToolRegistry, opts: ToolG
   registry.register(new ShellExecTool(opts.workingDir, opts.sandboxManager, opts.permissionManager, pm));
   registry.register(new FileRunTool(opts.workingDir, opts.sandboxManager));
   registry.register(new CodeVerifyTool(opts.workingDir));
+
+  // PowerShell (Windows only — registered everywhere, tool self-guards on platform)
+  const { PowerShellTool } = await import("./execution/powershell");
+  registry.register(new PowerShellTool(opts.workingDir, opts.sandboxManager));
+
+  // REPL (interactive Python/Node)
+  const { ReplTool } = await import("./execution/repl");
+  registry.register(new ReplTool(opts.workingDir));
 }
 
-/** Register web tools: web_fetch, web_search */
+/** Register web tools: web_fetch, web_search, web_browser */
 export async function registerWebTools(registry: ToolRegistry, opts: ToolGroupOptions): Promise<void> {
   const { WebFetchTool } = await import("./web/web-fetch");
   const { WebSearchTool } = await import("./web/web-search");
+  const { WebBrowserTool } = await import("./web/web-browser");
 
   registry.register(new WebFetchTool(opts.sandboxManager));
   registry.register(new WebSearchTool());
+  registry.register(new WebBrowserTool());
 }
 
 /** Register specialized editing tools: ast_edit, notebook_edit */
@@ -119,7 +129,7 @@ export async function registerViewingTools(registry: ToolRegistry, opts: ToolGro
   registry.register(new ViewRepoMapTool(opts.workingDir));
 }
 
-/** Register sub-agent tools: sub_agent, sub_agent_status, sub_agent_terminate */
+/** Register sub-agent tools: sub_agent, sub_agent_status, sub_agent_terminate, send_message, task_* */
 export async function registerAgentTools(registry: ToolRegistry, opts: ToolGroupOptions): Promise<void> {
   if (!opts.subAgentFactory) return;
 
@@ -127,11 +137,17 @@ export async function registerAgentTools(registry: ToolRegistry, opts: ToolGroup
   const { SubAgentManager: SAM } = await import("./agents/sub-agent-manager");
   const { SubAgentStatusTool } = await import("./agents/sub-agent-status");
   const { SubAgentTerminateTool } = await import("./agents/sub-agent-terminate");
+  const { SendMessageTool } = await import("./agents/send-message");
+  const { TaskListTool, TaskGetTool, TaskStopTool } = await import("./agents/task-manage");
 
   const manager = opts.subAgentManager || new SAM();
   registry.register(new SubAgentTool(opts.subAgentFactory, manager));
   registry.register(new SubAgentStatusTool(manager));
   registry.register(new SubAgentTerminateTool(manager));
+  registry.register(new SendMessageTool(manager));
+  registry.register(new TaskListTool(manager, opts.processManager));
+  registry.register(new TaskGetTool(manager, opts.processManager));
+  registry.register(new TaskStopTool(manager, opts.processManager));
 }
 
 /** Register session tools: todo, question, batch, plan_exit, skill */
@@ -168,12 +184,39 @@ export async function registerSessionTools(registry: ToolRegistry, opts: ToolGro
     opts.subAgentManager,
     opts.taskCompleteCallback,
   ));
+
+  // Worktree isolation tools (git required)
+  const { EnterWorktreeTool } = await import("./session/enter-worktree");
+  const { ExitWorktreeTool } = await import("./session/exit-worktree");
+  registry.register(new EnterWorktreeTool(opts.workingDir));
+  registry.register(new ExitWorktreeTool());
+
+  // Brief tool (send structured messages with attachments)
+  const { BriefTool } = await import("./session/brief");
+  registry.register(new BriefTool(opts.workingDir));
+
+  // Cron scheduling tools
+  const { CronCreateTool, CronListTool, CronDeleteTool } = await import("./session/cron");
+  registry.register(new CronCreateTool(opts.workingDir));
+  registry.register(new CronListTool(opts.workingDir));
+  registry.register(new CronDeleteTool(opts.workingDir));
+
+  // Sleep tool (strategic delays)
+  const { SleepTool } = await import("./session/sleep");
+  registry.register(new SleepTool());
+
+  // Snip tool (manual history compression)
+  const { SnipTool } = await import("./session/snip");
+  registry.register(new SnipTool());
 }
 
-/** Register system tools: system_info, lsp, config_update */
+/** Register system tools: system_info, lsp, config_update, terminal_capture */
 export async function registerSystemTools(registry: ToolRegistry, opts: ToolGroupOptions): Promise<void> {
   const { LspTool } = await import("./system/lsp");
   registry.register(new LspTool(opts.workingDir));
+
+  const { TerminalCaptureTool } = await import("./system/terminal-capture");
+  registry.register(new TerminalCaptureTool());
 
   if (opts.permissionManager) {
     const { SystemInfoTool } = await import("./system/system-info");

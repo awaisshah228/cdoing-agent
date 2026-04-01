@@ -29,29 +29,64 @@ const ToolSvg: React.FC<{ d: string }> = ({ d }) => (
 // ── Tool Config ──────────────────────────────────────
 
 const TOOL_CONFIG: Record<string, { label: string; icon: React.ReactNode }> = {
-  file_read:       { label: "Read",       icon: <ToolSvg d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" /> },
-  file_write:      { label: "Write",      icon: <ToolSvg d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /> },
-  file_edit:       { label: "Edit",       icon: <ToolSvg d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /> },
-  multi_edit:      { label: "MultiEdit",  icon: <ToolSvg d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /> },
-  ast_edit:        { label: "AST Edit",   icon: <ToolSvg d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" /> },
-  notebook_edit:   { label: "Notebook",   icon: <ToolSvg d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" /> },
-  glob_search:     { label: "Find files", icon: <ToolSvg d="M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z" /> },
-  grep_search:     { label: "Search",     icon: <ToolSvg d="M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z" /> },
-  codebase_search: { label: "Codebase",   icon: <ToolSvg d="M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z" /> },
-  shell_exec:      { label: "Bash",       icon: <ToolSvg d="M4 17l6-6-6-6M12 19h8" /> },
-  file_run:        { label: "Execute",    icon: <ToolSvg d="M5 3l14 9-14 9V3z" /> },
-  web_fetch:       { label: "Fetch",      icon: <ToolSvg d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /> },
-  web_search:      { label: "Web search", icon: <ToolSvg d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM2 12h20" /> },
-  sub_agent:       { label: "Agent",      icon: <ToolSvg d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" /> },
-  todo:            { label: "Todo",       icon: <ToolSvg d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /> },
-  plan_exit:       { label: "Plan",      icon: <ToolSvg d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /> },
-  memory:          { label: "Memory",    icon: <ToolSvg d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 8v4l3 3" /> },
-  task_complete:   { label: "Done",      icon: <ToolSvg d="M22 11.08V12a10 10 0 1 1-5.93-9.14M22 4L12 14.01l-3-3" /> },
-  list_dir:        { label: "List dir",   icon: <ToolSvg d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /> },
-  view_diff:       { label: "Diff",       icon: <ToolSvg d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5" /> },
-  view_repo_map:   { label: "Repo map",   icon: <ToolSvg d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4zM8 2v16M16 6v16" /> },
-  code_verify:     { label: "Verify",     icon: <ToolSvg d="M22 11.08V12a10 10 0 1 1-5.93-9.14M22 4L12 14.01l-3-3" /> },
-  system_info:     { label: "System",     icon: <ToolSvg d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 16v-4M12 8h.01" /> },
+  // File operations
+  file_read:          { label: "Read",          icon: <ToolSvg d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" /> },
+  file_write:         { label: "Write",         icon: <ToolSvg d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /> },
+  file_edit:          { label: "Edit",          icon: <ToolSvg d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /> },
+  multi_edit:         { label: "MultiEdit",     icon: <ToolSvg d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /> },
+  apply_patch:        { label: "Patch",         icon: <ToolSvg d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /> },
+  // Editing
+  ast_edit:           { label: "AST Edit",      icon: <ToolSvg d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" /> },
+  notebook_edit:      { label: "Notebook",      icon: <ToolSvg d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" /> },
+  // Search
+  glob_search:        { label: "Find files",    icon: <ToolSvg d="M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z" /> },
+  grep_search:        { label: "Search",        icon: <ToolSvg d="M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z" /> },
+  codebase_search:    { label: "Codebase",      icon: <ToolSvg d="M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z" /> },
+  list_dir:           { label: "List dir",      icon: <ToolSvg d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /> },
+  // Execution
+  shell_exec:         { label: "Bash",          icon: <ToolSvg d="M4 17l6-6-6-6M12 19h8" /> },
+  file_run:           { label: "Execute",       icon: <ToolSvg d="M5 3l14 9-14 9V3z" /> },
+  code_verify:        { label: "Verify",        icon: <ToolSvg d="M22 11.08V12a10 10 0 1 1-5.93-9.14M22 4L12 14.01l-3-3" /> },
+  powershell:         { label: "PowerShell",    icon: <ToolSvg d="M4 17l6-6-6-6M12 19h8" /> },
+  repl:               { label: "REPL",          icon: <ToolSvg d="M5 3l14 9-14 9V3z" /> },
+  // Web
+  web_fetch:          { label: "Fetch",         icon: <ToolSvg d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /> },
+  web_search:         { label: "Web search",    icon: <ToolSvg d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM2 12h20" /> },
+  web_browser:        { label: "Browser",       icon: <ToolSvg d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /> },
+  // Agents
+  sub_agent:          { label: "Agent",         icon: <ToolSvg d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" /> },
+  sub_agent_status:   { label: "Agent Status",  icon: <ToolSvg d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" /> },
+  sub_agent_terminate:{ label: "Agent Stop",    icon: <ToolSvg d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" /> },
+  send_message:       { label: "Message",       icon: <ToolSvg d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /> },
+  task_list:          { label: "Tasks",         icon: <ToolSvg d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /> },
+  task_get:           { label: "Task",          icon: <ToolSvg d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /> },
+  task_stop:          { label: "Task Stop",     icon: <ToolSvg d="M10 9v6M14 9v6M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" /> },
+  // Session
+  todo:               { label: "Todo",          icon: <ToolSvg d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /> },
+  question:           { label: "Question",      icon: <ToolSvg d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 16v-4M12 8h.01" /> },
+  plan_exit:          { label: "Plan",          icon: <ToolSvg d="M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /> },
+  batch:              { label: "Batch",         icon: <ToolSvg d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /> },
+  skill:              { label: "Skill",         icon: <ToolSvg d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /> },
+  memory:             { label: "Memory",        icon: <ToolSvg d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 8v4l3 3" /> },
+  task_complete:      { label: "Done",          icon: <ToolSvg d="M22 11.08V12a10 10 0 1 1-5.93-9.14M22 4L12 14.01l-3-3" /> },
+  send_user_message:  { label: "Message",       icon: <ToolSvg d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /> },
+  enter_worktree:     { label: "Worktree",      icon: <ToolSvg d="M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9" /> },
+  exit_worktree:      { label: "Worktree",      icon: <ToolSvg d="M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9" /> },
+  cron_create:        { label: "Cron",          icon: <ToolSvg d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 6v6l4 2" /> },
+  cron_list:          { label: "Cron",          icon: <ToolSvg d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 6v6l4 2" /> },
+  cron_delete:        { label: "Cron",          icon: <ToolSvg d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 6v6l4 2" /> },
+  sleep:              { label: "Sleep",         icon: <ToolSvg d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 6v6l4 2" /> },
+  snip:               { label: "Snip",          icon: <ToolSvg d="M20 4L8.12 15.88M14.47 14.48L20 20M8.12 8.12L12 12M6 6l6 6M4 20l2-2" /> },
+  // Viewing
+  view_diff:          { label: "Diff",          icon: <ToolSvg d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5" /> },
+  view_repo_map:      { label: "Repo map",      icon: <ToolSvg d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4zM8 2v16M16 6v16" /> },
+  // System
+  system_info:        { label: "System",        icon: <ToolSvg d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 16v-4M12 8h.01" /> },
+  lsp:                { label: "LSP",           icon: <ToolSvg d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /> },
+  config_update:      { label: "Config",        icon: <ToolSvg d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 1-3 3H5a3 3 0 0 0-3 3v0a3 3 0 0 0 3 3h1a3 3 0 0 1 3 3v1a3 3 0 0 0 3 3v0a3 3 0 0 0 3-3v-1a3 3 0 0 1 3-3h1a3 3 0 0 0 3-3v0a3 3 0 0 0-3-3h-1a3 3 0 0 1-3-3V5a3 3 0 0 0-3-3z" /> },
+  terminal_capture:   { label: "Terminal",      icon: <ToolSvg d="M4 17l6-6-6-6M12 19h8" /> },
+  list_mcp_resources: { label: "MCP Resources", icon: <ToolSvg d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /> },
+  read_mcp_resource:  { label: "MCP Resource",  icon: <ToolSvg d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /> },
 };
 
 function parseInput(detail: string): Record<string, unknown> {
@@ -195,12 +230,11 @@ function renderToolInput(name: string, parsed: Record<string, unknown>, onOpenFi
     case "file_write": {
       const path = String(parsed.file_path || parsed.path || "");
       const content = String(parsed.content || "");
-      const lines = content.split("\n");
+      const lineCount = content ? content.split("\n").length : 0;
       return (
         <div className="tool-io-block">
           <span className="tool-file-link" onClick={(e) => onOpenFile(path, e)}>{path}</span>
-          <pre className="tool-io-code">{trimLines(content, 8)}</pre>
-          {lines.length > 8 && <span className="tool-io-meta">{lines.length} lines total</span>}
+          <span className="tool-io-meta">{lineCount} line{lineCount !== 1 ? "s" : ""}</span>
         </div>
       );
     }

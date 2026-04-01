@@ -3,6 +3,11 @@
  *
  * Tracks token usage per turn and compresses old messages
  * when approaching the context window limit.
+ *
+ * Compression strategy (inspired by Claude Code):
+ *   Phase 1: Prune old tool outputs (lightweight, biggest saver)
+ *   Phase 2: Strip media (images/base64)
+ *   Phase 3: LLM-powered summarization (falls back to template if LLM unavailable)
  */
 
 import type { BaseMessage } from "@langchain/core/messages";
@@ -77,27 +82,53 @@ export interface TurnUsage {
   cost?: number;
 }
 
-/** Pricing per 1M tokens (input, output) */
-const PRICING: Record<string, [number, number]> = {
-  "claude-sonnet-4-20250514": [3, 15],
-  "claude-opus-4-20250514": [15, 75],
-  "claude-haiku-4-5-20251001": [1, 5],
-  "gpt-4o": [2.5, 10],
-  "gpt-4o-mini": [0.15, 0.6],
-  "gemini-2.0-flash": [0.075, 0.3],
-  // New providers
-  "mistral-large": [2, 6],
-  "grok-3": [3, 15],
-  "llama-3.3-70b": [0.59, 0.79],
-  "sonar-pro": [3, 15],
-  "command-r-plus": [2.5, 10],
+/** Pricing per 1M tokens — matches Claude Code's cost tiers */
+interface ModelPricing {
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+}
+
+const PRICING: Record<string, ModelPricing> = {
+  // Anthropic (Claude Code tiers: 3/15, 5/25, 15/75, 1/5)
+  "claude-sonnet-4": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+  "claude-opus-4": { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+  "claude-haiku-4": { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
+  // OpenAI
+  "gpt-4o-mini": { input: 0.15, output: 0.6 },
+  "gpt-4o": { input: 2.5, output: 10 },
+  "gpt-4.1": { input: 2, output: 8 },
+  "o3": { input: 2, output: 8 },
+  "o4-mini": { input: 1.1, output: 4.4 },
+  // Google
+  "gemini-2.5-pro": { input: 1.25, output: 10 },
+  "gemini-2.0-flash": { input: 0.075, output: 0.3 },
+  // Others
+  "mistral-large": { input: 2, output: 6 },
+  "grok-3": { input: 3, output: 15 },
+  "llama-3.3-70b": { input: 0.59, output: 0.79 },
+  "deepseek-r1": { input: 0.55, output: 2.19 },
+  "sonar-pro": { input: 3, output: 15 },
+  "command-r-plus": { input: 2.5, output: 10 },
 };
+
+/** Per-model usage accumulator */
+interface ModelUsageEntry {
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
+}
 
 export class ContextManager {
   private maxContextTokens: number;
   private turns: TurnUsage[] = [];
   private currentTurn = 0;
   private model: string;
+  private modelUsage: Map<string, ModelUsageEntry> = new Map();
+  /** Circuit breaker: stop LLM compaction after consecutive failures */
+  private compactFailures = 0;
+  private static readonly MAX_COMPACT_FAILURES = 3;
 
   constructor(maxContextTokens: number = 128000, model: string = "") {
     this.maxContextTokens = maxContextTokens;
@@ -126,6 +157,11 @@ export class ContextManager {
     return this.maxContextTokens;
   }
 
+  /** Update max context tokens (e.g. after auto-detecting from Ollama /api/show) */
+  setMaxContextTokens(tokens: number): void {
+    this.maxContextTokens = tokens;
+  }
+
   /** Estimate total tokens in a message array */
   estimateMessages(messages: BaseMessage[]): number {
     let total = 0;
@@ -136,7 +172,7 @@ export class ContextManager {
     return total;
   }
 
-  /** Record a turn's token usage */
+  /** Record a turn's token usage (also accumulates per-model) */
   recordTurn(inputTokens: number, outputTokens: number): TurnUsage {
     this.currentTurn++;
     const total = inputTokens + outputTokens;
@@ -150,6 +186,16 @@ export class ContextManager {
       cost,
     };
     this.turns.push(usage);
+
+    // Accumulate per-model usage
+    if (this.model) {
+      const existing = this.modelUsage.get(this.model) || { inputTokens: 0, outputTokens: 0, cost: 0 };
+      existing.inputTokens += inputTokens;
+      existing.outputTokens += outputTokens;
+      existing.cost += cost ?? 0;
+      this.modelUsage.set(this.model, existing);
+    }
+
     return usage;
   }
 
@@ -168,11 +214,15 @@ export class ContextManager {
 
   /** Calculate cost in USD */
   private calculateCost(inputTokens: number, outputTokens: number): number | undefined {
-    // Find pricing by matching model name prefix
-    for (const [modelPrefix, [inputPrice, outputPrice]] of Object.entries(PRICING)) {
-      if (this.model.includes(modelPrefix)) {
-        return (inputTokens * inputPrice + outputTokens * outputPrice) / 1_000_000;
-      }
+    const pricing = this.findPricing();
+    if (!pricing) return undefined;
+    return (inputTokens * pricing.input + outputTokens * pricing.output) / 1_000_000;
+  }
+
+  /** Find pricing entry for current model */
+  private findPricing(): ModelPricing | undefined {
+    for (const [prefix, pricing] of Object.entries(PRICING)) {
+      if (this.model.includes(prefix)) return pricing;
     }
     return undefined;
   }
@@ -491,8 +541,180 @@ export class ContextManager {
     return result;
   }
 
+  /**
+   * Format a full cost breakdown like Claude Code's /cost command.
+   * Shows total + per-model usage with USD.
+   */
+  formatCostBreakdown(): string {
+    const { tokens, cost, turns } = this.getTotalUsage();
+    const lines: string[] = [];
+
+    lines.push(`Total cost:      ${cost !== undefined ? `$${cost.toFixed(4)}` : "N/A"}`);
+    lines.push(`Total tokens:    ${tokens.totalTokens.toLocaleString()} (${tokens.inputTokens.toLocaleString()} in / ${tokens.outputTokens.toLocaleString()} out)`);
+    lines.push(`Turns:           ${turns}`);
+
+    if (this.modelUsage.size > 0) {
+      lines.push("");
+      lines.push("Usage by model:");
+      for (const [model, usage] of this.modelUsage) {
+        const shortName = model.length > 30 ? model.substring(0, 30) + "…" : model;
+        const costStr = usage.cost > 0 ? ` ($${usage.cost.toFixed(4)})` : "";
+        lines.push(`  ${shortName.padEnd(32)} ${usage.inputTokens.toLocaleString()} in / ${usage.outputTokens.toLocaleString()} out${costStr}`);
+      }
+    }
+
+    return lines.join("\n");
+  }
+
+  // ── LLM-Powered Compaction (Phase 3 upgrade) ──────────────────────────
+
+  /** The summarization prompt sent to the LLM (inspired by Claude Code's compact/prompt.ts) */
+  private static readonly COMPACT_PROMPT = `CRITICAL: Respond with TEXT ONLY. Do NOT call any tools. Tool calls will be REJECTED.
+
+Your task is to summarize the following conversation between a user and an AI coding assistant.
+Analyze each message chronologically and produce a detailed summary:
+
+- Identify every user request and the intent behind it
+- Document key technical decisions and approaches taken
+- List ALL file names, paths, function signatures, and code changes mentioned
+- Record errors encountered and how they were resolved
+- Note what was accomplished and what work remains pending
+- Pay special attention to specific values, names, and code snippets — these are critical for continuity
+
+Structure your response EXACTLY as:
+
+<summary>
+1. Primary Request and Intent: [What the user wants to achieve]
+2. Key Technical Concepts: [Technologies, patterns, libraries, approaches discussed]
+3. Files and Code: [Every file path mentioned, what was changed, key code snippets]
+4. Errors and Fixes: [Each error encountered and how it was fixed]
+5. Accomplished: [What was completed successfully]
+6. Pending Tasks: [What still needs to be done]
+7. Current State: [What was being actively worked on when this summary was created]
+</summary>`;
+
+  /**
+   * Async compression — uses the LLM to summarize old messages (Phase 3).
+   * Falls back to template-based summary if LLM is unavailable or fails.
+   *
+   * @param model - A LangChain-compatible model with .invoke() method
+   */
+  async compressIfNeededAsync(
+    messages: BaseMessage[],
+    systemPrompt: string,
+    model?: { invoke: (messages: BaseMessage[]) => Promise<BaseMessage> },
+  ): Promise<BaseMessage[]> {
+    const systemTokens = estimateTokens(systemPrompt);
+    const messageTokens = this.estimateMessages(messages);
+    const totalTokens = systemTokens + messageTokens;
+
+    if (totalTokens < this.maxContextTokens * 0.75) {
+      return messages;
+    }
+
+    // Phase 1: Prune old tool outputs
+    messages = this.pruneToolOutputs(messages);
+    if (systemTokens + this.estimateMessages(messages) < this.maxContextTokens * 0.60) {
+      return messages;
+    }
+
+    // Phase 2: Strip media
+    messages = this.stripMedia(messages);
+    if (systemTokens + this.estimateMessages(messages) < this.maxContextTokens * 0.60) {
+      return messages;
+    }
+
+    // Phase 3: LLM-powered compaction (with circuit breaker)
+    if (systemTokens + this.estimateMessages(messages) >= this.maxContextTokens * 0.75) {
+      if (model && this.compactFailures < ContextManager.MAX_COMPACT_FAILURES) {
+        const llmResult = await this.compactWithLLM(messages, model);
+        if (llmResult) return llmResult;
+      }
+      // Fallback to template
+      messages = this.compactMessages(messages);
+    }
+
+    return messages;
+  }
+
+  /**
+   * Use the LLM to summarize older messages into a rich summary.
+   * Returns null on failure (caller should fall back to template).
+   */
+  private async compactWithLLM(
+    messages: BaseMessage[],
+    model: { invoke: (messages: BaseMessage[]) => Promise<BaseMessage> },
+  ): Promise<BaseMessage[] | null> {
+    const keepRecent = Math.min(10, messages.length);
+    const recentMessages = messages.slice(-keepRecent);
+    const olderMessages = messages.slice(0, -keepRecent);
+
+    if (olderMessages.length === 0) return null;
+
+    // Build the conversation text for the LLM to summarize
+    const conversationText = olderMessages.map((msg) => {
+      const role = msg._getType();
+      const content = messageContent(msg);
+      if (role === "human") return `User: ${content}`;
+      if (role === "ai") return `Assistant: ${content.substring(0, 500)}`;
+      if (role === "tool") return `Tool result: ${content.substring(0, 300)}`;
+      return `${role}: ${content.substring(0, 200)}`;
+    }).join("\n\n");
+
+    // Truncate if the conversation text itself is too long for summarization
+    const maxSummarizeChars = this.maxContextTokens * 2; // ~half context in chars
+    const truncated = conversationText.length > maxSummarizeChars
+      ? conversationText.substring(0, maxSummarizeChars) + "\n\n[...truncated for summarization]"
+      : conversationText;
+
+    try {
+      const response = await model.invoke([
+        new SystemMessage(ContextManager.COMPACT_PROMPT),
+        new HumanMessage(`Here is the conversation to summarize:\n\n${truncated}`),
+      ]);
+
+      const responseText = messageContent(response);
+      if (!responseText || responseText.length < 50) {
+        this.compactFailures++;
+        return null;
+      }
+
+      const summary = ContextManager.formatCompactSummary(responseText);
+      this.compactFailures = 0; // Reset on success
+
+      return [
+        new HumanMessage(`[Compacted conversation history — LLM summary]\n\n${summary}`),
+        ...recentMessages,
+      ];
+    } catch {
+      this.compactFailures++;
+      return null;
+    }
+  }
+
+  /**
+   * Extract and clean up the LLM's summary response.
+   * Strips <analysis> blocks, extracts <summary> content.
+   */
+  static formatCompactSummary(text: string): string {
+    // Strip analysis/scratchpad blocks
+    let result = text.replace(/<analysis>[\s\S]*?<\/analysis>/g, "");
+
+    // Extract summary content
+    const match = result.match(/<summary>([\s\S]*?)<\/summary>/);
+    if (match) {
+      result = `Summary:\n${match[1].trim()}`;
+    }
+
+    // Clean up whitespace
+    result = result.replace(/\n{3,}/g, "\n\n").trim();
+    return result || text.trim();
+  }
+
   reset(): void {
     this.turns = [];
     this.currentTurn = 0;
+    this.modelUsage.clear();
+    this.compactFailures = 0;
   }
 }

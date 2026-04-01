@@ -47,6 +47,9 @@ interface RepoStats {
 }
 
 export class ViewRepoMapTool implements BaseTool {
+  // ── Behavioral flags ──
+  isReadOnly = () => true;
+  concurrencyMode = () => "parallel" as const;
   definition: ToolDefinition = {
     name: "view_repo_map",
     description:

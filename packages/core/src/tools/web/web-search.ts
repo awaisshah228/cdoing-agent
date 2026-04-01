@@ -6,6 +6,9 @@
 import type { BaseTool, ToolDefinition, ToolResult } from "../types";
 
 export class WebSearchTool implements BaseTool {
+  // ── Behavioral flags ──
+  isReadOnly = () => true;
+  concurrencyMode = () => "parallel" as const;
   definition: ToolDefinition = {
     name: "web_search",
     description:

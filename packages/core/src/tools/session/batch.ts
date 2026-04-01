@@ -13,6 +13,8 @@ const MAX_BATCH_SIZE = 25;
 const DISALLOWED_TOOLS = new Set(["batch"]); // prevent nesting
 
 export class BatchTool implements BaseTool {
+  // ── Behavioral flags ──
+  // Sequential: batch orchestrates inner tools, must not run in parallel with other batches
   definition: ToolDefinition = {
     name: "batch",
     description:

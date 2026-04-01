@@ -9,6 +9,10 @@ import type { BaseTool, ToolDefinition, ToolResult } from "../types";
 import { CodebaseIndexer } from "../../indexing";
 
 export class CodebaseSearchTool implements BaseTool {
+  // ── Behavioral flags ──
+  isReadOnly = () => true;
+  concurrencyMode = () => "parallel" as const;
+
   definition: ToolDefinition = {
     name: "codebase_search",
     description:

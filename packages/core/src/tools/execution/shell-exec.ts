@@ -176,7 +176,27 @@ function summarizeOutput(
   return `${output}\n\n${verdict}`;
 }
 
+/** Read-only shell commands that are safe to run concurrently */
+const READ_ONLY_COMMANDS = /^\s*(ls|cat|head|tail|wc|echo|pwd|which|whoami|date|uname|env|printenv|id|hostname|df|du|file|stat|type|test|git\s+(status|log|diff|show|branch|remote|rev-parse|describe|tag\s+-l)|find|grep|rg|ag|ack|tree|sort|uniq|diff|comm|tee|cut|tr|fold|column|less|more|bat|hexdump|xxd|sha256sum|md5sum|openssl\s+(dgst|sha|md5))\b/;
+
 export class ShellExecTool implements BaseTool {
+  // ── Behavioral flags ──
+  isDestructive = (input: Record<string, unknown>) => {
+    const cmd = (input.command as string) || "";
+    return DESTRUCTIVE_PATTERNS.some((p) => p.test(cmd));
+  };
+
+  /** Per-input concurrency: read-only commands (ls, git status, grep, etc.) are parallel-safe */
+  concurrencyMode = (input: Record<string, unknown>): "parallel" | "sequential" => {
+    const cmd = (input.command as string) || "";
+    const action = (input.action as string) || "run";
+    // status/kill actions are always safe
+    if (action === "status") return "parallel";
+    // Read-only commands can run concurrently
+    if (READ_ONLY_COMMANDS.test(cmd)) return "parallel";
+    return "sequential";
+  };
+
   definition: ToolDefinition = {
     name: "shell_exec",
     description:

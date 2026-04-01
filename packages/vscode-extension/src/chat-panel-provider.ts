@@ -1237,11 +1237,22 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         // Local models (Ollama) may stream tool calls as text — clear the raw JSON from UI
         this.postTabMessage(tabId, { type: "clearStreamingText" });
       },
+      onToolCallStreaming: (name) => {
+        // Model is generating a tool call — show a "Generating..." indicator in the UI
+        this.postTabMessage(tabId, { type: "finalizeStreaming" });
+        this.postTabMessage(tabId, { type: "toolCallStreaming", name });
+      },
       onToolCall: (name, input) => {
         // Finalize any streamed text so it stays visible above the tool calls
         this.postTabMessage(tabId, { type: "finalizeStreaming" });
-        // Send full input JSON (up to 2KB) so the webview can render per-tool detail
-        const inputStr = JSON.stringify(input);
+        // For file_write, send a lightweight summary instead of the full content
+        // (the diff in the result already shows what was written)
+        let inputForUi = input;
+        if (name === "file_write" && typeof (input as any).content === "string") {
+          const content = (input as any).content as string;
+          inputForUi = { ...input, content: `(${content.split("\n").length} lines)` };
+        }
+        const inputStr = JSON.stringify(inputForUi);
         const description = (input as any).description as string | undefined;
         this.postTabMessage(tabId, {
           type: "toolCall",
@@ -1252,6 +1263,14 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       },
       onToolProgress: (name, chunk) => {
         this.postTabMessage(tabId, { type: "toolProgress", name, chunk } as any);
+      },
+      onDiffChunk: (chunk) => {
+        this.postTabMessage(tabId, {
+          type: "diffChunk",
+          diffType: chunk.type,
+          content: chunk.content,
+          lineNumber: chunk.lineNumber,
+        } as any);
       },
       onToolResult: (name, result, isError) => {
         let output = result.length > 3000 ? result.substring(0, 3000) + `\n… (${result.length - 3000} more chars)` : result;

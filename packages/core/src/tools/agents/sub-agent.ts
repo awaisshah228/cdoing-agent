@@ -52,6 +52,8 @@ export interface SubAgentRunnerFactory {
 }
 
 export class SubAgentTool implements BaseTool {
+  // ── Behavioral flags ──
+  concurrencyMode = () => "parallel" as const; // sub-agents run independently
   definition: ToolDefinition = {
     name: "sub_agent",
     description:

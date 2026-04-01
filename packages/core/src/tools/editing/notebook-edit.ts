@@ -31,6 +31,9 @@ interface Notebook {
 }
 
 export class NotebookEditTool implements BaseTool {
+  // ── Behavioral flags ──
+  concurrencyMode = () => "parallel-file" as const;
+  getFilePath = (input: Record<string, unknown>) => input.file_path as string | undefined;
   definition: ToolDefinition = {
     name: "notebook_edit",
     description:

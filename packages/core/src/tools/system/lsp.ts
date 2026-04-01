@@ -242,6 +242,9 @@ function getLanguageId(filePath: string): string {
 }
 
 export class LspTool implements BaseTool {
+  // ── Behavioral flags ──
+  isReadOnly = () => true;
+  concurrencyMode = () => "parallel" as const;
   definition: ToolDefinition = {
     name: "lsp",
     description:

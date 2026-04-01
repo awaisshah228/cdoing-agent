@@ -66,6 +66,9 @@ interface ASTEditOperation {
 }
 
 export class ASTEditTool implements BaseTool {
+  // ── Behavioral flags ──
+  concurrencyMode = () => "parallel-file" as const;
+  getFilePath = (input: Record<string, unknown>) => input.file_path as string | undefined;
   definition: ToolDefinition = {
     name: "ast_edit",
     description:

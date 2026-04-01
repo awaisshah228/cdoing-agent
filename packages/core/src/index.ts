@@ -1,6 +1,8 @@
 // Tools — Infrastructure
 export { ToolRegistry } from "./tools/registry";
-export type { ToolDefinition, ToolResult, BaseTool } from "./tools/types";
+export type { DenyRule } from "./tools/registry";
+export type { ToolDefinition, ToolResult, BaseTool, CompleteTool, ConcurrencyMode } from "./tools/types";
+export { buildTool } from "./tools/types";
 
 // Tools — File operations
 export { FileReadTool } from "./tools/file/file-read";
@@ -54,6 +56,32 @@ export type { PlanExitCallback } from "./tools/session/plan-exit";
 export { TaskCompleteTool } from "./tools/session/task-complete";
 export type { TaskCompleteCallback } from "./tools/session/task-complete";
 export { MemoryTool } from "./tools/session/memory";
+export { EnterWorktreeTool, getCurrentWorktreeSession, clearWorktreeSession } from "./tools/session/enter-worktree";
+export type { WorktreeSession } from "./tools/session/enter-worktree";
+export { ExitWorktreeTool } from "./tools/session/exit-worktree";
+export { BriefTool } from "./tools/session/brief";
+export { CronCreateTool, CronListTool, CronDeleteTool } from "./tools/session/cron";
+export { SleepTool } from "./tools/session/sleep";
+export { SnipTool } from "./tools/session/snip";
+export type { SnipCallback } from "./tools/session/snip";
+
+// Tools — Agents (extended)
+export { SendMessageTool } from "./tools/agents/send-message";
+export { TaskListTool, TaskGetTool, TaskStopTool } from "./tools/agents/task-manage";
+
+// Tools — Execution (extended)
+export { PowerShellTool } from "./tools/execution/powershell";
+export { ReplTool } from "./tools/execution/repl";
+
+// Tools — Web (extended)
+export { WebBrowserTool } from "./tools/web/web-browser";
+
+// Tools — System (extended)
+export { TerminalCaptureTool } from "./tools/system/terminal-capture";
+
+// Tools — MCP Resources
+export { ListMcpResourcesTool, ReadMcpResourceTool } from "./tools/system/mcp-resources";
+export type { McpResourceProvider } from "./tools/system/mcp-resources";
 
 // Tools — System
 export { SystemInfoTool } from "./tools/system/system-info";

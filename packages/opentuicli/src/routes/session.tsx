@@ -1142,12 +1142,58 @@ export function SessionView(props: {
     setStreamingText("");
     props.onStatus("Processing...");
 
+    // FIFO queue per tool name — supports parallel calls (e.g. multiple file_read)
+    const toolCallQueue = new Map<string, string[]>();
+    function pushToolCallId(name: string, id: string) {
+      const queue = toolCallQueue.get(name) || [];
+      queue.push(id);
+      toolCallQueue.set(name, queue);
+    }
+    function popToolCallId(name: string): string | undefined {
+      const queue = toolCallQueue.get(name);
+      if (!queue || queue.length === 0) return undefined;
+      const id = queue.shift()!;
+      if (queue.length === 0) toolCallQueue.delete(name);
+      return id;
+    }
+    function peekToolCallId(name: string): string | undefined {
+      const queue = toolCallQueue.get(name);
+      return queue?.[queue.length - 1];
+    }
+
     let currentToolId: string | undefined;
+    let currentToolOutput = "";
+    const toolOutputMap = new Map<string, string>(); // per-tool-id output accumulator
     let turnInput = 0;
 
     const callbacks: AgentCallbacks = {
       onToken: (token) => {
         setStreamingText((prev) => prev + token);
+      },
+
+      onTextToolCallDetected: () => {
+        // Local models (Ollama) may stream tool calls as text — clear raw JSON
+        setStreamingText("");
+      },
+
+      onToolCallStreaming: (name) => {
+        // Model is starting to generate a tool call — flush text and show indicator
+        const current = streamingTextRef.current.trim();
+        if (current) {
+          addMessage("assistant", current);
+          setStreamingText("");
+        }
+        currentToolOutput = "";
+        const id = addMessage("tool", `Generating ${name}...`, {
+          toolName: name,
+          toolStatus: "running",
+          toolInput: {},
+        });
+        currentToolId = id;
+        pushToolCallId(name, id);
+        toolOutputMap.set(id, "");
+        setActiveTool(name);
+        props.onActiveTool(name);
       },
 
       onToolCall: (name, input) => {
@@ -1160,27 +1206,78 @@ export function SessionView(props: {
 
         const toolInput = (typeof input === "object" && input) ? input as Record<string, any> : {};
         const description = toolInput.description || "";
-        currentToolId = addMessage("tool", description, {
-          toolName: name,
-          toolStatus: "running",
-          toolInput,
-        });
+
+        // If we already have a streaming placeholder for this tool, update it
+        if (currentToolId && peekToolCallId(name) === currentToolId) {
+          updateMessage(currentToolId, {
+            content: description,
+            toolInput,
+          });
+          toolOutputMap.set(currentToolId, "");
+        } else {
+          const id = addMessage("tool", description, {
+            toolName: name,
+            toolStatus: "running",
+            toolInput,
+          });
+          currentToolId = id;
+          pushToolCallId(name, id);
+          toolOutputMap.set(id, "");
+        }
         setActiveTool(name);
         props.onActiveTool(name);
       },
 
-      onToolResult: (_name, result, isError) => {
+      onToolProgress: (name, chunk) => {
+        // Stream tool output (e.g., shell commands) in real-time
+        const callId = peekToolCallId(name) || currentToolId;
+        if (callId) {
+          const prev = toolOutputMap.get(callId) || "";
+          const updated = prev + chunk;
+          toolOutputMap.set(callId, updated);
+          updateMessage(callId, { content: updated });
+        }
+      },
+
+      onDiffChunk: (chunk) => {
+        // Stream file diff chunks — append to current tool output
         if (currentToolId) {
+          let line = "";
+          switch (chunk.type) {
+            case "file-header": line = `📄 ${chunk.content}\n`; break;
+            case "add": line = `+ ${chunk.content}\n`; break;
+            case "remove": line = `- ${chunk.content}\n`; break;
+            case "hunk-header": line = `${chunk.content}\n`; break;
+            default: line = `${chunk.content}\n`; break;
+          }
+          const prev = toolOutputMap.get(currentToolId) || "";
+          const updated = prev + line;
+          toolOutputMap.set(currentToolId, updated);
+          updateMessage(currentToolId, { content: updated });
+        }
+      },
+
+      onToolResult: (name, result, isError) => {
+        // Pop the oldest pending call for this tool name (FIFO — matches VS Code queue)
+        const callId = popToolCallId(name) || currentToolId;
+        if (callId) {
           const summary = result.length > 80 ? result.substring(0, 77) + "..." : result;
-          updateMessage(currentToolId, {
+          updateMessage(callId, {
             content: summary,
             toolStatus: isError ? "error" : "done",
             isError,
           });
-          currentToolId = undefined;
+          toolOutputMap.delete(callId);
+          // If this was the active tool, clear it
+          if (callId === currentToolId) {
+            currentToolId = undefined;
+          }
         }
-        setActiveTool(undefined);
-        props.onActiveTool(undefined);
+        // Only clear active tool if no more pending calls
+        if (toolCallQueue.size === 0) {
+          setActiveTool(undefined);
+          props.onActiveTool(undefined);
+        }
       },
 
       onCompactStart: (contextPercent) => {

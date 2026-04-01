@@ -11,23 +11,63 @@ import type { TurnUsage } from "@cdoing/ai";
 // Tool categories with icons and colors
 const TOOL_STYLES: Record<string, { icon: string; color: (s: string) => string }> = {
   // File operations
-  file_read: { icon: "📖", color: chalk.hex("#4FC3F7") },
-  file_write: { icon: "✏️ ", color: chalk.hex("#81C784") },
-  file_edit: { icon: "🔧", color: chalk.hex("#FFB74D") },
+  file_read:          { icon: "📖", color: chalk.hex("#4FC3F7") },
+  file_write:         { icon: "✏️ ", color: chalk.hex("#81C784") },
+  file_edit:          { icon: "🔧", color: chalk.hex("#FFB74D") },
+  multi_edit:         { icon: "🔧", color: chalk.hex("#FFB74D") },
+  apply_patch:        { icon: "🩹", color: chalk.hex("#FFB74D") },
   // Search
-  glob_search: { icon: "🔍", color: chalk.hex("#BA68C8") },
-  grep_search: { icon: "🔎", color: chalk.hex("#9575CD") },
+  glob_search:        { icon: "🔍", color: chalk.hex("#BA68C8") },
+  grep_search:        { icon: "🔎", color: chalk.hex("#9575CD") },
+  codebase_search:    { icon: "🔎", color: chalk.hex("#9575CD") },
+  list_dir:           { icon: "📂", color: chalk.hex("#BA68C8") },
   // Execution
-  shell_exec: { icon: "💻", color: chalk.hex("#4DD0E1") },
-  file_run: { icon: "▶️ ", color: chalk.hex("#4DB6AC") },
-  code_verify: { icon: "✅", color: chalk.hex("#AED581") },
+  shell_exec:         { icon: "💻", color: chalk.hex("#4DD0E1") },
+  file_run:           { icon: "▶️ ", color: chalk.hex("#4DB6AC") },
+  code_verify:        { icon: "✅", color: chalk.hex("#AED581") },
+  powershell:         { icon: "💻", color: chalk.hex("#4DD0E1") },
+  repl:               { icon: "▶️ ", color: chalk.hex("#4DB6AC") },
   // Web
-  web_fetch: { icon: "🌐", color: chalk.hex("#64B5F6") },
-  web_search: { icon: "🔮", color: chalk.hex("#7986CB") },
-  // Agent
-  sub_agent: { icon: "🤖", color: chalk.hex("#F06292") },
-  // Tasks
-  todo: { icon: "📋", color: chalk.hex("#FF8A65") },
+  web_fetch:          { icon: "🌐", color: chalk.hex("#64B5F6") },
+  web_search:         { icon: "🔮", color: chalk.hex("#7986CB") },
+  web_browser:        { icon: "🌐", color: chalk.hex("#64B5F6") },
+  // Agents
+  sub_agent:          { icon: "🤖", color: chalk.hex("#F06292") },
+  sub_agent_status:   { icon: "🤖", color: chalk.hex("#F06292") },
+  sub_agent_terminate:{ icon: "🤖", color: chalk.hex("#F06292") },
+  send_message:       { icon: "💬", color: chalk.hex("#F06292") },
+  task_list:          { icon: "📋", color: chalk.hex("#F06292") },
+  task_get:           { icon: "📋", color: chalk.hex("#F06292") },
+  task_stop:          { icon: "🛑", color: chalk.hex("#F06292") },
+  // Session
+  todo:               { icon: "📋", color: chalk.hex("#FF8A65") },
+  question:           { icon: "❓", color: chalk.hex("#FFD54F") },
+  plan_exit:          { icon: "📝", color: chalk.hex("#FF8A65") },
+  batch:              { icon: "📦", color: chalk.hex("#FF8A65") },
+  skill:              { icon: "⚡", color: chalk.hex("#FFD54F") },
+  memory:             { icon: "🧠", color: chalk.hex("#CE93D8") },
+  task_complete:      { icon: "✅", color: chalk.hex("#AED581") },
+  send_user_message:  { icon: "💬", color: chalk.hex("#FFD54F") },
+  enter_worktree:     { icon: "🌿", color: chalk.hex("#81C784") },
+  exit_worktree:      { icon: "🌿", color: chalk.hex("#81C784") },
+  cron_create:        { icon: "⏰", color: chalk.hex("#FFD54F") },
+  cron_list:          { icon: "⏰", color: chalk.hex("#FFD54F") },
+  cron_delete:        { icon: "⏰", color: chalk.hex("#EF5350") },
+  sleep:              { icon: "💤", color: chalk.hex("#90A4AE") },
+  snip:               { icon: "✂️ ", color: chalk.hex("#90A4AE") },
+  // Editing
+  ast_edit:           { icon: "🌳", color: chalk.hex("#FFB74D") },
+  notebook_edit:      { icon: "📓", color: chalk.hex("#FFB74D") },
+  // Viewing
+  view_diff:          { icon: "±",  color: chalk.hex("#4FC3F7") },
+  view_repo_map:      { icon: "🗺️ ", color: chalk.hex("#4FC3F7") },
+  // System
+  system_info:        { icon: "ℹ️ ", color: chalk.hex("#90A4AE") },
+  lsp:                { icon: "🔗", color: chalk.hex("#90A4AE") },
+  config_update:      { icon: "⚙️ ", color: chalk.hex("#90A4AE") },
+  terminal_capture:   { icon: "📺", color: chalk.hex("#4DD0E1") },
+  list_mcp_resources: { icon: "🔌", color: chalk.hex("#90A4AE") },
+  read_mcp_resource:  { icon: "🔌", color: chalk.hex("#90A4AE") },
 };
 
 /** Get tool style or default */
@@ -136,6 +176,44 @@ export function createInteractiveCallbacks(spinner: Ora): AgentCallbacks {
       process.stdout.write("\x1b[1A\x1b[2K");
     },
 
+    onToolCallStreaming: (name) => {
+      // Model is starting to generate a tool call — show indicator
+      if (buffer) {
+        process.stdout.write(renderMarkdown(buffer));
+        buffer = "";
+      }
+      spinner.stop();
+      const style = getToolStyle(name);
+      process.stdout.write(`\n  ${style.icon} ` + chalk.dim(name + "…\n"));
+      spinner.start(chalk.hex("#B0BEC5")("  Generating..."));
+    },
+
+    onToolProgress: (_name, chunk) => {
+      // Stream tool output (shell commands) in real-time
+      spinner.stop();
+      process.stdout.write(chalk.gray(chunk));
+    },
+
+    onDiffChunk: (chunk) => {
+      // Stream file diff chunks in real-time
+      spinner.stop();
+      const line = chunk.content;
+      switch (chunk.type) {
+        case "file-header":
+          process.stdout.write(chalk.bold.white(`\n  📄 ${line}\n`));
+          break;
+        case "add":
+          process.stdout.write(chalk.green(`  + ${line}\n`));
+          break;
+        case "remove":
+          process.stdout.write(chalk.red(`  - ${line}\n`));
+          break;
+        case "hunk-header":
+          process.stdout.write(chalk.cyan(`  ${line}\n`));
+          break;
+      }
+    },
+
     onToolCall: (name, input) => {
       // Flush buffer
       if (buffer) {
@@ -232,23 +310,83 @@ export function createInteractiveCallbacks(spinner: Ora): AgentCallbacks {
 
 /** Format tool input preview based on tool type */
 function formatToolPreview(name: string, input: Record<string, unknown>): string {
+  const filePath = () => String(input.file_path || input.path || "").split("/").pop() || "";
+  const trimStr = (s: string, max = 50) => s.length > max ? s.substring(0, max) + "..." : s;
+
   switch (name) {
+    // File operations
     case "file_read":
     case "file_write":
     case "file_edit":
-      return String(input.path || input.file_path || "").split("/").pop() || "";
-    case "shell_exec":
-      const cmd = String(input.command || "").substring(0, 50);
-      return cmd.length < String(input.command || "").length ? cmd + "..." : cmd;
+    case "multi_edit":
+    case "apply_patch":
+    case "ast_edit":
+    case "notebook_edit":
+      return filePath();
+    // Search
     case "glob_search":
       return String(input.pattern || "");
     case "grep_search":
-      return `"${String(input.pattern || "").substring(0, 30)}"`;
+    case "codebase_search":
+      return `"${trimStr(String(input.pattern || input.query || ""), 30)}"`;
+    case "list_dir":
+      return String(input.path || input.directory || "").split("/").pop() || "";
+    // Execution
+    case "shell_exec":
+    case "powershell":
+      return trimStr(String(input.command || ""));
+    case "file_run":
+      return filePath();
+    case "repl":
+      return trimStr(String(input.code || ""));
+    case "code_verify":
+      return filePath();
+    // Web
     case "web_fetch":
+    case "web_browser":
+      return trimStr(String(input.url || ""), 40);
     case "web_search":
-      return String(input.url || input.query || "").substring(0, 40);
-    default:
+      return trimStr(String(input.query || ""), 40);
+    // Agents
+    case "sub_agent":
+      return trimStr(String(input.task || input.prompt || ""), 40);
+    case "send_message":
+      return trimStr(String(input.to || ""), 30);
+    case "sub_agent_status":
+    case "sub_agent_terminate":
+    case "task_get":
+    case "task_stop":
+      return String(input.id || "");
+    // Session
+    case "memory":
+      return `${input.action || ""} ${trimStr(String(input.key || input.query || ""), 30)}`;
+    case "skill":
+      return String(input.skill || "");
+    case "todo":
+      return String(input.action || "");
+    case "cron_create":
+      return trimStr(String(input.schedule || ""));
+    case "cron_delete":
+      return String(input.id || "");
+    case "sleep":
+      return `${input.seconds || input.ms || ""}`;
+    // Viewing
+    case "view_diff":
+    case "view_repo_map":
+      return String(input.path || "").split("/").pop() || "";
+    // System
+    case "terminal_capture":
+      return `${input.lines || ""} lines`;
+    case "config_update":
+      return String(input.key || "");
+    default: {
+      // Fallback: try common fields
+      const fp = filePath();
+      if (fp) return fp;
+      const q = String(input.query || input.command || input.pattern || "");
+      if (q) return trimStr(q, 40);
       return JSON.stringify(input).substring(0, 60);
+    }
   }
 }
 
@@ -258,9 +396,25 @@ export function createOneShotCallbacks(): AgentCallbacks & { hasError: boolean }
   return {
     get hasError() { return state.hasError; },
     onToken: (token) => process.stdout.write(token),
+    onToolCallStreaming: (name) => {
+      const style = getToolStyle(name);
+      process.stdout.write(`\n${style.icon} ` + chalk.dim(name + "…\n"));
+    },
     onToolCall: (name) => {
       const style = getToolStyle(name);
       console.log(`\n${style.icon} ` + style.color(name));
+    },
+    onToolProgress: (_name, chunk) => {
+      process.stdout.write(chalk.gray(chunk));
+    },
+    onDiffChunk: (chunk) => {
+      const line = chunk.content;
+      switch (chunk.type) {
+        case "file-header": process.stdout.write(chalk.bold.white(`\n📄 ${line}\n`)); break;
+        case "add": process.stdout.write(chalk.green(`+ ${line}\n`)); break;
+        case "remove": process.stdout.write(chalk.red(`- ${line}\n`)); break;
+        case "hunk-header": process.stdout.write(chalk.cyan(`${line}\n`)); break;
+      }
     },
     onToolResult: (name, _r, isErr) => {
       if (isErr) {
@@ -346,7 +500,10 @@ export function createStreamJsonCallbacks(): AgentCallbacks & { hasError: boolea
   return {
     get hasError() { return state.hasError; },
     onToken: (token) => console.log(JSON.stringify({ type: "token", data: token })),
+    onToolCallStreaming: (name) => console.log(JSON.stringify({ type: "tool_call_streaming", name })),
     onToolCall: (name, input) => console.log(JSON.stringify({ type: "tool_call", name, input })),
+    onToolProgress: (name, chunk) => console.log(JSON.stringify({ type: "tool_progress", name, data: chunk })),
+    onDiffChunk: (chunk) => console.log(JSON.stringify({ type: "diff_chunk", diffType: chunk.type, content: chunk.content, lineNumber: chunk.lineNumber })),
     onToolResult: (name, result) => console.log(JSON.stringify({ type: "tool_result", name, result })),
     onComplete: () => console.log(JSON.stringify({ type: "complete" })),
     onError: (e) => { state.hasError = true; console.log(JSON.stringify({ type: "error", message: e.message })); },

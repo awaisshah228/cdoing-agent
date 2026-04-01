@@ -16,6 +16,8 @@ import type { BaseTool, ToolDefinition, ToolResult } from "../types";
 export type PlanExitCallback = (reason: string) => void;
 
 export class PlanExitTool implements BaseTool {
+  // ── Behavioral flags ──
+  // Sequential: state transition, must complete before anything else
   definition: ToolDefinition = {
     name: "plan_exit",
     description:

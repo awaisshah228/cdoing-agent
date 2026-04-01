@@ -13,6 +13,8 @@ import type { BaseTool, ToolDefinition, ToolResult } from "../types";
 import type { MemoryStore, MemoryType } from "../../utils/memory";
 
 export class MemoryTool implements BaseTool {
+  // ── Behavioral flags ──
+  concurrencyMode = () => "parallel" as const; // in-memory store, independent operations
   definition: ToolDefinition = {
     name: "memory",
     description:

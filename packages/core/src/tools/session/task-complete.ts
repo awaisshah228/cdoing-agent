@@ -18,6 +18,8 @@ import type { SubAgentManager } from "../agents/sub-agent-manager";
 export type TaskCompleteCallback = (summary: string) => void;
 
 export class TaskCompleteTool implements BaseTool {
+  // ── Behavioral flags ──
+  // Sequential: terminates all background work, must be the last thing to run
   definition: ToolDefinition = {
     name: "task_complete",
     description:

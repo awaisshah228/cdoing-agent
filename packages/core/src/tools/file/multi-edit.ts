@@ -12,6 +12,10 @@ import { executeMultiFindAndReplace } from "../../utils/search-match";
 import type { SandboxManager } from "../../sandbox";
 
 export class MultiEditTool implements BaseTool {
+  // ── Behavioral flags ──
+  concurrencyMode = () => "parallel-file" as const;
+  getFilePath = (input: Record<string, unknown>) => input.file_path as string | undefined;
+
   definition: ToolDefinition = {
     name: "multi_edit",
     description:

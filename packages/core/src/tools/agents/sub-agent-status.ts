@@ -6,6 +6,9 @@ import type { BaseTool, ToolDefinition, ToolResult } from "../types";
 import type { SubAgentManager } from "./sub-agent-manager";
 
 export class SubAgentStatusTool implements BaseTool {
+  // ── Behavioral flags ──
+  isReadOnly = () => true;
+  concurrencyMode = () => "parallel" as const;
   definition: ToolDefinition = {
     name: "sub_agent_status",
     description:

@@ -35,6 +35,8 @@ export function buildSystemPrompt(options: {
   isGitRepo?: boolean;
   /** Workspace root folder (may differ from workingDir in monorepos) */
   workspaceRoot?: string;
+  /** Enable coordinator mode — agent becomes an orchestrator spawning workers */
+  coordinatorMode?: boolean;
 }): string {
   const basePrompt = selectPrompt(options.provider, options.model);
   const parts: string[] = [basePrompt];
@@ -69,6 +71,11 @@ export function buildSystemPrompt(options: {
 
   if (options.memory) {
     parts.push(`\n# Memory\nThe following is remembered from previous conversations:\n\n${options.memory}`);
+  }
+
+  // Coordinator mode — inject orchestrator instructions
+  if (options.coordinatorMode) {
+    parts.push(COORDINATOR_PROMPT);
   }
 
   return parts.join("\n");
@@ -515,3 +522,43 @@ You can call MULTIPLE tools in a single response. When tools are independent, ca
 
 # Error Handling
 When a tool fails, read the error output, read the relevant source file, fix the root cause, and re-run to verify. Do not give up after one failure.`;
+
+// ── Coordinator Mode ──────────────────────────────────────────────────────
+// Inspired by Claude Code's coordinatorMode.ts. When enabled, the agent
+// becomes an orchestrator that spawns and manages worker agents.
+
+const COORDINATOR_PROMPT = `
+# Coordinator Mode
+
+You are operating as a **coordinator agent**. Your role is to orchestrate worker agents to accomplish complex tasks.
+
+## Workflow
+1. **Analyze** the user's request and break it into independent subtasks
+2. **Spawn workers** using the sub_agent tool — each worker gets a focused, self-contained prompt
+3. **Monitor progress** using task_list and task_get
+4. **Continue workers** using send_message when they need follow-up instructions
+5. **Synthesize results** — combine worker outputs into a coherent response
+
+## Rules
+- **Never delegate understanding.** Read the code yourself first, then write specific prompts.
+- **Self-contained prompts.** Each worker prompt must include ALL context it needs — file paths, code snippets, exact requirements. Workers do NOT see your conversation.
+- **Parallel when possible.** Spawn independent workers simultaneously.
+- **Sequential when needed.** If task B depends on task A's output, wait for A before spawning B.
+- **Synthesize, don't relay.** Combine worker results into a single coherent answer. Don't just paste their outputs.
+
+## Worker Prompts — Best Practices
+- Start with the goal in one sentence
+- Include relevant file paths and line numbers
+- Include code snippets the worker needs to reference
+- Specify exact expected output format
+- End with verification steps
+
+## Tools for Coordination
+- **sub_agent** — Spawn a new worker (foreground or background)
+- **send_message** — Send follow-up message to an existing worker
+- **task_list** — List all workers and their status
+- **task_get** — Get detailed output from a specific worker
+- **task_stop** — Stop a worker that's stuck or no longer needed
+- **enter_worktree** — Create isolated git worktree for risky changes
+`;
+

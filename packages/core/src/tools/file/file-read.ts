@@ -14,6 +14,11 @@ const MAX_READ_BYTES = 50_000; // 50KB, same as opencode
 const MAX_LINE_LENGTH = 2000;
 
 export class FileReadTool implements BaseTool {
+  // ── Behavioral flags ──
+  isReadOnly = () => true;
+  concurrencyMode = () => "parallel" as const;
+  maxResultSizeChars = Infinity; // self-bounds via MAX_READ_BYTES
+
   definition: ToolDefinition = {
     name: "file_read",
     description:

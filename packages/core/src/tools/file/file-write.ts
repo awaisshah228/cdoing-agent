@@ -18,6 +18,11 @@ function convertToLineEnding(text: string, ending: "\n" | "\r\n"): string {
 }
 
 export class FileWriteTool implements BaseTool {
+  // ── Behavioral flags ──
+  concurrencyMode = () => "parallel-file" as const;
+  isDestructive = () => true; // overwrites entire file
+  getFilePath = (input: Record<string, unknown>) => input.file_path as string | undefined;
+
   definition: ToolDefinition = {
     name: "file_write",
     description:

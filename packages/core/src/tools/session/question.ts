@@ -19,6 +19,8 @@ export type QuestionPromptFn = (
 ) => Promise<string[]>;
 
 export class QuestionTool implements BaseTool {
+  // ── Behavioral flags ──
+  // Sequential: requires user interaction, blocks on input
   definition: ToolDefinition = {
     name: "question",
     description:

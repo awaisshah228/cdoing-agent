@@ -6,6 +6,8 @@ import type { BaseTool, ToolDefinition, ToolResult } from "../types";
 import type { SubAgentManager } from "./sub-agent-manager";
 
 export class SubAgentTerminateTool implements BaseTool {
+  // ── Behavioral flags ──
+  isDestructive = () => true; // terminates a running agent
   definition: ToolDefinition = {
     name: "sub_agent_terminate",
     description:

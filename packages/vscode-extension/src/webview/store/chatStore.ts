@@ -33,7 +33,7 @@ interface TabData {
   entries: ChatEntry[];
   streamingId: string | null;
   isProcessing: boolean;
-  toolCallMap: Map<string, string>;
+  toolCallQueue: Map<string, string[]>;
   tokenBuffer: string;
 }
 
@@ -146,7 +146,7 @@ function getTabData(tabId: string): TabData {
       entries: [],
       streamingId: null,
       isProcessing: false,
-      toolCallMap: new Map(),
+      toolCallQueue: new Map(),
       tokenBuffer: "",
     };
     tabDataMap.set(tabId, data);
@@ -159,7 +159,24 @@ function getTabData(tabId: string): TabData {
 let streamingId: string | null = null;
 let tokenBuffer = "";
 let rafHandle: number | null = null;
-const toolCallMap = new Map<string, string>();
+// Queue per tool name — supports parallel calls with the same name (e.g. multiple file_read)
+const toolCallQueue = new Map<string, string[]>();
+function pushToolCallId(name: string, id: string) {
+  const queue = toolCallQueue.get(name) || [];
+  queue.push(id);
+  toolCallQueue.set(name, queue);
+}
+function popToolCallId(name: string): string | undefined {
+  const queue = toolCallQueue.get(name);
+  if (!queue || queue.length === 0) return undefined;
+  const id = queue.shift()!;
+  if (queue.length === 0) toolCallQueue.delete(name);
+  return id;
+}
+function peekToolCallId(name: string): string | undefined {
+  const queue = toolCallQueue.get(name);
+  return queue?.[queue.length - 1];
+}
 
 // ── Store ──────────────────────────────────────────────
 
@@ -201,7 +218,7 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
     data.entries = entries;
     data.isProcessing = isProcessing;
     data.streamingId = streamingId;
-    data.toolCallMap = new Map(toolCallMap);
+    data.toolCallQueue = new Map(Array.from(toolCallQueue.entries()).map(([k, v]) => [k, [...v]]));
     data.tokenBuffer = tokenBuffer;
   }
 
@@ -209,8 +226,8 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
   function restoreTabState(tabId: string) {
     const data = getTabData(tabId);
     streamingId = data.streamingId;
-    toolCallMap.clear();
-    for (const [k, v] of data.toolCallMap) toolCallMap.set(k, v);
+    toolCallQueue.clear();
+    for (const [k, v] of data.toolCallQueue) toolCallQueue.set(k, [...v]);
     tokenBuffer = data.tokenBuffer;
     set({
       entries: data.entries,
@@ -259,7 +276,7 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
 
     addToolCall: (name, input, description) => {
       const id = nextId();
-      toolCallMap.set(name, id);
+      pushToolCallId(name, id);
       set((s) => ({
         entries: [
           ...s.entries,
@@ -269,7 +286,8 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
     },
 
     updateToolProgress: (name, chunk) => {
-      const callId = toolCallMap.get(name);
+      // Update the most recent (last) call for this tool name
+      const callId = peekToolCallId(name);
       if (callId) {
         set((s) => ({
           entries: s.entries.map((e) =>
@@ -282,9 +300,9 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
     },
 
     addToolResult: (name, result, isError) => {
-      const callId = toolCallMap.get(name);
+      // Pop the oldest pending call for this tool name (FIFO)
+      const callId = popToolCallId(name);
       if (callId) {
-        toolCallMap.delete(name);
         set((s) => ({
           entries: s.entries.map((e) =>
             e.id === callId && "kind" in e
@@ -499,13 +517,65 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
           }
           break;
 
-        case "toolCall":
-          addToolCall(msg.name, msg.input, (msg as any).description);
+        case "toolCallStreaming": {
+          // Model is generating a tool call — show a placeholder entry with "Generating..." state
+          const tcName = (msg as any).name as string;
+          const placeholderId = nextId();
+          pushToolCallId(`streaming:${tcName}`, placeholderId);
+          set((s) => ({
+            entries: [
+              ...s.entries,
+              { id: placeholderId, kind: "call" as const, name: tcName, input: "{}", output: "", description: `Generating ${tcName}...` },
+            ],
+          }));
           break;
+        }
+
+        case "toolCall": {
+          // Replace streaming placeholder if one exists, otherwise add new entry
+          const streamingKey = `streaming:${msg.name}`;
+          const placeholderId = popToolCallId(streamingKey);
+          if (placeholderId) {
+            pushToolCallId(msg.name, placeholderId);
+            set((s) => ({
+              entries: s.entries.map((e) =>
+                e.id === placeholderId
+                  ? { ...e, input: msg.input, description: (msg as any).description }
+                  : e
+              ),
+            }));
+          } else {
+            addToolCall(msg.name, msg.input, (msg as any).description);
+          }
+          break;
+        }
 
         case "toolProgress":
           get().updateToolProgress((msg as any).name, (msg as any).chunk);
           break;
+
+        case "diffChunk": {
+          // Render diff chunks as streaming progress on the current tool call
+          const dm = msg as any;
+          const prefix = dm.diffType === "add" ? "+" : dm.diffType === "remove" ? "-" : " ";
+          const line = dm.diffType === "file-header" ? `📄 ${dm.content}\n` : `${prefix} ${dm.content}\n`;
+          // Find the most recent tool call entry and append the diff line
+          const entries = get().entries;
+          for (let i = entries.length - 1; i >= 0; i--) {
+            const e = entries[i];
+            if ("kind" in e && e.kind === "call") {
+              set((s) => ({
+                entries: s.entries.map((en) =>
+                  en.id === e.id && "kind" in en && en.kind === "call"
+                    ? { ...en, output: (en.output || "") + line }
+                    : en
+                ),
+              }));
+              break;
+            }
+          }
+          break;
+        }
 
         case "toolResult":
           addToolResult(msg.name, msg.result, msg.isError);
