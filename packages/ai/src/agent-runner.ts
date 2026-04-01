@@ -41,9 +41,9 @@ export interface ImageAttachment {
 
 export interface AgentCallbacks {
   onToken: (token: string) => void;
-  onToolCall: (name: string, input: Record<string, unknown>) => void;
-  onToolProgress?: (name: string, chunk: string) => void;
-  onToolResult: (name: string, result: string, isError: boolean) => void;
+  onToolCall: (name: string, input: Record<string, unknown>, toolCallId?: string) => void;
+  onToolProgress?: (name: string, chunk: string, toolCallId?: string) => void;
+  onToolResult: (name: string, result: string, isError: boolean, toolCallId?: string) => void;
   onComplete: () => void;
   onError: (error: Error) => void;
   onUsage?: (usage: TurnUsage) => void;
@@ -1057,17 +1057,17 @@ export class AgentRunner {
         allToolNames.add("get_tool"); // meta-tool
         for (const tc of toolCalls) {
           if (tc.name === "get_tool") {
-            callbacks.onToolCall(tc.name, tc.args);
+            callbacks.onToolCall(tc.name, tc.args, tc.id);
             const result = this.handleGetTool(tc.args);
             this.messages.push(new ToolMessage({ content: result, tool_call_id: tc.id }));
-            callbacks.onToolResult(tc.name, result, false);
+            callbacks.onToolResult(tc.name, result, false, tc.id);
           } else if (!allToolNames.has(tc.name)) {
             // Hallucinated tool name — reject and tell the model which tools exist
             const available = Array.from(allToolNames).filter(n => n !== "get_tool").sort().join(", ");
             const errorMsg = `Error: "${tc.name}" is not a valid tool. You can ONLY use these tools: ${available}. Do NOT invent tool names.`;
-            callbacks.onToolCall(tc.name, tc.args);
+            callbacks.onToolCall(tc.name, tc.args, tc.id);
             this.messages.push(new ToolMessage({ content: errorMsg, tool_call_id: tc.id }));
-            callbacks.onToolResult(tc.name, errorMsg, true);
+            callbacks.onToolResult(tc.name, errorMsg, true, tc.id);
           } else {
             realToolCalls.push(tc);
             // Auto-activate used tools so they persist across turns
@@ -1113,7 +1113,7 @@ export class AgentRunner {
     callbacks: AgentCallbacks,
     maxOutputChars: number = 30000,
   ): Promise<void> {
-    callbacks.onToolCall(tc.name, tc.args);
+    callbacks.onToolCall(tc.name, tc.args, tc.id);
 
     // Pre-hooks
     if (this.hookManager) {
@@ -1151,7 +1151,7 @@ export class AgentRunner {
         ].filter(Boolean).join("\n");
 
         this.messages.push(new ToolMessage({ content: denialMessage, tool_call_id: tc.id }));
-        callbacks.onToolResult(tc.name, `Permission denied: ${actionDesc}`, true);
+        callbacks.onToolResult(tc.name, `Permission denied: ${actionDesc}`, true, tc.id);
         return;
       }
     }
@@ -1173,7 +1173,7 @@ export class AgentRunner {
 
     // Execute tool — pass streaming callback so output streams in real-time
     const onProgress = callbacks.onToolProgress ? (chunk: string) => {
-      callbacks.onToolProgress!(tc.name, chunk);
+      callbacks.onToolProgress!(tc.name, chunk, tc.id);
     } : undefined;
     const result = await this.toolRegistry.execute(tc.name, tc.args, onProgress);
 
@@ -1207,7 +1207,7 @@ export class AgentRunner {
     resultText = AgentRunner.truncateOutput(resultText, tc.name, maxOutputChars);
 
     this.messages.push(new ToolMessage({ content: resultText, tool_call_id: tc.id }));
-    callbacks.onToolResult(tc.name, resultText, !result.success);
+    callbacks.onToolResult(tc.name, resultText, !result.success, tc.id);
 
     // Post-hooks
     if (this.hookManager) {
@@ -1326,7 +1326,7 @@ export class AgentRunner {
           content: `[Skipped — previous shell command failed]`,
           tool_call_id: tc.id,
         }));
-        callbacks.onToolResult(tc.name, "[Skipped — previous shell command failed]", true);
+        callbacks.onToolResult(tc.name, "[Skipped — previous shell command failed]", true, tc.id);
         continue;
       }
       const toolBudget = Math.min(sharedBudget, this.toolRegistry.getMaxResultSizeChars(tc.name));

@@ -124,21 +124,27 @@ export function useChatState() {
     setEntries((prev) => [...prev, { id: nextId(), role, content: text }]);
   }, []);
 
-  // Track the latest tool call ID per tool name so results can update the same entry
+  // Track tool call ID → entry ID so results can update the correct entry (even for parallel calls with the same name)
   const toolCallMapRef = useRef<Map<string, string>>(new Map());
 
-  const addToolCall = useCallback((name: string, input: string, description?: string) => {
+  const addToolCall = useCallback((name: string, input: string, description?: string, toolCallId?: string) => {
     const id = nextId();
-    // Store mapping: toolName → entryId (for result matching)
-    toolCallMapRef.current.set(name, id);
+    // Store mapping: toolCallId → entryId (for reliable result matching across parallel calls)
+    if (toolCallId) {
+      toolCallMapRef.current.set(toolCallId, id);
+    } else {
+      // Fallback: use name-based mapping for backward compatibility (e.g. synthetic calls without IDs)
+      toolCallMapRef.current.set(name, id);
+    }
     setEntries((prev) => [...prev, { id, kind: "call" as const, name, input, output: "", description }]);
   }, []);
 
-  const addToolResult = useCallback((name: string, result: string, isError: boolean) => {
-    const callId = toolCallMapRef.current.get(name);
+  const addToolResult = useCallback((name: string, result: string, isError: boolean, toolCallId?: string) => {
+    // Look up by toolCallId first (reliable for parallel calls), fall back to name
+    const lookupKey = toolCallId || name;
+    const callId = toolCallMapRef.current.get(lookupKey);
     if (callId) {
-      // Update the existing call entry with the result
-      toolCallMapRef.current.delete(name);
+      toolCallMapRef.current.delete(lookupKey);
       setEntries((prev) =>
         prev.map((e) =>
           e.id === callId && "kind" in e
@@ -277,10 +283,10 @@ export function useChatState() {
           }
           break;
         case "toolCall":
-          addToolCall(msg.name, msg.input, (msg as any).description);
+          addToolCall(msg.name, msg.input, msg.description, msg.toolCallId);
           break;
         case "toolResult":
-          addToolResult(msg.name, msg.result, msg.isError);
+          addToolResult(msg.name, msg.result, msg.isError, msg.toolCallId);
           break;
         case "endResponse":
           // Flush any remaining tokens

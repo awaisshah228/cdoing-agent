@@ -33,7 +33,8 @@ interface TabData {
   entries: ChatEntry[];
   streamingId: string | null;
   isProcessing: boolean;
-  toolCallQueue: Map<string, string[]>;
+  /** Maps toolCallId (or name fallback) → entryId for reliable result matching */
+  toolCallMap: Map<string, string>;
   tokenBuffer: string;
 }
 
@@ -76,9 +77,9 @@ interface ChatActions {
   // Entry mutators
   addUserMessage: (text: string, context?: ContextAttachment[]) => void;
   addSystemMessage: (text: string, role?: "system" | "error") => void;
-  addToolCall: (name: string, input: string, description?: string) => void;
-  updateToolProgress: (name: string, chunk: string) => void;
-  addToolResult: (name: string, result: string, isError: boolean) => void;
+  addToolCall: (name: string, input: string, description?: string, toolCallId?: string) => void;
+  updateToolProgress: (name: string, chunk: string, toolCallId?: string) => void;
+  addToolResult: (name: string, result: string, isError: boolean, toolCallId?: string) => void;
   clearAll: () => void;
 
   // Token streaming
@@ -146,7 +147,7 @@ function getTabData(tabId: string): TabData {
       entries: [],
       streamingId: null,
       isProcessing: false,
-      toolCallQueue: new Map(),
+      toolCallMap: new Map(),
       tokenBuffer: "",
     };
     tabDataMap.set(tabId, data);
@@ -159,24 +160,8 @@ function getTabData(tabId: string): TabData {
 let streamingId: string | null = null;
 let tokenBuffer = "";
 let rafHandle: number | null = null;
-// Queue per tool name — supports parallel calls with the same name (e.g. multiple file_read)
-const toolCallQueue = new Map<string, string[]>();
-function pushToolCallId(name: string, id: string) {
-  const queue = toolCallQueue.get(name) || [];
-  queue.push(id);
-  toolCallQueue.set(name, queue);
-}
-function popToolCallId(name: string): string | undefined {
-  const queue = toolCallQueue.get(name);
-  if (!queue || queue.length === 0) return undefined;
-  const id = queue.shift()!;
-  if (queue.length === 0) toolCallQueue.delete(name);
-  return id;
-}
-function peekToolCallId(name: string): string | undefined {
-  const queue = toolCallQueue.get(name);
-  return queue?.[queue.length - 1];
-}
+// Maps toolCallId (or tool name fallback) → entryId for reliable parallel call matching
+const toolCallMap = new Map<string, string>();
 
 // ── Store ──────────────────────────────────────────────
 
@@ -218,7 +203,7 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
     data.entries = entries;
     data.isProcessing = isProcessing;
     data.streamingId = streamingId;
-    data.toolCallQueue = new Map(Array.from(toolCallQueue.entries()).map(([k, v]) => [k, [...v]]));
+    data.toolCallMap = new Map(toolCallMap);
     data.tokenBuffer = tokenBuffer;
   }
 
@@ -226,8 +211,8 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
   function restoreTabState(tabId: string) {
     const data = getTabData(tabId);
     streamingId = data.streamingId;
-    toolCallQueue.clear();
-    for (const [k, v] of data.toolCallQueue) toolCallQueue.set(k, [...v]);
+    toolCallMap.clear();
+    for (const [k, v] of data.toolCallMap) toolCallMap.set(k, v);
     tokenBuffer = data.tokenBuffer;
     set({
       entries: data.entries,
@@ -274,9 +259,10 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
       }));
     },
 
-    addToolCall: (name, input, description) => {
+    addToolCall: (name, input, description, toolCallId) => {
       const id = nextId();
-      pushToolCallId(name, id);
+      // Map by toolCallId for reliable parallel matching, fall back to name
+      toolCallMap.set(toolCallId || name, id);
       set((s) => ({
         entries: [
           ...s.entries,
@@ -285,9 +271,9 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
       }));
     },
 
-    updateToolProgress: (name, chunk) => {
-      // Update the most recent (last) call for this tool name
-      const callId = peekToolCallId(name);
+    updateToolProgress: (name, chunk, toolCallId) => {
+      const lookupKey = toolCallId || name;
+      const callId = toolCallMap.get(lookupKey);
       if (callId) {
         set((s) => ({
           entries: s.entries.map((e) =>
@@ -299,10 +285,11 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
       }
     },
 
-    addToolResult: (name, result, isError) => {
-      // Pop the oldest pending call for this tool name (FIFO)
-      const callId = popToolCallId(name);
+    addToolResult: (name, result, isError, toolCallId) => {
+      const lookupKey = toolCallId || name;
+      const callId = toolCallMap.get(lookupKey);
       if (callId) {
+        toolCallMap.delete(lookupKey);
         set((s) => ({
           entries: s.entries.map((e) =>
             e.id === callId && "kind" in e
@@ -521,7 +508,7 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
           // Model is generating a tool call — show a placeholder entry with "Generating..." state
           const tcName = (msg as any).name as string;
           const placeholderId = nextId();
-          pushToolCallId(`streaming:${tcName}`, placeholderId);
+          toolCallMap.set(`streaming:${tcName}`, placeholderId);
           set((s) => ({
             entries: [
               ...s.entries,
@@ -534,24 +521,26 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
         case "toolCall": {
           // Replace streaming placeholder if one exists, otherwise add new entry
           const streamingKey = `streaming:${msg.name}`;
-          const placeholderId = popToolCallId(streamingKey);
+          const placeholderId = toolCallMap.get(streamingKey);
           if (placeholderId) {
-            pushToolCallId(msg.name, placeholderId);
+            toolCallMap.delete(streamingKey);
+            // Re-map using toolCallId for reliable result matching
+            toolCallMap.set(msg.toolCallId || msg.name, placeholderId);
             set((s) => ({
               entries: s.entries.map((e) =>
                 e.id === placeholderId
-                  ? { ...e, input: msg.input, description: (msg as any).description }
+                  ? { ...e, input: msg.input, description: msg.description }
                   : e
               ),
             }));
           } else {
-            addToolCall(msg.name, msg.input, (msg as any).description);
+            addToolCall(msg.name, msg.input, msg.description, msg.toolCallId);
           }
           break;
         }
 
         case "toolProgress":
-          get().updateToolProgress((msg as any).name, (msg as any).chunk);
+          get().updateToolProgress((msg as any).name, (msg as any).chunk, (msg as any).toolCallId);
           break;
 
         case "diffChunk": {
@@ -578,7 +567,7 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
         }
 
         case "toolResult":
-          addToolResult(msg.name, msg.result, msg.isError);
+          addToolResult(msg.name, msg.result, msg.isError, msg.toolCallId);
           break;
 
         case "endResponse":

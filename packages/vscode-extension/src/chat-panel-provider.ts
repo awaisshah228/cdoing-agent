@@ -1242,7 +1242,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         this.postTabMessage(tabId, { type: "finalizeStreaming" });
         this.postTabMessage(tabId, { type: "toolCallStreaming", name });
       },
-      onToolCall: (name, input) => {
+      onToolCall: (name: string, input: Record<string, unknown>, toolCallId?: string) => {
         // Finalize any streamed text so it stays visible above the tool calls
         this.postTabMessage(tabId, { type: "finalizeStreaming" });
         // For file_write, send a lightweight summary instead of the full content
@@ -1259,10 +1259,11 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           name,
           input: inputStr.length > 2000 ? inputStr.substring(0, 2000) : inputStr,
           description,
+          toolCallId,
         });
       },
-      onToolProgress: (name, chunk) => {
-        this.postTabMessage(tabId, { type: "toolProgress", name, chunk } as any);
+      onToolProgress: (name: string, chunk: string, toolCallId?: string) => {
+        this.postTabMessage(tabId, { type: "toolProgress", name, chunk, toolCallId } as any);
       },
       onDiffChunk: (chunk) => {
         this.postTabMessage(tabId, {
@@ -1272,7 +1273,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           lineNumber: chunk.lineNumber,
         } as any);
       },
-      onToolResult: (name, result, isError) => {
+      onToolResult: (name: string, result: string, isError: boolean, toolCallId?: string) => {
         let output = result.length > 3000 ? result.substring(0, 3000) + `\n… (${result.length - 3000} more chars)` : result;
 
         // For todo tool: append the full todo list state so the widget can render it
@@ -1297,6 +1298,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           name,
           result: output,
           isError,
+          toolCallId,
         });
       },
       onComplete: () => {

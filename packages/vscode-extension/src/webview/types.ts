@@ -19,10 +19,10 @@ export type IncomingMessage =
   | { type: "startResponse" }                                          // Agent started processing
   | { type: "token"; text: string }                                    // One streamed token from the LLM
   | { type: "toolCallStreaming"; name: string }                             // Agent is generating a tool call (args still streaming)
-  | { type: "toolCall"; name: string; input: string; description?: string } // Agent is invoking a tool
-  | { type: "toolProgress"; name: string; chunk: string }                // Streaming tool output (e.g. shell_exec)
+  | { type: "toolCall"; name: string; input: string; description?: string; toolCallId?: string } // Agent is invoking a tool
+  | { type: "toolProgress"; name: string; chunk: string; toolCallId?: string }                // Streaming tool output (e.g. shell_exec)
   | { type: "diffChunk"; diffType: string; content: string; lineNumber?: number } // Real-time file diff chunk
-  | { type: "toolResult"; name: string; result: string; isError: boolean } // Tool finished
+  | { type: "toolResult"; name: string; result: string; isError: boolean; toolCallId?: string } // Tool finished
   | { type: "endResponse" }                                            // Agent done, no more tokens
   | { type: "finalizeStreaming" }                                        // Finalize current streaming message so next tokens start a new message
   | { type: "clearStreamingText" }                                       // Clear streamed text (local models emitting tool calls as text)
