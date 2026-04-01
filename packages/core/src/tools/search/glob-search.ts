@@ -2,6 +2,7 @@ import { glob } from "glob";
 import * as path from "path";
 import type { BaseTool, ToolDefinition, ToolResult } from "../types";
 import { loadIgnorePatterns } from "../../utils/gitignore";
+import type { SandboxManager } from "../../sandbox";
 
 export class GlobSearchTool implements BaseTool {
   // ── Behavioral flags ──
@@ -11,7 +12,7 @@ export class GlobSearchTool implements BaseTool {
   definition: ToolDefinition = {
     name: "glob_search",
     description:
-      "Search for files matching a glob pattern. Returns matching file paths sorted by modification time. Use patterns like '**/*.ts', 'src/**/*.js', '*.json'. Respects .gitignore. The search always starts from the project working directory — do NOT pass directory unless you specifically need a subdirectory (e.g. 'src/components'). Never pass '/' or an absolute path.",
+      "Search for files matching a glob pattern. Returns matching file paths sorted by modification time. Use patterns like '**/*.ts', 'src/**/*.js', '*.json'. Respects .gitignore and sandbox read restrictions. The search always starts from the project working directory — do NOT pass directory unless you specifically need a subdirectory (e.g. 'src/components'). Never pass '/' or an absolute path.",
     inputSchema: {
       type: "object",
       properties: {
@@ -30,9 +31,11 @@ export class GlobSearchTool implements BaseTool {
   };
 
   private workingDir: string;
+  private sandboxManager?: SandboxManager;
 
-  constructor(workingDir: string) {
+  constructor(workingDir: string, sandboxManager?: SandboxManager) {
     this.workingDir = workingDir;
+    this.sandboxManager = sandboxManager;
   }
 
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
@@ -50,6 +53,14 @@ export class GlobSearchTool implements BaseTool {
       searchDir = resolved.startsWith(this.workingDir) ? resolved : this.workingDir;
     }
 
+    // Sandbox: check if search directory itself is readable
+    if (this.sandboxManager) {
+      const dirCheck = this.sandboxManager.checkFileRead(searchDir);
+      if (!dirCheck.allowed) {
+        return { success: false, output: "", error: dirCheck.reason || "Sandbox: read access denied for search directory" };
+      }
+    }
+
     try {
       const ignorePatterns = loadIgnorePatterns(this.workingDir);
       const files = await glob(pattern, {
@@ -62,19 +73,31 @@ export class GlobSearchTool implements BaseTool {
         return { success: true, output: "No files found matching the pattern." };
       }
 
-      const result = files
+      // Filter results through sandbox read checks
+      let filteredFiles = files.map((f) => path.join(searchDir, f));
+      if (this.sandboxManager) {
+        filteredFiles = filteredFiles.filter((fullPath) => {
+          const check = this.sandboxManager!.checkFileRead(fullPath);
+          return check.allowed;
+        });
+      }
+
+      if (filteredFiles.length === 0) {
+        return { success: true, output: "No accessible files found matching the pattern." };
+      }
+
+      const result = filteredFiles
         .slice(0, 100)
-        .map((f) => path.join(searchDir, f))
         .join("\n");
 
       const summary =
-        files.length > 100
-          ? `\n\n... and ${files.length - 100} more files (showing first 100)`
+        filteredFiles.length > 100
+          ? `\n\n... and ${filteredFiles.length - 100} more files (showing first 100)`
           : "";
 
       return {
         success: true,
-        output: `Found ${files.length} file(s):\n${result}${summary}`,
+        output: `Found ${filteredFiles.length} file(s):\n${result}${summary}`,
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

@@ -299,9 +299,13 @@ export class PermissionManager {
   /**
    * Session-only approvals for file-modification tools (file_write, file_edit).
    * Per the tiered permission table: "Until session end" — not written to disk.
-   * Key = toolName (no specifier needed; file edit approvals cover all paths).
+   * Key = toolName, Value = approval timestamp.
+   *
+   * Approvals expire after SESSION_APPROVAL_TTL_MS to prevent indefinite access
+   * from a single approval early in a long session.
    */
-  private sessionApprovals: Set<string> = new Set();
+  private static readonly SESSION_APPROVAL_TTL_MS = 60 * 60 * 1000; // 1 hour
+  private sessionApprovals: Map<string, number> = new Map();
 
   // Settings-based rules loaded from .claude/settings.json files
   private settingsAllow: string[] = [];
@@ -709,7 +713,15 @@ export class PermissionManager {
     }
 
     // Session-only approval for file-modification tools ("until session end")
-    if (this.sessionApprovals.has(toolName)) return true;
+    // Session-only approval with TTL expiry
+    const approvedAt = this.sessionApprovals.get(toolName);
+    if (approvedAt !== undefined) {
+      if (Date.now() - approvedAt < PermissionManager.SESSION_APPROVAL_TTL_MS) {
+        return true;
+      }
+      // Expired — remove stale approval
+      this.sessionApprovals.delete(toolName);
+    }
 
     // Persistent stored rules for Bash tools ("permanently per project + command")
     if (this.hasStoredPermission(toolName, input)) return true;
@@ -816,7 +828,7 @@ export class PermissionManager {
     this.addToSettingsAllow(ruleString, scope);
 
     // Also add session approval for immediate effect
-    this.sessionApprovals.add(toolName);
+    this.sessionApprovals.set(toolName, Date.now());
 
     // Legacy: persist to permissions.json for backward compat
     if (PERMANENT_APPROVAL_TOOLS.has(toolName)) {

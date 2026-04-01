@@ -1,6 +1,12 @@
 /**
  * MCP Manager — Manages connections to MCP (Model Context Protocol) servers.
  *
+ * Security features:
+ *   - Sensitive environment variables stripped from server processes
+ *   - Config validation (command must be a string, no path traversal in names)
+ *   - Initialization timeout (prevents hanging on malicious servers)
+ *   - Project-scoped servers flagged for user awareness
+ *
  * Handles:
  *   - Loading server configurations
  *   - Spawning and connecting to server processes
@@ -17,6 +23,58 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { spawn, type ChildProcess } from "child_process";
+
+// ── Sensitive env vars to strip from MCP server processes ────────────────────
+
+const SENSITIVE_ENV_VARS = [
+  "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_ACCESS_KEY_ID",
+  "GH_TOKEN", "GITHUB_TOKEN", "GITHUB_APP_PRIVATE_KEY",
+  "NPM_TOKEN", "NPM_AUTH_TOKEN",
+  "DOCKER_PASSWORD", "DOCKER_AUTH_CONFIG",
+  "GOOGLE_APPLICATION_CREDENTIALS",
+  "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID",
+  "DATABASE_URL", "DB_PASSWORD", "REDIS_PASSWORD", "MONGO_PASSWORD",
+  "SECRET_KEY", "PRIVATE_KEY", "API_SECRET", "ENCRYPTION_KEY",
+  "VERCEL_TOKEN", "SLACK_TOKEN", "STRIPE_SECRET_KEY",
+  "TWILIO_AUTH_TOKEN", "SENDGRID_API_KEY",
+  "CI_JOB_TOKEN", "CIRCLE_TOKEN", "TRAVIS_TOKEN",
+];
+
+/** Build a sanitized environment for MCP server processes */
+function buildMcpEnv(serverEnv?: Record<string, string>): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+
+  // Strip sensitive vars
+  for (const v of SENSITIVE_ENV_VARS) {
+    delete env[v];
+  }
+
+  // Strip vars whose names suggest secrets
+  for (const key of Object.keys(env)) {
+    const upper = key.toUpperCase();
+    if (
+      (upper.includes("SECRET") ||
+       upper.includes("PRIVATE_KEY") ||
+       (upper.includes("_TOKEN") && !upper.includes("COLOR")) ||
+       upper.includes("_PASSWORD") ||
+       upper.includes("_CREDENTIALS")) &&
+      !["COLORTERM", "FORCE_COLOR"].some(safe => upper.includes(safe))
+    ) {
+      delete env[key];
+    }
+  }
+
+  // Apply server-specific env vars (these are intentional overrides)
+  if (serverEnv) {
+    Object.assign(env, serverEnv);
+  }
+
+  return env;
+}
+
+/** Timeouts for MCP operations */
+const MCP_INIT_TIMEOUT = 15000;  // 15s for initialization handshake
+const MCP_REQUEST_TIMEOUT = 30000; // 30s for tool calls
 
 /**
  * Configuration for a single MCP server.
@@ -39,6 +97,9 @@ export interface McpServerConfig {
 
   /** Whether this server is enabled (default: true) */
   enabled?: boolean;
+
+  /** Source of this config: "global" or "project" */
+  source?: "global" | "project";
 }
 
 /**
@@ -73,6 +134,43 @@ interface McpConnection {
   buffer: string;
 }
 
+/**
+ * Validate an MCP server config for safety.
+ * Returns an error message if invalid, null if valid.
+ */
+function validateServerConfig(config: McpServerConfig): string | null {
+  // Name must be alphanumeric/dash/underscore (no path traversal)
+  if (!config.name || !/^[a-zA-Z0-9_-]+$/.test(config.name)) {
+    return `Invalid server name: "${config.name}" (must be alphanumeric with dashes/underscores)`;
+  }
+
+  // Command must be a non-empty string
+  if (!config.command || typeof config.command !== "string") {
+    return `Invalid command for server "${config.name}"`;
+  }
+
+  // Args must be an array of strings if present
+  if (config.args !== undefined) {
+    if (!Array.isArray(config.args) || config.args.some(a => typeof a !== "string")) {
+      return `Invalid args for server "${config.name}" (must be array of strings)`;
+    }
+  }
+
+  // Env must be a record of strings if present
+  if (config.env !== undefined) {
+    if (typeof config.env !== "object" || config.env === null) {
+      return `Invalid env for server "${config.name}"`;
+    }
+    for (const [key, val] of Object.entries(config.env)) {
+      if (typeof key !== "string" || typeof val !== "string") {
+        return `Invalid env entry in server "${config.name}"`;
+      }
+    }
+  }
+
+  return null;
+}
+
 export class McpManager {
   /** Active server connections */
   private connections = new Map<string, McpConnection>();
@@ -80,16 +178,20 @@ export class McpManager {
   /** Working directory for resolving config paths */
   private workingDir: string;
 
-  constructor(workingDir: string) {
+  /** Whether to allow project-scoped MCP servers */
+  private allowProjectServers: boolean;
+
+  constructor(workingDir: string, options?: { allowProjectServers?: boolean }) {
     this.workingDir = workingDir;
+    this.allowProjectServers = options?.allowProjectServers ?? true;
   }
 
   /**
    * Load MCP server configurations from config files.
    *
    * Checks these locations (in order):
-   *   1. .cdoing/mcp.json (project-specific)
-   *   2. ~/.cdoing/mcp.json (global)
+   *   1. .cdoing/mcp.json (project-specific) — flagged as "project" source
+   *   2. ~/.cdoing/mcp.json (global) — trusted
    *
    * Learning note: Project configs take precedence over global ones.
    * This lets you have project-specific MCP servers (e.g., a Jira
@@ -97,22 +199,46 @@ export class McpManager {
    */
   loadConfig(): McpServerConfig[] {
     const configs: McpServerConfig[] = [];
-    const paths = [
-      path.join(this.workingDir, ".cdoing", "mcp.json"),
-      path.join(os.homedir(), ".cdoing", "mcp.json"),
+    const paths: Array<{ path: string; source: "project" | "global" }> = [
+      { path: path.join(this.workingDir, ".cdoing", "mcp.json"), source: "project" },
+      { path: path.join(os.homedir(), ".cdoing", "mcp.json"), source: "global" },
     ];
 
-    for (const configPath of paths) {
+    for (const { path: configPath, source } of paths) {
+      // Skip project servers if not allowed (managed settings)
+      if (source === "project" && !this.allowProjectServers) continue;
+
       try {
         if (fs.existsSync(configPath)) {
           const raw = fs.readFileSync(configPath, "utf-8");
-          const parsed = JSON.parse(raw);
 
-          if (parsed.servers && Array.isArray(parsed.servers)) {
-            for (const server of parsed.servers) {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(raw);
+          } catch {
+            console.error(`[MCP] Invalid JSON in ${configPath}, skipping`);
+            continue;
+          }
+
+          if (!parsed || typeof parsed !== "object") continue;
+          const obj = parsed as Record<string, unknown>;
+
+          if (obj.servers && Array.isArray(obj.servers)) {
+            for (const server of obj.servers) {
+              if (!server || typeof server !== "object") continue;
+              const serverConfig = server as McpServerConfig;
+              serverConfig.source = source;
+
+              // Validate server config
+              const validationError = validateServerConfig(serverConfig);
+              if (validationError) {
+                console.error(`[MCP] ${validationError} in ${configPath}, skipping`);
+                continue;
+              }
+
               // Don't add duplicates (project config overrides global)
-              if (!configs.some((c) => c.name === server.name)) {
-                configs.push(server);
+              if (!configs.some((c) => c.name === serverConfig.name)) {
+                configs.push(serverConfig);
               }
             }
           }
@@ -152,10 +278,16 @@ export class McpManager {
    * what tools it offers.
    */
   async connect(config: McpServerConfig): Promise<void> {
-    // Spawn the server process
+    // Validate before spawning
+    const validationError = validateServerConfig(config);
+    if (validationError) {
+      throw new Error(validationError);
+    }
+
+    // Spawn the server process with sanitized environment
     const child = spawn(config.command, config.args || [], {
       cwd: config.cwd || this.workingDir,
-      env: { ...process.env, ...config.env },
+      env: buildMcpEnv(config.env),
       stdio: ["pipe", "pipe", "pipe"],
     });
 
@@ -198,29 +330,34 @@ export class McpManager {
       }
     });
 
-    child.on("exit", (code) => {
+    child.on("exit", (_code) => {
       this.connections.delete(config.name);
     });
 
     this.connections.set(config.name, connection);
 
-    // Perform MCP handshake
+    // Perform MCP handshake with timeout
     try {
       await this.sendRequest(config.name, "initialize", {
         protocolVersion: "2024-11-05",
         capabilities: {},
         clientInfo: { name: "cdoing-agent", version: "0.1.0" },
-      });
+      }, MCP_INIT_TIMEOUT);
 
-      // Discover tools
-      const toolsResult = await this.sendRequest(config.name, "tools/list", {}) as any;
+      // Discover tools (also with timeout)
+      const toolsResult = await this.sendRequest(config.name, "tools/list", {}, MCP_INIT_TIMEOUT) as any;
       if (toolsResult?.tools) {
-        connection.tools = toolsResult.tools.map((t: any) => ({
-          name: `${config.name}_${t.name}`,
-          description: `[${config.name}] ${t.description || t.name}`,
-          inputSchema: t.inputSchema || { type: "object", properties: {} },
-          serverName: config.name,
-        }));
+        connection.tools = toolsResult.tools
+          .filter((t: any) => {
+            // Validate tool name — no path traversal or special chars
+            return t && typeof t.name === "string" && /^[a-zA-Z0-9_-]+$/.test(t.name);
+          })
+          .map((t: any) => ({
+            name: `${config.name}_${t.name}`,
+            description: `[${config.name}] ${t.description || t.name}`,
+            inputSchema: t.inputSchema || { type: "object", properties: {} },
+            serverName: config.name,
+          }));
       }
     } catch (err) {
       // If handshake fails, clean up
@@ -237,11 +374,18 @@ export class McpManager {
    * with responses. We store pending requests in a Map and resolve
    * the Promise when we get the matching response.
    */
-  private sendRequest(serverName: string, method: string, params: unknown): Promise<unknown> {
+  private sendRequest(
+    serverName: string,
+    method: string,
+    params: unknown,
+    timeout?: number,
+  ): Promise<unknown> {
     const connection = this.connections.get(serverName);
     if (!connection) {
       return Promise.reject(new Error(`MCP server not connected: ${serverName}`));
     }
+
+    const requestTimeout = timeout || MCP_REQUEST_TIMEOUT;
 
     return new Promise((resolve, reject) => {
       const id = ++connection.requestId;
@@ -256,14 +400,14 @@ export class McpManager {
 
       connection.process.stdin?.write(message + "\n");
 
-      // Timeout after 30 seconds
+      // Timeout
       setTimeout(() => {
         const pending = connection.pendingRequests.get(id);
         if (pending) {
           connection.pendingRequests.delete(id);
-          pending.reject(new Error(`MCP request timeout: ${method}`));
+          pending.reject(new Error(`MCP request timeout after ${requestTimeout}ms: ${method}`));
         }
-      }, 30000);
+      }, requestTimeout);
     });
   }
 
@@ -271,7 +415,7 @@ export class McpManager {
    * Handle an incoming message from an MCP server.
    */
   private handleServerMessage(
-    serverName: string,
+    _serverName: string,
     message: any,
     connection: McpConnection,
   ): void {
@@ -326,12 +470,21 @@ export class McpManager {
             arguments: input,
           }) as any;
 
-          // MCP tool results have a "content" array
-          const output = result?.content
-            ?.map((c: any) => c.text || JSON.stringify(c))
-            .join("\n") || JSON.stringify(result);
+          // MCP tool results have a "content" array — validate structure
+          let output: string;
+          if (result?.content && Array.isArray(result.content)) {
+            output = result.content
+              .filter((c: any) => c && typeof c === "object")
+              .map((c: any) => {
+                if (typeof c.text === "string") return c.text;
+                return JSON.stringify(c);
+              })
+              .join("\n");
+          } else {
+            output = JSON.stringify(result);
+          }
 
-          return { success: true, output };
+          return { success: true, output: output || "(empty result)" };
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           return { success: false, output: "", error: message };
@@ -366,7 +519,7 @@ export class McpManager {
    * Sends a graceful shutdown signal to each server process.
    */
   async disconnectAll(): Promise<void> {
-    for (const [name, connection] of this.connections) {
+    for (const [_name, connection] of this.connections) {
       try {
         connection.process.kill("SIGTERM");
       } catch {

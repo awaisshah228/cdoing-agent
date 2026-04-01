@@ -3,6 +3,7 @@ import * as path from "path";
 import { glob } from "glob";
 import type { BaseTool, ToolDefinition, ToolResult } from "../types";
 import { loadIgnorePatterns } from "../../utils/gitignore";
+import type { SandboxManager } from "../../sandbox";
 
 interface GrepMatch {
   file: string;
@@ -18,7 +19,7 @@ export class GrepSearchTool implements BaseTool {
   definition: ToolDefinition = {
     name: "grep_search",
     description:
-      "Search file contents using a regex pattern. Returns matching lines with file paths and line numbers. Use this to find code patterns, function definitions, variable usages, etc. Respects .gitignore.",
+      "Search file contents using a regex pattern. Returns matching lines with file paths and line numbers. Use this to find code patterns, function definitions, variable usages, etc. Respects .gitignore and sandbox read restrictions.",
     inputSchema: {
       type: "object",
       properties: {
@@ -45,9 +46,11 @@ export class GrepSearchTool implements BaseTool {
   };
 
   private workingDir: string;
+  private sandboxManager?: SandboxManager;
 
-  constructor(workingDir: string) {
+  constructor(workingDir: string, sandboxManager?: SandboxManager) {
     this.workingDir = workingDir;
+    this.sandboxManager = sandboxManager;
   }
 
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
@@ -59,6 +62,14 @@ export class GrepSearchTool implements BaseTool {
     const searchDir = path.isAbsolute(directory)
       ? directory
       : path.resolve(this.workingDir, directory);
+
+    // Sandbox: check if search directory itself is readable
+    if (this.sandboxManager) {
+      const dirCheck = this.sandboxManager.checkFileRead(searchDir);
+      if (!dirCheck.allowed) {
+        return { success: false, output: "", error: dirCheck.reason || "Sandbox: read access denied for search directory" };
+      }
+    }
 
     try {
       const regex = new RegExp(pattern, caseInsensitive ? "gi" : "g");
@@ -76,6 +87,13 @@ export class GrepSearchTool implements BaseTool {
         if (matches.length >= maxMatches) break;
 
         const fullPath = path.join(searchDir, file);
+
+        // Sandbox: check each file before reading
+        if (this.sandboxManager) {
+          const fileCheck = this.sandboxManager.checkFileRead(fullPath);
+          if (!fileCheck.allowed) continue; // Skip denied files silently
+        }
+
         try {
           const stat = fs.statSync(fullPath);
           if (stat.size > 1024 * 1024) continue; // skip files > 1MB

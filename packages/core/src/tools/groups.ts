@@ -73,8 +73,8 @@ export async function registerSearchTools(registry: ToolRegistry, opts: ToolGrou
   const { CodebaseSearchTool } = await import("./search/codebase-search");
   const { ListDirTool } = await import("./search/list-dir");
 
-  registry.register(new GlobSearchTool(opts.workingDir));
-  registry.register(new GrepSearchTool(opts.workingDir));
+  registry.register(new GlobSearchTool(opts.workingDir, opts.sandboxManager));
+  registry.register(new GrepSearchTool(opts.workingDir, opts.sandboxManager));
   registry.register(new CodebaseSearchTool(opts.workingDir));
   registry.register(new ListDirTool(opts.workingDir, opts.sandboxManager));
 }
