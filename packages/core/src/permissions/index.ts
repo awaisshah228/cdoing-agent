@@ -140,6 +140,13 @@ const PERMANENT_APPROVAL_TOOLS = new Set(["shell_exec", "file_run"]);
 /** Agent types with different default permission behaviors */
 export type AgentType = "build" | "plan" | "explore";
 
+/**
+ * Dangerous interpreter pattern — commands that execute arbitrary code.
+ * Allow rules matching these are downgraded to "ask" to prevent auto-approval
+ * of code execution via broad rules like "Bash(*)".
+ */
+const DANGEROUS_INTERPRETER_RE = /^\s*(?:python[23]?|node|ruby|perl|php|lua|bash\s+-c|sh\s+-c|zsh\s+-c|eval|exec|npx|bunx|ssh)\b/i;
+
 /** Tools blocked in explore mode (explore = read-only, no web, no sub_agent) */
 const EXPLORE_BLOCKED = new Set([
   ...PLAN_BLOCKED,
@@ -694,7 +701,18 @@ export class PermissionManager {
       return this.askUser(toolName, this.describeAction(toolDef, input), input);
     }
 
-    if (ruleResult === "allow") return true;
+    // Dangerous interpreter stripping: even if an allow rule matches (e.g., "Bash(*)"),
+    // downgrade to "ask" for commands that execute arbitrary code via interpreters.
+    // This matches Claude Code's approach of never auto-approving code execution.
+    if (ruleResult === "allow") {
+      if (TOOL_CATEGORY[toolName] === "Bash") {
+        const cmd = String(input.command || "").trim();
+        if (DANGEROUS_INTERPRETER_RE.test(cmd)) {
+          return this.askUser(toolName, this.describeAction(toolDef, input), input);
+        }
+      }
+      return true;
+    }
 
     // For Bash tools: check path-level ask rules against files extracted from the command.
     // e.g. "ask": ["Edit(src/sensitive/*)"] triggers when mv/cp/> targets that path.

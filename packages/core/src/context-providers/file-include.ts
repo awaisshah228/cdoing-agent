@@ -5,8 +5,24 @@ import type { ContextProvider, ContextResult, ContextResolveOptions } from "./ty
 const MAX_BYTES = 100_000; // ~100 KB cap
 
 /**
+ * Escape XML special characters to prevent prompt injection via filenames
+ * or file content that contains XML tags.
+ */
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
  * @file <path> — reads a file and injects its content into the prompt.
  * Also handles bare relative/absolute paths that look like files.
+ *
+ * Security: All interpolated values (paths, filenames, content) are XML-escaped
+ * to prevent prompt injection via malicious filenames or file content.
  */
 export class FileIncludeContextProvider implements ContextProvider {
   id = "file";
@@ -23,16 +39,19 @@ export class FileIncludeContextProvider implements ContextProvider {
     }
 
     if (!fs.existsSync(filePath)) {
-      return { label: "File", content: `(file not found: ${filePath})` };
+      return { label: "File", content: `(file not found: ${escapeXml(filePath)})` };
     }
 
     const stat = fs.statSync(filePath);
     if (stat.isDirectory()) {
-      // List directory contents instead
-      const entries = fs.readdirSync(filePath).slice(0, 100).join("\n");
+      // List directory contents — escape each entry name
+      const entries = fs.readdirSync(filePath)
+        .slice(0, 100)
+        .map(e => escapeXml(e))
+        .join("\n");
       return {
         label: "Directory",
-        content: `<directory path="${filePath}">\n${entries}\n</directory>`,
+        content: `<directory path="${escapeXml(filePath)}">\n${entries}\n</directory>`,
       };
     }
 
@@ -45,9 +64,11 @@ export class FileIncludeContextProvider implements ContextProvider {
     const rel = path.relative(base, filePath);
     const ext = path.extname(filePath).slice(1) || "text";
 
+    // Escape path attribute and extension to prevent XML breakout.
+    // Content inside code fences is safer but still escaped for the path/ext.
     return {
       label: "File",
-      content: `<file path="${rel}">\n\`\`\`${ext}\n${text}\n\`\`\`\n</file>`,
+      content: `<file path="${escapeXml(rel)}">\n\`\`\`${escapeXml(ext)}\n${text}\n\`\`\`\n</file>`,
       metadata: { source: rel, truncated },
     };
   }

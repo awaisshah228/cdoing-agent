@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import type { BaseTool, ToolDefinition, ToolResult } from "../types";
-import { safePath } from "../../utils/path-safety";
+import { safeRealPath, isSensitivePath } from "../../utils/path-safety";
 import { hasPlaceholders, expandPlaceholders } from "../../utils/lazy-apply";
 import type { SandboxManager } from "../../sandbox";
 
@@ -64,9 +64,16 @@ Do NOT use this for partial edits — use file_edit or multi_edit instead, which
   async execute(input: Record<string, unknown>): Promise<ToolResult> {
     let filePath: string;
     try {
-      filePath = safePath(input.file_path as string, this.workingDir);
+      // Resolve symlinks to prevent symlink-based write bypasses
+      filePath = safeRealPath(input.file_path as string, this.workingDir);
     } catch (err) {
       return { success: false, output: "", error: (err as Error).message };
+    }
+
+    // Check for sensitive file paths
+    const sensitiveReason = isSensitivePath(filePath);
+    if (sensitiveReason) {
+      return { success: false, output: "", error: `Write blocked: ${sensitiveReason} (${filePath})` };
     }
 
     // Sandbox write check
