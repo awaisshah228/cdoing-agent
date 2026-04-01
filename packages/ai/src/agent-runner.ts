@@ -98,6 +98,9 @@ export class AgentRunner {
   /** Recent tool call signatures for doom loop detection */
   private recentToolCalls: string[] = [];
   private static readonly DOOM_LOOP_THRESHOLD = 3;
+  /** Track denied tool calls to prevent infinite re-prompting */
+  private deniedToolCalls: Map<string, number> = new Map();
+  private static readonly DENIAL_RETRY_LIMIT = 2;
   /** Set when the previous run was interrupted — tells the next run to prompt the LLM about background agents */
   private wasInterrupted: boolean = false;
   /** Optional managers for reporting background work on interrupt */
@@ -1125,16 +1128,30 @@ export class AgentRunner {
       });
     }
 
-    // Permission check
+    // Permission check with denial retry limiting
     const tool = this.toolRegistry.get(tc.name);
     if (tool) {
+      // Check if this tool has been denied too many times already
+      const denialKey = `${tc.name}:${JSON.stringify(tc.args)}`;
+      const priorDenials = this.deniedToolCalls.get(denialKey) || 0;
+      if (priorDenials >= AgentRunner.DENIAL_RETRY_LIMIT) {
+        const hardDenialMessage = `Permission permanently denied: "${tc.name}" has been denied ${priorDenials} times with the same arguments. Do NOT retry. Use a completely different approach or ask the user for guidance.`;
+        this.messages.push(new ToolMessage({ content: hardDenialMessage, tool_call_id: tc.id }));
+        callbacks.onToolResult(tc.name, hardDenialMessage, true, tc.id);
+        return;
+      }
+
       const allowed = await this.permissionManager.requestPermission(tool.definition, tc.args);
       if (!allowed) {
+        // Track this denial
+        this.deniedToolCalls.set(denialKey, priorDenials + 1);
+
         // Build a descriptive denial message for the LLM so it understands what was blocked and why
         const actionDesc = tool.definition.permissionMessage
           ? tool.definition.permissionMessage(tc.args)
           : `${tc.name}: ${tc.args.command || tc.args.file_path || tc.args.task || JSON.stringify(tc.args).slice(0, 200)}`;
         const isDestructive = actionDesc.includes("DESTRUCTIVE");
+        const remainingRetries = AgentRunner.DENIAL_RETRY_LIMIT - (priorDenials + 1);
         const denialMessage = [
           `Permission denied by user for: ${actionDesc}`,
           "",
@@ -1142,7 +1159,9 @@ export class AgentRunner {
             ? "This was flagged as a DESTRUCTIVE operation. The user chose not to allow it."
             : "The user did not grant permission for this action.",
           "",
-          "You MUST respect the user's decision. Do NOT retry this exact command.",
+          remainingRetries <= 0
+            ? "This tool call has been denied multiple times. Do NOT retry with the same arguments."
+            : `You MUST respect the user's decision. Do NOT retry this exact command.`,
           "Instead, consider:",
           "- Asking the user what they'd like you to do instead",
           "- Using a safer alternative approach",

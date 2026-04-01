@@ -43,21 +43,61 @@ export interface SandboxCheckResult {
   domain?: string;
 }
 
-/** Returns a default (disabled) sandbox config */
+/**
+ * Default sensitive paths that should be denied for reads.
+ * Matches Claude Code's approach of protecting credentials and keys.
+ */
+export const DEFAULT_DENY_READ_PATHS: string[] = [
+  "~/.ssh",
+  "~/.aws",
+  "~/.gnupg",
+  "~/.config/gcloud",
+  "~/.azure",
+  "~/.kube/config",
+  "~/.netrc",
+  "~/.npmrc",
+  "~/.git-credentials",
+  "~/.docker/config.json",
+  "~/.password-store",
+  "~/.op",
+];
+
+/**
+ * Default sensitive paths that should be denied for writes.
+ */
+export const DEFAULT_DENY_WRITE_PATHS: string[] = [
+  "~/.ssh",
+  "~/.aws",
+  "~/.gnupg",
+  "~/.config/gcloud",
+  "~/.azure",
+  "~/.kube/config",
+  "~/.netrc",
+  "~/.npmrc",
+  "~/.git-credentials",
+  "~/.docker/config.json",
+  "/etc",
+  "/System",
+  "/usr",
+  "/bin",
+  "/sbin",
+];
+
+/** Returns a default sandbox config — enabled by default with safe defaults */
 export function defaultSandboxConfig(): SandboxConfig {
   return {
-    enabled: false,
+    enabled: true,
     mode: "regular",
     filesystem: {
       allowWrite: [],
-      denyWrite: [],
-      denyRead: [],
+      denyWrite: [...DEFAULT_DENY_WRITE_PATHS],
+      denyRead: [...DEFAULT_DENY_READ_PATHS],
     },
     network: {
       allowedDomains: [],
       allowManagedDomainsOnly: false,
     },
     excludedCommands: [],
-    allowUnsandboxedCommands: true,
+    allowUnsandboxedCommands: false,
   };
 }

@@ -2,25 +2,92 @@
  * URL Context Provider — @url
  *
  * Fetches a web page and converts it to clean markdown for context.
- * Reuses the existing web_fetch tool logic under the hood.
+ *
+ * Security features:
+ *   - Manual redirect handling (validates each hop against SSRF rules)
+ *   - Max 5 redirects
+ *   - URL escaped in markdown output to prevent injection
+ *   - SSRF protection (blocks private/internal IPs)
  *
  * Usage: @url https://docs.example.com/api
- *
- * How it works:
- *   1. User types @url followed by a URL
- *   2. We fetch the page HTML
- *   3. Strip tags, scripts, styles → extract readable text
- *   4. Format as markdown and inject into the conversation
- *
- * Learning note: This provider REQUIRES an argument (the URL).
- * The `requiresArg` flag tells the UI to keep the input open
- * until the user provides the URL after the @ trigger.
  */
 
 import type { ContextProvider, ContextResult, ContextResolveOptions } from "./types";
+import { isBlockedAddress } from "../sandbox/network";
 
 /** Max chars for fetched content */
 const DEFAULT_MAX_CHARS = 15000;
+
+/** Max redirects to follow */
+const MAX_REDIRECTS = 5;
+
+/**
+ * Escape a URL for safe inclusion in markdown.
+ * Prevents injection via URLs like: http://evil.com/?p=## Injected Header
+ */
+function escapeMarkdownUrl(url: string): string {
+  return url
+    .replace(/\[/g, "%5B")
+    .replace(/\]/g, "%5D")
+    .replace(/\(/g, "%28")
+    .replace(/\)/g, "%29")
+    .replace(/\n/g, "%0A")
+    .replace(/\r/g, "%0D")
+    .replace(/#/g, "%23");
+}
+
+/**
+ * Fetch a URL with manual redirect handling to validate each hop.
+ * Prevents SSRF via redirect chains (e.g., trusted.com → 169.254.169.254).
+ */
+async function fetchWithRedirectValidation(
+  url: string,
+  maxRedirects: number = MAX_REDIRECTS,
+): Promise<Response> {
+  let currentUrl = url;
+  let redirectCount = 0;
+
+  while (redirectCount <= maxRedirects) {
+    // SSRF check on each hop
+    let hostname: string;
+    try {
+      hostname = new URL(currentUrl).hostname;
+    } catch {
+      throw new Error(`Invalid URL: ${currentUrl}`);
+    }
+
+    const blockedReason = isBlockedAddress(hostname);
+    if (blockedReason) {
+      throw new Error(`SSRF protection: blocked ${hostname} (${blockedReason})`);
+    }
+
+    const response = await fetch(currentUrl, {
+      headers: {
+        "User-Agent": "Cdoing-Agent/1.0 (Context Fetcher)",
+        "Accept": "text/html,text/plain,application/json",
+      },
+      redirect: "manual", // Don't auto-follow redirects
+      signal: AbortSignal.timeout(15000),
+    });
+
+    // Handle redirects manually
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      const location = response.headers.get("location");
+      if (!location) {
+        throw new Error(`Redirect ${response.status} without Location header`);
+      }
+
+      // Resolve relative redirects
+      currentUrl = new URL(location, currentUrl).toString();
+      redirectCount++;
+      continue;
+    }
+
+    return response;
+  }
+
+  throw new Error(`Too many redirects (>${maxRedirects})`);
+}
 
 export class UrlContextProvider implements ContextProvider {
   id = "url";
@@ -40,20 +107,17 @@ export class UrlContextProvider implements ContextProvider {
     const url = arg.trim();
     const maxChars = options?.maxContentLength ?? DEFAULT_MAX_CHARS;
 
+    // Escape URL for display in markdown output
+    const safeUrl = escapeMarkdownUrl(url);
+
     try {
-      // Fetch the URL content
-      const response = await fetch(url, {
-        headers: {
-          "User-Agent": "Cdoing-Agent/1.0 (Context Fetcher)",
-          "Accept": "text/html,text/plain,application/json",
-        },
-        signal: AbortSignal.timeout(15000), // 15 second timeout
-      });
+      // Fetch with redirect validation (SSRF-safe)
+      const response = await fetchWithRedirectValidation(url);
 
       if (!response.ok) {
         return {
-          label: `URL: ${url}`,
-          content: `[Failed to fetch ${url}: HTTP ${response.status} ${response.statusText}]`,
+          label: `URL: ${safeUrl}`,
+          content: `[Failed to fetch ${safeUrl}: HTTP ${response.status} ${response.statusText}]`,
           metadata: { source: "web" },
         };
       }
@@ -74,8 +138,8 @@ export class UrlContextProvider implements ContextProvider {
       }
 
       return {
-        label: `URL: ${url}`,
-        content: `## Web Content: ${url}\n\n${body}${truncated ? "\n\n... [content truncated]" : ""}`,
+        label: `URL: ${safeUrl}`,
+        content: `## Web Content: ${safeUrl}\n\n${body}${truncated ? "\n\n... [content truncated]" : ""}`,
         metadata: {
           source: url,
           truncated,
@@ -84,8 +148,8 @@ export class UrlContextProvider implements ContextProvider {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return {
-        label: `URL: ${url}`,
-        content: `[Error fetching ${url}: ${message}]`,
+        label: `URL: ${safeUrl}`,
+        content: `[Error fetching ${safeUrl}: ${message}]`,
         metadata: { source: "web" },
       };
     }
@@ -95,10 +159,6 @@ export class UrlContextProvider implements ContextProvider {
 /**
  * Convert HTML to readable plain text.
  * Strips tags, scripts, styles, and normalizes whitespace.
- *
- * Learning note: This is a simple regex-based approach that works
- * well enough for most pages. For production, you'd use a proper
- * HTML parser like cheerio or jsdom.
  */
 function htmlToText(html: string): string {
   return html

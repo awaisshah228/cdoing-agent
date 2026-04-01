@@ -6,6 +6,7 @@
 
 import type { BaseTool, ToolDefinition, ToolResult } from "../types";
 import type { SandboxManager } from "../../sandbox";
+import { isBlockedAddress } from "../../sandbox/network";
 
 const BROWSER_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -95,6 +96,9 @@ export class WebFetchTool implements BaseTool {
     return { success: false, output: "", error: `Fetch failed: ${lastError}` };
   }
 
+  /** Max redirects to follow manually */
+  private static readonly MAX_REDIRECTS = 5;
+
   private async fetchWithUA(
     url: string,
     userAgent: string,
@@ -106,16 +110,61 @@ export class WebFetchTool implements BaseTool {
     const timeout = setTimeout(() => controller.abort(), 30000);
 
     try {
-      const response = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          "User-Agent": userAgent,
-          "Accept": "text/html,application/json,text/plain,*/*",
-          "Accept-Language": "en-US,en;q=0.9",
-          "Accept-Encoding": "gzip, deflate, br",
-          ...customHeaders,
-        },
-      });
+      // Follow redirects manually to validate each hop against SSRF rules
+      let currentUrl = url;
+      let redirectCount = 0;
+      let response: Response;
+
+      while (true) {
+        // SSRF check on each hop
+        try {
+          const hostname = new URL(currentUrl).hostname;
+          const blockedReason = isBlockedAddress(hostname);
+          if (blockedReason) {
+            clearTimeout(timeout);
+            return {
+              success: false,
+              output: "",
+              error: `SSRF protection: blocked ${hostname} (${blockedReason})`,
+            };
+          }
+        } catch {
+          clearTimeout(timeout);
+          return { success: false, output: "", error: `Invalid URL: ${currentUrl}` };
+        }
+
+        response = await fetch(currentUrl, {
+          signal: controller.signal,
+          redirect: "manual", // Don't auto-follow — validate each hop
+          headers: {
+            "User-Agent": userAgent,
+            "Accept": "text/html,application/json,text/plain,*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            ...customHeaders,
+          },
+        });
+
+        // Handle redirects manually
+        if ([301, 302, 303, 307, 308].includes(response.status)) {
+          const location = response.headers.get("location");
+          if (!location || redirectCount >= WebFetchTool.MAX_REDIRECTS) {
+            clearTimeout(timeout);
+            return {
+              success: false,
+              output: "",
+              error: location
+                ? `Too many redirects (>${WebFetchTool.MAX_REDIRECTS})`
+                : `Redirect ${response.status} without Location header`,
+            };
+          }
+          currentUrl = new URL(location, currentUrl).toString();
+          redirectCount++;
+          continue;
+        }
+
+        break; // Not a redirect — proceed with this response
+      }
 
       clearTimeout(timeout);
 

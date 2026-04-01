@@ -13,6 +13,28 @@ const IS_WINDOWS = os.platform() === "win32";
 /** For exec() — the shell to use */
 const SHELL = IS_WINDOWS ? "powershell.exe" : process.env.SHELL || "/bin/sh";
 
+/** Sensitive env vars to strip even without sandbox manager */
+const SENSITIVE_ENV_VARS_SHELL = [
+  "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_ACCESS_KEY_ID",
+  "GH_TOKEN", "GITHUB_TOKEN", "GITHUB_APP_PRIVATE_KEY",
+  "NPM_TOKEN", "NPM_AUTH_TOKEN",
+  "DOCKER_PASSWORD", "DOCKER_AUTH_CONFIG",
+  "GOOGLE_APPLICATION_CREDENTIALS",
+  "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID",
+  "SECRET_KEY", "PRIVATE_KEY", "API_SECRET", "ENCRYPTION_KEY",
+  "VERCEL_TOKEN", "SLACK_TOKEN", "STRIPE_SECRET_KEY",
+  "TWILIO_AUTH_TOKEN", "SENDGRID_API_KEY",
+  "CI_JOB_TOKEN", "CIRCLE_TOKEN", "TRAVIS_TOKEN",
+];
+
+/** Strip sensitive env vars from a process environment */
+function stripSensitiveEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  for (const v of SENSITIVE_ENV_VARS_SHELL) {
+    delete env[v];
+  }
+  return env;
+}
+
 /** Color-supporting environment variables */
 const COLOR_ENV = {
   FORCE_COLOR: "1",
@@ -66,7 +88,94 @@ const DESTRUCTIVE_PATTERNS = [
   /\bdocker\s+(rm|rmi|system\s+prune)\b/,
   // npm/package destructive
   /\bnpm\s+unpublish\b/,
+  // find with destructive flags
+  /\bfind\b.*-delete\b/,
+  /\bfind\b.*-exec\s+rm\b/,
 ];
+
+// ── Dangerous interpreter detection (matches Claude Code) ────────────────────
+// These commands can execute arbitrary code and should always require explicit
+// user permission, even if auto-approval rules would otherwise allow them.
+
+/**
+ * Patterns for commands that execute arbitrary code via interpreters.
+ * Claude Code strips these from auto-mode approval to prevent the ML
+ * classifier from auto-approving code execution.
+ */
+const DANGEROUS_INTERPRETER_PATTERNS = [
+  // Script interpreters
+  /^\s*python[23]?\s/i, /^\s*python[23]?\s*$/i,
+  /^\s*node\s/, /^\s*node\s*$/,
+  /^\s*ruby\s/, /^\s*ruby\s*$/,
+  /^\s*perl\s/, /^\s*perl\s*$/,
+  /^\s*php\s/, /^\s*php\s*$/,
+  /^\s*lua\s/, /^\s*lua\s*$/,
+  // Shell evaluation
+  /^\s*eval\s/, /^\s*exec\s/,
+  /^\s*bash\s+-c\s/, /^\s*sh\s+-c\s/, /^\s*zsh\s+-c\s/,
+  // Package runners (can run arbitrary scripts)
+  /^\s*npx\s/, /^\s*bunx\s/,
+  /^\s*npm\s+exec\b/,
+  // Remote execution
+  /^\s*ssh\s/,
+  /^\s*curl\s.*\|\s*(?:bash|sh|zsh)\b/,  // curl | bash
+  /^\s*wget\s.*\|\s*(?:bash|sh|zsh)\b/,  // wget | bash
+];
+
+/**
+ * Check if a command invokes a dangerous interpreter.
+ * Returns the matched interpreter name, or null if safe.
+ */
+function isDangerousInterpreter(command: string): string | null {
+  const trimmed = command.trim();
+  for (const pattern of DANGEROUS_INTERPRETER_PATTERNS) {
+    if (pattern.test(trimmed)) {
+      const match = trimmed.match(/^\s*(\S+)/);
+      return match ? match[1] : "interpreter";
+    }
+  }
+  return null;
+}
+
+// ── Compound command splitting ───────────────────────────────────────────────
+
+/**
+ * Split a compound shell command into individual sub-commands.
+ * Handles &&, ||, ;, and | operators.
+ *
+ * Each sub-command is validated separately to prevent:
+ *   safe-cmd && evil-cmd
+ * from bypassing checks on "safe-cmd".
+ */
+function splitCompoundCommand(command: string): string[] {
+  // Simple split on shell operators — doesn't handle quoted strings perfectly
+  // but sufficient for security heuristics
+  const parts = command.split(/\s*(?:&&|\|\||;)\s*/);
+  return parts.map(p => p.trim()).filter(Boolean);
+}
+
+/**
+ * Check if a compound command contains a directory change followed by a write.
+ * Prevents CWD-bypass attacks like: cd /etc && echo evil > passwd
+ */
+function hasCwdBypassRisk(command: string): boolean {
+  const parts = splitCompoundCommand(command);
+  let hasCdCommand = false;
+
+  for (const part of parts) {
+    if (/^\s*cd\s/.test(part)) {
+      hasCdCommand = true;
+    } else if (hasCdCommand) {
+      // After cd, check if any subsequent command writes
+      if (/>{1,2}/.test(part) || /\btee\b/.test(part) ||
+          /\brm\b/.test(part) || /\bmv\b/.test(part) || /\bcp\b/.test(part) ||
+          /\bchmod\b/.test(part) || /\bchown\b/.test(part)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
 
 
 // ── Output Summarization (token-saving) ─────────────────────────────────────
@@ -267,6 +376,10 @@ Actions:
       if (DESTRUCTIVE_PATTERNS.some((p) => p.test(cmd))) {
         return `⚠ DESTRUCTIVE command: ${humanCmd} (${cmd.slice(0, 200)})`;
       }
+      const interp = isDangerousInterpreter(cmd);
+      if (interp) {
+        return `⚠ Code execution (${interp}): ${humanCmd}`;
+      }
       return `Run command: ${humanCmd}`;
     },
   };
@@ -327,6 +440,33 @@ Actions:
         return { success: false, output: "", error: `Blocked dangerous pattern: ${pat}` };
     }
 
+    // Dangerous interpreter detection — flag for elevated permission warning
+    const interpreter = isDangerousInterpreter(command);
+    if (interpreter) {
+      // The permission system will still prompt the user, but we add
+      // context about why this is flagged as dangerous
+      // (This is informational — the actual block happens in permission checks)
+    }
+
+    // CWD-bypass detection: cd /somewhere && write-operation
+    if (hasCwdBypassRisk(command)) {
+      return {
+        success: false,
+        output: "",
+        error: `Blocked: command changes directory then performs write operations. This pattern can bypass sandbox restrictions. Split into separate commands instead.`,
+      };
+    }
+
+    // Compound command sub-validation: check each sub-command for blocked patterns
+    const subCommands = splitCompoundCommand(command);
+    for (const sub of subCommands) {
+      for (const pat of ALWAYS_BLOCKED) {
+        if (sub.includes(pat)) {
+          return { success: false, output: "", error: `Blocked dangerous pattern in compound command: ${pat}` };
+        }
+      }
+    }
+
     // ── Permission-based path checks ────────────────────────────────────────
     if (this.permissionManager) {
       const paths = extractShellPaths(command, this.workingDir);
@@ -364,8 +504,8 @@ Actions:
       }
     }
 
-    // Build environment
-    const env = this.sandboxManager ? this.sandboxManager.getShellEnv() : { ...process.env };
+    // Build environment — always strip sensitive vars even without sandbox manager
+    const env = this.sandboxManager ? this.sandboxManager.getShellEnv() : stripSensitiveEnv({ ...process.env });
 
     // Merge user-provided env vars
     const envVars = input.env_vars as Record<string, string> | undefined;
