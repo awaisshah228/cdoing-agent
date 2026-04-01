@@ -1,7 +1,9 @@
 {
   "name": "@cdoing/ai",
-  "version": "0.1.20",
-  "publishConfig": { "access": "public" },
+  "version": "0.1.21",
+  "publishConfig": {
+    "access": "public"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
