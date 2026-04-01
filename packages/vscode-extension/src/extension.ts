@@ -561,60 +561,12 @@ function openEditorPanel(context: vscode.ExtensionContext) {
     {} as any
   );
 
-  // Handle messages from the editor panel webview
+  // Handle only editor-panel-specific messages (pendingFileContext delivery).
+  // All other messages (sendMessage, command, newTab, etc.) are already handled
+  // by ChatPanelProvider.resolveWebviewView() — registering them here too causes duplicates.
   editorPanel.webview.onDidReceiveMessage(async (message) => {
     switch (message.type) {
-      case "sendMessage":
-        editorChatProvider!.postMessage({ type: "startResponse" });
-        (editorChatProvider as any).handleUserMessage?.(message.text, message.context);
-        break;
-      case "command":
-        if (message.command === "openFile" && message.args?.[0]) {
-          (editorChatProvider as any).openFileInEditor?.(message.args[0]);
-        } else {
-          (editorChatProvider as any).handleCommand?.(message.command, message.args);
-        }
-        break;
-      case "newTab":
-        editorChatProvider!.createTab();
-        break;
-      case "switchTab":
-        break;
-      case "closeTab":
-        break;
-      case "pickFile":
-        (editorChatProvider as any).pickFileForContext?.();
-        break;
-      case "pickFolder":
-        (editorChatProvider as any).pickFolderForContext?.();
-        break;
-      case "searchFiles":
-        (editorChatProvider as any).searchWorkspaceFiles?.(message.query);
-        break;
-      case "getActiveFile":
-        (editorChatProvider as any).sendActiveFileAsContext?.();
-        break;
-      case "listHistory":
-        (editorChatProvider as any).sendConversationList?.();
-        break;
-      case "resumeConversation":
-        (editorChatProvider as any).resumeConversationById?.(message.id);
-        break;
-      case "deleteConversation":
-        (editorChatProvider as any).deleteConversation?.(message.id);
-        (editorChatProvider as any).sendConversationList?.();
-        break;
-      case "getConfig":
-        (editorChatProvider as any).sendFullConfig?.();
-        break;
-      case "updateConfig":
-        (editorChatProvider as any).updateConfigFromWebview?.(message.config);
-        break;
-      case "openVscodeSettings":
-        vscode.commands.executeCommand("workbench.action.openSettings", "cdoing");
-        break;
       case "ready":
-        editorChatProvider!.postMessage({ type: "configUpdated", provider: "anthropic", model: "" });
         if (pendingFileContext) {
           setTimeout(() => {
             if (pendingFileContext) {
