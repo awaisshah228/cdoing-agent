@@ -1,23 +1,24 @@
 /**
- * MessageBubble.tsx — Premium Chat Message with Avatar & Context Chips
+ * MessageBubble.tsx — Chat Message with smooth streaming support
  *
  * Features:
  *   - Role avatars with branded gradient (assistant) or accent (user)
- *   - Smooth entry animation
+ *   - Smooth entry animation (only on mount)
  *   - Rich context chip rendering (files, folders, selections, images)
- *   - Markdown rendering for all message types
- *   - Clickable file paths
+ *   - Real-time markdown rendering during streaming (no plain-text flash)
+ *   - Full markdown with syntax highlighting and clickable file paths
  *
- * Memoized — only re-renders when message content/context changes.
+ * Memoized — only re-renders when message content/context/streaming state changes.
  */
 
-import React, { useMemo, useCallback, useRef, useEffect } from "react";
+import React, { useMemo, useCallback, useRef, useEffect, useState } from "react";
 import type { ChatMessage, ContextAttachment } from "../types";
 import { renderMarkdown } from "../utils/markdown";
 import { useVsCode } from "../hooks/useVsCode";
 
 interface MessageBubbleProps {
   message: ChatMessage;
+  isStreaming?: boolean;
 }
 
 const ROLE_CONFIG: Record<string, { label: string; avatar: string }> = {
@@ -131,16 +132,17 @@ const MessageImageThumb: React.FC<{ attachment: ContextAttachment }> = ({ attach
 
 // ── Main Component ──
 
-const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ message }) => {
+const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ message, isStreaming }) => {
   const vscode = useVsCode();
   const contentRef = useRef<HTMLDivElement>(null);
+  // Only animate on first mount, not during streaming content updates
+  const [isNew] = useState(true);
 
+  // Always render markdown — even during streaming — so the user sees
+  // formatted output in real time instead of a plain-text→markdown flash.
   const htmlContent = useMemo(() => {
-    // Render markdown for all roles (including user for formatting)
-    if (message.content) {
-      return renderMarkdown(message.content);
-    }
-    return null;
+    if (!message.content) return null;
+    return renderMarkdown(message.content);
   }, [message.content]);
 
   const handleClick = useCallback((e: MouseEvent) => {
@@ -172,7 +174,7 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ message }) => {
   const contextImages = message.context?.filter((c) => c.type === "image") || [];
 
   return (
-    <div className={`message-row ${message.role}`}>
+    <div className={`message-row ${message.role}${isNew ? ' animate-in' : ''}`}>
       <div className="message-header">
         <div className="message-avatar">{config.avatar}</div>
         <div className="message-role">{config.label}</div>
@@ -194,13 +196,15 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ message }) => {
         </div>
       )}
 
-      {/* Message text content */}
+      {/* Message text content — always markdown-rendered, even while streaming */}
       {message.content && (
         htmlContent ? (
           <div
             ref={contentRef}
-            className="message-content"
-            dangerouslySetInnerHTML={{ __html: htmlContent }}
+            className={`message-content${isStreaming ? " message-content-streaming" : ""}`}
+            dangerouslySetInnerHTML={{
+              __html: isStreaming ? htmlContent + '<span class="streaming-cursor"></span>' : htmlContent,
+            }}
           />
         ) : (
           <div className="message-content">{message.content}</div>
@@ -213,5 +217,6 @@ const MessageBubbleInner: React.FC<MessageBubbleProps> = ({ message }) => {
 export const MessageBubble = React.memo(MessageBubbleInner, (prev, next) => {
   return prev.message.id === next.message.id
     && prev.message.content === next.message.content
-    && prev.message.context === next.message.context;
+    && prev.message.context === next.message.context
+    && prev.isStreaming === next.isStreaming;
 });

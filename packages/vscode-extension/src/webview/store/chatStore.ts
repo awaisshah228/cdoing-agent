@@ -47,6 +47,8 @@ interface ChatState {
   entries: ChatEntry[];
   isProcessing: boolean;
   queueCount: number;
+  /** ID of the message currently being streamed (for smooth rendering) */
+  streamingMessageId: string | null;
 
   // Global UI state
   modelLabel: string;
@@ -177,6 +179,7 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
       if (streamingId) {
         const sid = streamingId;
         return {
+          streamingMessageId: sid,
           entries: state.entries.map((e) =>
             e.id === sid
               ? { ...e, content: (e as ChatMessage).content + buffered }
@@ -187,6 +190,7 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
       const id = nextId();
       streamingId = id;
       return {
+        streamingMessageId: id,
         entries: [
           ...state.entries,
           { id, role: "assistant" as const, content: buffered },
@@ -218,6 +222,7 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
       entries: data.entries,
       isProcessing: data.isProcessing,
       activeTabId: tabId,
+      streamingMessageId: data.streamingId,
     });
   }
 
@@ -237,6 +242,7 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
     permissionRequest: null,
     agentMode: "build",
     planApproval: null,
+    streamingMessageId: null,
     oauthStatus: "none",
     oauthExpiresAt: undefined,
 
@@ -310,7 +316,7 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
     clearAll: () => {
       streamingId = null;
       tokenBuffer = "";
-      set({ entries: [], queueCount: 0 });
+      set({ entries: [], queueCount: 0, streamingMessageId: null });
     },
 
     // ── Token Streaming ─────────────────────────────
@@ -396,7 +402,7 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
         newMessage,
       });
 
-      set({ isProcessing: false });
+      set({ isProcessing: false, streamingMessageId: null });
       streamingId = null;
     },
 
@@ -477,7 +483,7 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
 
       switch (msg.type) {
         case "startResponse":
-          set({ isProcessing: true });
+          set({ isProcessing: true, streamingMessageId: null });
           streamingId = null;
           break;
 
@@ -488,6 +494,7 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
         case "finalizeStreaming":
           if (tokenBuffer) flush();
           streamingId = null;
+          set({ streamingMessageId: null });
           break;
 
         case "clearStreamingText":
@@ -499,6 +506,7 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
             const sid = streamingId;
             set((state) => ({
               entries: state.entries.filter((e) => e.id !== sid),
+              streamingMessageId: null,
             }));
             streamingId = null;
           }
@@ -572,14 +580,14 @@ export const useChatStore = create<ChatState & ChatActions>()((set, get) => {
 
         case "endResponse":
           if (tokenBuffer) flush();
-          set({ isProcessing: false });
           streamingId = null;
+          set({ isProcessing: false, streamingMessageId: null });
           break;
 
         case "error":
           if (tokenBuffer) flush();
-          set({ isProcessing: false });
           streamingId = null;
+          set({ isProcessing: false, streamingMessageId: null });
           addSystemMessage(msg.text, "error");
           break;
 
