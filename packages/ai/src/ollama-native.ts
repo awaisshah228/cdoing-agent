@@ -332,9 +332,11 @@ export class ChatOllamaNative {
   ): AsyncGenerator<AIMessageChunk> {
     const ollamaMessages = messages.map(langchainToOllama);
 
-    // Check if tools are active for this request
-    const lastMsg = ollamaMessages[ollamaMessages.length - 1];
-    const hasTools = this.tools.length > 0 && lastMsg?.role === "user";
+    // Check if tools are active for this request.
+    // Tools must be sent whenever bound, not just when the last message is from
+    // the user — after a tool call the last message is role:"tool" (the result),
+    // and Ollama still needs the tools list to make follow-up tool calls.
+    const hasTools = this.tools.length > 0;
 
     // Only set num_ctx if explicitly configured — auto-detected values can exceed
     // GPU VRAM and cause Ollama to hang. Let Ollama use its own default otherwise.
@@ -355,8 +357,7 @@ export class ChatOllamaNative {
       options: ollamaOptions,
     };
 
-    // Only include tools when the last message is from user
-    // (Ollama requirement — tools only valid with user messages)
+    // Include tools whenever they are bound
     if (hasTools) {
       body.tools = this.tools;
     }
@@ -479,6 +480,10 @@ export class ChatOllamaNative {
         });
       }
     } finally {
+      // Cancel the reader to abort the underlying HTTP connection.
+      // Without this, Ollama keeps the connection open and blocks
+      // subsequent requests to the same model (default OLLAMA_NUM_PARALLEL=1).
+      await reader.cancel().catch(() => {});
       reader.releaseLock();
     }
   }
@@ -489,14 +494,24 @@ export class ChatOllamaNative {
   private toolCallsToChunk(
     toolCalls: Array<{ function: { name: string; arguments: Record<string, unknown> } }>,
   ): AIMessageChunk {
+    const mapped = toolCalls.map((tc, i) => {
+      const id = `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      return { id, name: tc.function.name, args: tc.function.arguments, index: i };
+    });
     return new AIMessageChunk({
       content: "",
-      tool_calls: toolCalls.map((tc) => ({
-        id: `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        name: tc.function.name,
-        args: tc.function.arguments,
+      tool_calls: mapped.map(({ id, name, args }) => ({ id, name, args })),
+      // Also emit tool_call_chunks so agent-runner's streaming detector
+      // can show a "Generating..." indicator in the UI immediately.
+      // Ollama returns tool calls all at once (not streamed), so without
+      // this the UI shows nothing until the full response is processed.
+      tool_call_chunks: mapped.map(({ id, name, args, index }) => ({
+        id,
+        name,
+        args: JSON.stringify(args),
+        index,
+        type: "tool_call_chunk" as const,
       })),
-      // Signal to agent-runner that these are native tool calls
       response_metadata: {
         finish_reason: "tool_calls",
       },

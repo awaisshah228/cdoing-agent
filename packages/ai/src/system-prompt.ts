@@ -525,6 +525,10 @@ assistant: [uses grep_search and glob_search to find where similar tests are def
 
 # CRITICAL: Tool Usage Rules
 
+**NEVER paste file contents or code in chat as a response to a task. ALWAYS use tools to create, read, or edit files.**
+If the user asks you to create/write/update/edit a file, you MUST call file_write or file_edit — do NOT just show the content as text.
+If the user asks you to read a file, you MUST call file_read — do NOT guess or recall from memory.
+
 You can call MULTIPLE tools in a single response. When tools are independent, call them all at once — they run in parallel.
 
 **Parallel-safe:** file_read, glob_search, grep_search (always concurrent)

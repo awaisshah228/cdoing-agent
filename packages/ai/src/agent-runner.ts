@@ -97,6 +97,8 @@ export class AgentRunner {
   private modelName: string;
   /** Recent tool call signatures for doom loop detection */
   private recentToolCalls: string[] = [];
+  /** Whether we already nudged the model to use tools instead of text (once per run) */
+  private _didNudgeToolUse: boolean = false;
   private static readonly DOOM_LOOP_THRESHOLD = 3;
   /** Track denied tool calls to prevent infinite re-prompting */
   private deniedToolCalls: Map<string, number> = new Map();
@@ -893,6 +895,7 @@ export class AgentRunner {
       this.messages.push(new HumanMessage(userMessage));
     }
     this.currentTurns = 0;
+    this._didNudgeToolUse = false;
 
     let fullResponse = "";
 
@@ -1027,16 +1030,31 @@ export class AgentRunner {
           }
         }
 
-        // Check LLM finish reason — more robust than just checking tool calls.
-        // IMPORTANT: When tool calls are extracted from text (fallback path), ignore
-        // finish_reason — Ollama sends "stop" for text output even when the text
-        // contains tool calls that should be executed.
-        const finishReason = accumulated.response_metadata?.finish_reason
-          || accumulated.response_metadata?.stop_reason;
-        const isModelDone = toolCalls.length === 0
-          || (!hasTextToolCalls && finishReason && finishReason !== "tool_calls" && finishReason !== "tool_use" && finishReason !== "unknown");
+        // Check whether the model is done.
+        // Primary signal: if tool calls were extracted (native OR text-based),
+        // always continue the loop. The finish_reason from local models (Ollama)
+        // is unreliable — it often returns "stop" even when tool calls are present.
+        // When no tool calls are found, the model is done regardless of finish_reason.
+        const isModelDone = toolCalls.length === 0;
 
         if (isModelDone) {
+          // Nudge local models that respond with code blocks instead of using tools.
+          // If the response contains a code block with file-like content but no tool
+          // calls were made, remind the model to use tools. Only nudge once per run
+          // to avoid infinite loops, and only for Ollama/local providers.
+          const isLocalModel = this.provider === "ollama" || this.provider === "local";
+          const hasCodeBlock = /```[\s\S]{50,}```/.test(fullText);
+          if (isLocalModel && hasCodeBlock && !this._didNudgeToolUse) {
+            this._didNudgeToolUse = true;
+            this.messages.push(new AIMessage(fullText));
+            this.messages.push(new HumanMessage(
+              "You showed code/content as text instead of using tools. " +
+              "Please use file_write to create files or file_edit to modify them. " +
+              "Do NOT paste file contents in chat — call the appropriate tool."
+            ));
+            fullResponse += fullText;
+            continue; // Re-enter loop so model can use tools
+          }
           this.messages.push(new AIMessage(fullText));
           fullResponse += fullText;
           break;
