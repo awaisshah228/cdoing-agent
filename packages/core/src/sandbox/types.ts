@@ -83,10 +83,10 @@ export const DEFAULT_DENY_WRITE_PATHS: string[] = [
   "/sbin",
 ];
 
-/** Returns a default sandbox config — enabled by default with safe defaults */
+/** Returns a default sandbox config — disabled by default */
 export function defaultSandboxConfig(): SandboxConfig {
   return {
-    enabled: true,
+    enabled: false,
     mode: "regular",
     filesystem: {
       allowWrite: [],
