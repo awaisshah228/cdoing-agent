@@ -1,8 +1,8 @@
 /**
- * MessageList.tsx — Scrollable Message Area with Premium Thinking Indicator
+ * MessageList.tsx — Scrollable Message Area with streaming-aware rendering
  *
- * Uses ResizeObserver for efficient auto-scrolling.
- * Features a branded animated thinking indicator instead of basic dots.
+ * Passes isStreaming to the active streaming message so it can skip
+ * expensive markdown parsing during token delivery.
  */
 
 import React from "react";
@@ -16,12 +16,14 @@ import { useAutoScroll } from "../hooks/useAutoScroll";
 interface MessageListProps {
   entries: ChatEntry[];
   isProcessing: boolean;
+  streamingId: string | null;
   onQuickAction: (message: string) => void;
 }
 
 export const MessageList: React.FC<MessageListProps> = ({
   entries,
   isProcessing,
+  streamingId,
   onQuickAction,
 }) => {
   const containerRef = useAutoScroll([entries, isProcessing]);
@@ -32,7 +34,13 @@ export const MessageList: React.FC<MessageListProps> = ({
 
       {entries.map((entry) => {
         if (isChatMessage(entry)) {
-          return <MessageBubble key={entry.id} message={entry} />;
+          return (
+            <MessageBubble
+              key={entry.id}
+              message={entry}
+              isStreaming={entry.id === streamingId}
+            />
+          );
         }
         if (isToolCallEntry(entry)) {
           return <ToolCallBubble key={entry.id} entry={entry} />;
@@ -40,7 +48,7 @@ export const MessageList: React.FC<MessageListProps> = ({
         return null;
       })}
 
-      {isProcessing && (
+      {isProcessing && !streamingId && (
         <div className="thinking-indicator">
           <div className="thinking-indicator-avatar">
             <svg viewBox="0 0 24 24" width="12" height="12" fill="#fff">

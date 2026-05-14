@@ -70,6 +70,7 @@ export const ChatPanel: React.FC = () => {
   const showSettings = useChatStore((s) => s.showSettings);
   const extensionConfig = useChatStore((s) => s.extensionConfig);
   const permissionRequest = useChatStore((s) => s.permissionRequest);
+  const streamingMessageId = useChatStore((s) => s.streamingMessageId);
 
   const createNewTab = useChatStore((s) => s.createNewTab);
   const switchToTab = useChatStore((s) => s.switchToTab);
@@ -121,6 +122,7 @@ export const ChatPanel: React.FC = () => {
       <MessageList
         entries={entries}
         isProcessing={isProcessing}
+        streamingId={streamingMessageId}
         onQuickAction={(text) => sendMessage(text)}
       />
 

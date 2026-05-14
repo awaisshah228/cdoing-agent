@@ -240,18 +240,21 @@ body {
   padding: 0;
   display: flex;
   flex-direction: column;
-  scroll-behavior: smooth;
+  /* No scroll-behavior: smooth — causes jitter during streaming */
 }
 
 /* ═══ Message Rows ═══ */
 .message-row {
-  padding: 14px 16px;
-  line-height: 1.6;
+  padding: 10px 16px;
+  line-height: 1.55;
   font-size: 13px;
   word-wrap: break-word;
   overflow-wrap: break-word;
-  animation: messageIn 0.25s ease-out;
   position: relative;
+}
+/* Only animate on first appearance, not during streaming updates */
+.message-row.animate-in {
+  animation: messageIn 0.2s ease-out;
 }
 
 @keyframes messageIn {
@@ -263,7 +266,7 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
 }
 
 .message-row .message-avatar {
@@ -310,13 +313,12 @@ body {
 
 .message-row .message-content {
   color: var(--fg);
-  white-space: pre-wrap;
   padding-left: 30px;
 }
 
 /* Markdown rendered content */
 .message-row .message-content p {
-  margin: 0 0 8px 0;
+  margin: 0 0 4px 0;
 }
 .message-row .message-content p:last-child {
   margin-bottom: 0;
@@ -335,12 +337,12 @@ body {
 
 .message-row .message-content pre {
   background: var(--vscode-textCodeBlock-background);
-  padding: 12px 14px;
+  padding: 10px 12px;
   border-radius: var(--radius-md);
   overflow-x: auto;
-  margin: 10px 0;
+  margin: 6px 0;
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.4;
   border: 1px solid var(--subtle-border);
 }
 .message-row .message-content pre code {
@@ -352,9 +354,9 @@ body {
 
 .message-row .message-content ul,
 .message-row .message-content ol {
-  margin: 4px 0 8px 20px;
+  margin: 2px 0 4px 18px;
 }
-.message-row .message-content li { margin-bottom: 3px; }
+.message-row .message-content li { margin-bottom: 1px; }
 
 .message-row .message-content a {
   color: var(--vscode-textLink-foreground);
@@ -368,14 +370,14 @@ body {
 
 .message-row .message-content blockquote {
   border-left: 3px solid var(--accent);
-  padding-left: 12px;
-  margin: 8px 0;
+  padding-left: 10px;
+  margin: 4px 0;
   color: var(--desc-fg);
 }
 
 .message-row .message-content table {
   border-collapse: collapse;
-  margin: 8px 0;
+  margin: 4px 0;
   font-size: 12px;
   width: 100%;
 }
@@ -388,6 +390,21 @@ body {
 .message-row .message-content th {
   background: var(--surface);
   font-weight: 600;
+}
+
+/* ═══ Streaming Message Content ═══ */
+.message-content-streaming {
+  contain: content;
+}
+.streaming-cursor {
+  display: inline-block;
+  width: 5px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 1px;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  animation: blink 1s step-end infinite;
 }
 
 /* ═══ Message Context Chips (attached files in user messages) ═══ */
@@ -1111,11 +1128,11 @@ pre.tool-io-block {
 .thinking-indicator {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
+  gap: 10px;
+  padding: 10px 16px;
   color: var(--desc-fg);
   font-size: 12px;
-  animation: messageIn 0.3s ease-out;
+  animation: messageIn 0.2s ease-out;
   border-bottom: 1px solid var(--subtle-border);
   background: color-mix(in srgb, var(--editor-bg) 50%, var(--bg));
 }

@@ -1,9 +1,8 @@
 /**
- * useAutoScroll.ts — ResizeObserver-based auto-scroll (Continue.dev approach)
+ * useAutoScroll.ts — Smooth auto-scroll optimized for streaming
  *
- * Uses ResizeObserver instead of scroll events for efficiency.
+ * Uses ResizeObserver + requestAnimationFrame for jitter-free scrolling.
  * Only auto-scrolls if user hasn't manually scrolled up.
- * Resets scroll lock on new user messages.
  */
 
 import { useRef, useEffect, useCallback } from "react";
@@ -12,21 +11,25 @@ export function useAutoScroll(deps: unknown[]) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isUserScrolledUp = useRef(false);
   const prevEntriesLength = useRef(0);
+  const rafId = useRef<number>(0);
 
   // Check if user has scrolled up from bottom
   const checkScrollPosition = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
-    const threshold = 50; // px from bottom to consider "at bottom"
+    const threshold = 40;
     isUserScrolledUp.current =
       el.scrollHeight - el.scrollTop - el.clientHeight > threshold;
   }, []);
 
-  // Scroll to bottom
+  // Scroll to bottom using rAF to avoid layout thrashing
   const scrollToBottom = useCallback(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    cancelAnimationFrame(rafId.current);
+    rafId.current = requestAnimationFrame(() => {
+      const el = containerRef.current;
+      if (!el) return;
+      el.scrollTop = el.scrollHeight;
+    });
   }, []);
 
   // Listen for manual scroll
@@ -54,14 +57,16 @@ export function useAutoScroll(deps: unknown[]) {
       observer.observe(child);
     }
 
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(rafId.current);
+    };
   }, [deps, scrollToBottom]);
 
-  // Reset scroll lock when new entries are added (user sent a message)
+  // Reset scroll lock when new entries are added
   useEffect(() => {
     const currentLength = (deps[0] as unknown[])?.length || 0;
     if (currentLength > prevEntriesLength.current) {
-      // New entry added — check if it's a user message (scroll lock reset)
       isUserScrolledUp.current = false;
       scrollToBottom();
     }
